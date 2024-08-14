@@ -2,37 +2,58 @@ name: Test, Release, and Publish
 
 on:
   push:
+    branches:
+      - "main"
+      - "master"
 
 jobs:
-  test-release-publish:
+  tests:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.x'
-    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install pytest build twine
-    
     - name: Run tests
       run: pytest
-    
-    - name: Build package
-      run: python -m build
-    
-    - name: Create GitHub Release
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh release create ${{ github.ref }} ./dist/*
-    
-    - name: Publish to PyPI
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      run: twine upload dist/*
+
+  github-release:
+    name: "GitHub Release"
+    needs: [tests]
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: actions/checkout@v3
+      - name: "Releasing"
+        uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "latest"
+          prerelease: false
+          title: "Latest Build"
+
+  pypi-release:
+    name: "PyPI Release"
+    needs: [tests, github-release]
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      - name: Build and publish
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m build
+          twine upload dist/*
