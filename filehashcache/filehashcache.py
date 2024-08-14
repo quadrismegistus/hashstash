@@ -3,151 +3,91 @@ import json
 import hashlib
 import zlib
 from base64 import b64encode, b64decode
-from typing import Any, Optional
-import random
-import statistics
-import time
-from ._version import __version__
+from typing import Any, Optional, Literal
+from abc import ABC, abstractmethod
 
 
-class FileHashCache:
-    """A simple file-based caching system using hash-based file names.
+class BaseHashCache(ABC):
+    def __init__(self, compress: bool = True, b64: bool = True) -> None:
+        self.compress = compress
+        self.b64 = b64
 
-    This class provides a dictionary-like interface for caching objects to disk.
-    It uses a two-level directory structure to organize cached files.
-    """
+    @abstractmethod
+    def __enter__(self):
+        pass
 
-    def __init__(self, root_dir: str = ".cache") -> None:
-        """Initialize the FileHashCache.
+    @abstractmethod
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
 
-        Args:
-            root_dir: The root directory for storing cached files.
-        """
-        self.root_dir = root_dir
-        os.makedirs(root_dir, exist_ok=True)
-
-    def _get_file_path(self, key: str) -> str:
-        """Get the file path for a given key.
-
-        Args:
-            key: The cache key.
-
-        Returns:
-            The file path for the given key.
-        """
-        hashed_key = hashlib.md5(key.encode()).hexdigest()
-        dir1, dir2 = hashed_key[:2], hashed_key[2:4]
-        file_name = hashed_key[4:]
-        
-        dir_path = os.path.join(self.root_dir, dir1, dir2)
-        os.makedirs(dir_path, exist_ok=True)
-        
-        return os.path.join(dir_path, file_name)
-
+    @abstractmethod
     def __setitem__(self, key: str, value: Any) -> None:
-        """Set an item in the cache.
+        pass
 
-        Args:
-            key: The cache key.
-            value: The value to cache.
-        """
-        file_path = self._get_file_path(key)
-        with open(file_path, 'wb') as f:
-            f.write(self._encode_cache(value))
-
+    @abstractmethod
     def __getitem__(self, key: str) -> Any:
-        """Get an item from the cache.
+        pass
 
-        Args:
-            key: The cache key.
-
-        Returns:
-            The cached value.
-
-        Raises:
-            KeyError: If the key is not found in the cache.
-        """
-        file_path = self._get_file_path(key)
-        if not os.path.exists(file_path):
-            raise KeyError(key)
-        with open(file_path, 'rb') as f:
-            return self._decode_cache(f.read())
-
+    @abstractmethod
     def __contains__(self, key: str) -> bool:
-        """Check if a key exists in the cache.
+        pass
 
-        Args:
-            key: The cache key.
-
-        Returns:
-            True if the key exists, False otherwise.
-        """
-        return os.path.exists(self._get_file_path(key))
-
+    @abstractmethod
     def get(self, key: str, default: Any = None) -> Any:
-        """Get an item from the cache with a default value.
+        pass
 
-        Args:
-            key: The cache key.
-            default: The default value to return if the key is not found.
-
-        Returns:
-            The cached value or the default value.
-        """
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-    @staticmethod
-    def _encode_cache(x: Any) -> bytes:
-        """Encode an object for caching.
-
-        Args:
-            x: The object to encode.
-
-        Returns:
-            The encoded object as bytes.
-        """
-        return b64encode(zlib.compress(json.dumps(x).encode()))
-
-    @staticmethod
-    def _decode_cache(x: bytes) -> Any:
-        """Decode a cached object.
-
-        Args:
-            x: The encoded object.
-
-        Returns:
-            The decoded object.
-        """
-        return json.loads(zlib.decompress(b64decode(x)).decode())
-
+    @abstractmethod
     def clear(self) -> None:
-        """Clear all items from the cache."""
-        for root, dirs, files in os.walk(self.root_dir, topdown=False):
-            for name in files:
-                os.remove(os.path.join(root, name))
-            for name in dirs:
-                os.rmdir(os.path.join(root, name))
+        pass
 
+    @abstractmethod
     def __len__(self) -> int:
-        """Return the number of items in the cache."""
-        count = 0
-        for root, dirs, files in os.walk(self.root_dir):
-            count += len(files)
-        return count
+        pass
 
+    @abstractmethod
     def __iter__(self):
-        """Iterate over all keys in the cache."""
-        for root, dirs, files in os.walk(self.root_dir):
-            for file in files:
-                yield os.path.join(root, file)
+        pass
 
-    @classmethod
-    def performance_report(cls, root_dir: str = ".cache_test", sizes: list = None, iterations: int = 5):
-        from performance import run_performance_tests
-        return run_performance_tests(cls, root_dir, sizes, iterations)
+    def _encode_cache(self, x: Any) -> bytes:
+        data = json.dumps(x).encode()
+        if self.compress:
+            data = zlib.compress(data)
+        if self.b64:
+            data = b64encode(data)
+        return data
 
-if __name__ == "__main__":
-    FileHashCache.performance_report()
+    def _decode_cache(self, x: bytes) -> Any:
+        if self.b64:
+            x = b64decode(x)
+        if self.compress:
+            x = zlib.decompress(x)
+        return json.loads(x.decode())
+
+
+
+def Cache(*args, engine: Literal["file", "sqlite", "memory"] = "file", **kwargs) -> BaseHashCache:
+    """
+    Factory function to create the appropriate cache object.
+
+    Args:
+        * args: Additional arguments to pass to the cache constructor.
+        engine: The type of cache to create ("file", "sqlite", or "memory")
+        **kwargs: Additional keyword arguments to pass to the cache constructor.
+
+    Returns:
+        An instance of the appropriate BaseHashCache subclass.
+
+    Raises:
+        ValueError: If an invalid engine is provided.
+    """
+    if engine == "file":
+        from .engines.files import FileHashCache
+        return FileHashCache(*args, **kwargs)
+    elif engine == "sqlite":
+        from .engines.sqlite import SqliteHashCache
+        return SqliteHashCache(*args, **kwargs)
+    elif engine == "memory":
+        from .engines.memory import MemoryHashCache
+        return MemoryHashCache(*args, **kwargs)
+    else:
+        raise ValueError(f"Invalid engine: {engine}. Choose 'file', 'sqlite', or 'memory'.")

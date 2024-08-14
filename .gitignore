@@ -162,3 +162,7 @@ cython_debug/
 #.idea/
 .cache
 .cache_test
+cache.sqlite
+.cache.sqlite
+.cache_profile
+.cache_profile*

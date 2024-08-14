@@ -18,14 +18,14 @@ classifiers = [
 ]
 
 [tool.setuptools.dynamic]
-version = {attr = "filehashcache._version.__version__"}
+version = {attr = "filehashcache.__version__"}
 
 [project.urls]
 "Homepage" = "https://github.com/yourusername/filehashcache"
 "Bug Tracker" = "https://github.com/yourusername/filehashcache/issues"
 
 [project.optional-dependencies]
-dev = ["pandas", "setuptools-scm"]
+dev = ["pandas", "setuptools-scm", "ipython"]
 test = ["pytest"]
 
 [tool.setuptools]
