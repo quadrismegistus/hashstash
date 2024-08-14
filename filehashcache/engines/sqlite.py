@@ -78,11 +78,12 @@ class SqliteHashCache(BaseHashCache):
             raise KeyError(key)
 
     def __contains__(self, key: str) -> bool:
+        encoded_key = self._encode_key(key)
         if self._db_r:
-            return key in self._db_r
+            return encoded_key in self._db_r
         else:
             with self.get_db(read_only=True) as db:
-                return key in db
+                return encoded_key in db
 
     def clear(self) -> None:
         if self._db:

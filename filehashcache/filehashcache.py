@@ -40,7 +40,7 @@ class BaseHashCache(ABC):
         if dbname is not None:
             self.dbname = dbname
 
-        self.path = self.dir = os.path.join(self.root_dir, self.engine, self.filename)
+        self.path = self.dir = os.path.abspath(os.path.join(self.root_dir, self.engine, self.filename))
         fn,ext=os.path.splitext(self.path)
         if ext:
             self.dir = os.path.dirname(self.path)
@@ -82,6 +82,16 @@ class BaseHashCache(ABC):
     @abstractmethod
     def __iter__(self):
         pass
+
+    def keys(self):
+        return (x for x in self)
+    
+    def values(self):
+        return (self[key] for key in self)
+    
+    def items(self):
+        return ((key, self[key]) for key in self)
+    
 
     @staticmethod
     def _encode_jsonb(obj):

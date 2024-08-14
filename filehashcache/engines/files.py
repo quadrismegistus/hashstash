@@ -1,3 +1,4 @@
+import shutil
 import os
 import json
 import hashlib
@@ -8,6 +9,7 @@ from abc import ABC, abstractmethod
 from ..filehashcache import BaseHashCache
 
 class FileHashCache(BaseHashCache):
+    engine = 'file'
     filename = 'dirs'
 
     @classmethod
@@ -21,15 +23,11 @@ class FileHashCache(BaseHashCache):
             The file path for the given key.
         """
         key = super()._encode_key(key)
-        dir1, dir2 = key[:2], key[2:4]
-        file_name = key[4:]
-        dir_path = os.path.join(dir1, dir2)
-        os.makedirs(dir_path, exist_ok=True)
-        return os.path.join(dir_path, file_name)
+        newkey = f'{key[:2]}/{key[2:4]}/{key[4:]}'
+        return newkey
     
-    @classmethod
     def _encode_filepath(self, key):
-        return os.path.join(self.root_dir, self.filename, self._encode_key(key))
+        return os.path.join(self.path, self._encode_key(key))
     
     
     def __setitem__(self, key: str, value: Any) -> None:
@@ -43,6 +41,7 @@ class FileHashCache(BaseHashCache):
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'wb') as f:
             f.write(self._encode_value(value))
+        print(f"Item written to: {filepath}")  # Debug print
 
     def __getitem__(self, key: str) -> Any:
         """Get an item from the cache.
@@ -75,21 +74,23 @@ class FileHashCache(BaseHashCache):
 
     def clear(self) -> None:
         """Clear all items from the cache."""
-        for root, dirs, files in os.walk(self.root_dir, topdown=False):
-            for name in files:
-                os.remove(os.path.join(root, name))
-            for name in dirs:
-                os.rmdir(os.path.join(root, name))
+        shutil.rmtree(self.path, ignore_errors=True)
+        os.makedirs(self.path, exist_ok=True)
 
     def __len__(self) -> int:
         """Return the number of items in the cache."""
+        print(f"Cache path: {self.path}")
         count = 0
-        for root, dirs, files in os.walk(self.root_dir):
+        for root, dirs, files in os.walk(self.path):
+            print(f"Scanning directory: {root}")
+            print(f"Files found: {files}")
             count += len(files)
+        print(f"Total count: {count}")
         return count
 
     def __iter__(self):
         """Iterate over all keys in the cache."""
-        for root, dirs, files in os.walk(self.root_dir):
+        for root, dirs, files in os.walk(self.path):
             for file in files:
-                yield os.path.join(root, file)
+                path = os.path.join(root, file)
+                yield path.split(f'/{self.filename}/')[-1]

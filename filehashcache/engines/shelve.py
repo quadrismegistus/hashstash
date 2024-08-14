@@ -60,6 +60,7 @@ class ShelveHashCache(BaseHashCache):
         finally:
             self._release_lock()
 
+
     def __contains__(self, key: str) -> bool:
         encoded_key = self._encode_key(key)
         self._acquire_lock()
@@ -84,7 +85,7 @@ class ShelveHashCache(BaseHashCache):
                 return len(db)
         finally:
             self._release_lock()
-
+        
     def __iter__(self):
         self._acquire_lock()
         try:
