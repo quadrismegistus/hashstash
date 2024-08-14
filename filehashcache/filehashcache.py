@@ -4,8 +4,11 @@ import hashlib
 import zlib
 from base64 import b64encode, b64decode
 from typing import Any, Optional
+import random
+import statistics
+import time
+from ._version import __version__
 
-__version__ = "0.1.0"
 
 class FileHashCache:
     """A simple file-based caching system using hash-based file names.
@@ -140,3 +143,11 @@ class FileHashCache:
         for root, dirs, files in os.walk(self.root_dir):
             for file in files:
                 yield os.path.join(root, file)
+
+    @classmethod
+    def performance_report(cls, root_dir: str = ".cache_test", sizes: list = None, iterations: int = 5):
+        from performance import run_performance_tests
+        return run_performance_tests(cls, root_dir, sizes, iterations)
+
+if __name__ == "__main__":
+    FileHashCache.performance_report()
