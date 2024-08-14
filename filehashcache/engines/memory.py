@@ -1,36 +1,37 @@
-import os
 from typing import Any
 from ..filehashcache import BaseHashCache
-
 
 IN_MEMORY_CACHE = {}
 
 class MemoryHashCache(BaseHashCache):
-    def __init__(self, root_dir='', compress: bool = True, b64: bool = True) -> None:
-        # global IN_MEMORY_CACHE
-        super().__init__(compress=compress, b64=b64)
+    engine = 'memory'
+    filename = 'in_memory'
+
+    def __init__(
+        self,
+        root_dir: str = ".cache",
+        compress: bool = True,
+        b64: bool = True,
+    ) -> None:
+        super().__init__(
+            root_dir=root_dir,
+            compress=compress,
+            b64=b64,
+            ensure_dir=False
+        )
         self._cache = IN_MEMORY_CACHE
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        pass  # No cleanup needed for in-memory cache
-
     def __setitem__(self, key: str, value: Any) -> None:
-        self._cache[key] = self._encode_cache(value)
+        self._cache[self._encode_key(key)] = self._encode_value(value)
 
     def __getitem__(self, key: str) -> Any:
-        return self._decode_cache(self._cache[key])
+        try:
+            return self._decode_value(self._cache[self._encode_key(key)])
+        except KeyError:
+            raise KeyError(key)
 
     def __contains__(self, key: str) -> bool:
-        return key in self._cache
-
-    def get(self, key: str, default: Any = None) -> Any:
-        try:
-            return self[key]
-        except KeyError:
-            return default
+        return self._encode_key(key) in self._cache
 
     def clear(self) -> None:
         self._cache.clear()
@@ -39,4 +40,4 @@ class MemoryHashCache(BaseHashCache):
         return len(self._cache)
 
     def __iter__(self):
-        return iter(self._cache)
+        yield from self._cache.keys()

@@ -6,24 +6,28 @@ import pandas as pd
 import tempfile
 from filehashcache import Cache
 from typing import Literal
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 
 DEFAULT_DATA_SIZE = 1_000_000
-ENGINE_TYPES = Literal["memory", "file", "sqlite"]
+ENGINES = ["memory", "file", "sqlite", "shelve"]
+ENGINE_TYPES = Literal["memory", "file", "sqlite", "shelve"]
 DEFAULT_ENGINE_TYPE = "file"
-PROFILE_SIZES = [
-    1000,
-    10000,
-    100000,
-    # 1000000,
-    # 10000000,
-]
-
+INITIAL_SIZE=1024
+PROFILE_SIZES = []
+for n in range(5):
+    PROFILE_SIZES.append(
+        INITIAL_SIZE if not PROFILE_SIZES else PROFILE_SIZES[-1]*2
+    )
+    
+DEFAULT_ITERATIONS = 10
+GROUPBY=["Engine","Encoding","Method"]
+SORTBY='Write Speed (MB/s)'
+DEFAULT_INDEX=['Encoding','Engine']
 
 class FileHashCacheProfiler:
     root_dir = ".cache_profile"
-    engines = ["file", "sqlite"]
-    encodings = ["zlib+b64", "zlib", "b64", "raw"]
-
+    
     @staticmethod
     def generate_data(size):
         return {
@@ -59,13 +63,14 @@ class FileHashCacheProfiler:
     @classmethod
     def profile_cache(
         self,
+        root_dir: str = '.cache_profile',
         engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE,
         compress: bool = True,
         b64: bool = True,
         size: int = DEFAULT_DATA_SIZE,
         verbose: bool = False,
     ):
-        cache = Cache(self.root_dir, engine=engine, compress=compress, b64=b64)
+        cache = Cache(root_dir, engine=engine, compress=compress, b64=b64)
         data = self.generate_data(size)
         raw_size = len(json.dumps(data).encode())
 
@@ -83,82 +88,123 @@ class FileHashCacheProfiler:
         read_time = time.time() - start_time
 
         outd = {
-            "Size": size,
-            "Method": f"{self.get_method_str(engine,compress,b64)}",
-            "Engine": engine,
+            "Size (KB)": int(size / 1000),
             "Encoding": self.get_encoding_str(compress, b64),
-            "Write Time (s)": write_time,
-            "Read Time (s)": read_time,
+            "Engine": engine,
+            "Method": f"{self.get_method_str(engine,compress,b64)}",
             "Write Speed (MB/s)": raw_size / write_time / 1024 / 1024,
             "Read Speed (MB/s)": raw_size / read_time / 1024 / 1024,
-            "Cached Size (MB)": cached_size / 1024 / 1024,
-            "Space Saved (MB)": (raw_size - cached_size) / 1024 / 1024,
             "Space Saved (MB/GB)": (raw_size - cached_size)
             / 1024
             / 1024
             / (raw_size / 1024 / 1024 / 1024),
+            "Write Time (s)": write_time,
+            "Read Time (s)": read_time,
             "Raw Size (MB)": raw_size / 1024 / 1024,
+            "Cached Size (MB)": cached_size / 1024 / 1024,
+            "Space Saved (MB)": (raw_size - cached_size) / 1024 / 1024,
             "Compression Ratio (%)": cached_size / raw_size * 100,
         }
 
         if verbose:
-            for k in ["Size", "Method", "Read Speed (MB/s)", "Write Speed (MB/s)"]:
-                v = outd[k]
-                if type(v) is str:
-                    print(f"{k}: {v}")
-                else:
-                    print(f"{k}: {round(v,2)}")
-            print()
+            print(outd)
         return outd
+
+    @classmethod
+    def profile_cache_parallel(cls, args):
+        return cls.profile_cache(**args)
 
     @classmethod
     def profile(
         self,
-        engine=["memory", "file", "sqlite"],
+        engine=ENGINES,
         compress=[True, False],
         b64=[True, False],
         size=PROFILE_SIZES,
-        iterations=1,
+        iterations=DEFAULT_ITERATIONS,
         verbose: bool = False,
+        num_proc: int = None,
+        group_by=GROUPBY,
+        sort_by=SORTBY
     ):
-        results = []
-        for sizex in size:
-            for compressx in compress:
-                for b64x in b64:
-                    for enginex in engine:
-                        for i in range(iterations):
-                            result = self.profile_cache(
-                                engine=enginex,
-                                compress=compressx,
-                                b64=b64x,
-                                size=sizex,
-                                verbose=verbose,
-                            )
-                            if iterations > 1:
-                                result["run"] = i
-                            results.append(result)
-        return pd.DataFrame(results)
+        with tempfile.TemporaryDirectory() as root_dir:
+            results = []
+            tasks = []
+            for sizex in size:
+                for compressx in compress:
+                    for b64x in b64:
+                        for enginex in engine:
+                            for i in range(iterations):
+                                tasks.append(
+                                    {
+                                        "root_dir": root_dir,
+                                        "engine": enginex,
+                                        "compress": compressx,
+                                        "b64": b64x,
+                                        "size": sizex,
+                                        "verbose": verbose,
+                                    }
+                                )
 
-    @classmethod
-    def run_performance_tests(self, iterations=10, **kwargs):
-        results = self.profile(verbose=True, iterations=iterations, **kwargs)
-        return self.summarize_results(results)
+            if num_proc == None: num_proc = mp.cpu_count() - 1 if mp.cpu_count()>1 else 1
+            if num_proc > 1:
+                results=[]
+                for numproc in range(1,num_proc-1,2):
+                    print(numproc)
+                    with ProcessPoolExecutor(max_workers=numproc) as executor:
+                        proc = executor.map(self.profile_cache_parallel, tasks)
+                    for result in proc:
+                        result['Num Processes']=numproc
+                        results.append(result)
+            else:
+                results = [self.profile_cache(**task) for task in tasks]
 
-    @staticmethod
-    def summarize_results(df):
-        print("\nPerformance Statistics:")
-        df = df.groupby("Method").mean(numeric_only=True).round(2)
-        df = df[
-            [
-                c
-                for c in df
-                if c not in {"Size","run"} and not c.endswith("(s)") and not c.endswith("(MB)")
-            ]
-        ]
-        df = df.sort_values(["Write Speed (MB/s)"], ascending=[True])
-        return df
-
+            df = pd.DataFrame(results).set_index(DEFAULT_INDEX)
+            if group_by:
+                df = df.groupby(group_by).mean(numeric_only=True).round(2).sort_index()
+            if sort_by:
+                df = df.sort_values(sort_by, ascending=False)
+            if group_by == 'Method' or group_by == ["Method"]:
+                df = df[[c for c in df if '/' in c]]
+            
+            
+            
+            
+            return df
 
 if __name__ == "__main__":
-    results = FileHashCacheProfiler.run_performance_tests()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Profile FileHashCache performance")
+    parser.add_argument("--engine", nargs="+", default=ENGINES, 
+                        help="Engine types to profile (default: memory file sqlite)")
+    parser.add_argument("--compress", nargs="+", type=lambda x: x.lower() == 'true', default=[True, False], 
+                        help="Compression options (default: True False)")
+    parser.add_argument("--b64", nargs="+", type=lambda x: x.lower() == 'true', default=[True, False], 
+                        help="Base64 encoding options (default: True False)")
+    parser.add_argument("--size", nargs="+", type=int, default=PROFILE_SIZES, 
+                        help=f"Data sizes to profile (default: {PROFILE_SIZES})")
+    parser.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS, 
+                        help=f"Number of iterations for each configuration (default: {DEFAULT_ITERATIONS})")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--num-proc", type=int, default=None, 
+                        help="Number of processes to use (default: CPU count - 1)")
+    parser.add_argument("--group-by", nargs="+", default=GROUPBY, 
+                        help=f"Columns to group results by (default: {GROUPBY})")
+    parser.add_argument("--sort-by", default=SORTBY, 
+                        help=f"Column to sort results by (default: {SORTBY})")
+
+    args = parser.parse_args()
+
+    results = FileHashCacheProfiler.profile(
+        engine=args.engine,
+        compress=args.compress,
+        b64=args.b64,
+        size=args.size,
+        iterations=args.iterations,
+        verbose=args.verbose,
+        num_proc=args.num_proc,
+        group_by=args.group_by,
+        sort_by=args.sort_by
+    )
     print(results)
