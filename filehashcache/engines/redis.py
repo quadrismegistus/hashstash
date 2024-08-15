@@ -15,6 +15,65 @@ logger = logging.getLogger(__name__)
 _process_started = False
 _container_id = None
 
+
+class RedisHashCache(BaseHashCache):
+    engine = 'redis'
+    filename = 'data'
+    host = REDIS_HOST
+    port = REDIS_PORT
+    dbname = REDIS_DB
+
+    def __init__(self, *args, host=None,port=None,dbname=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if host is not None: self.host = host
+        if port is not None: self.port = port
+        if dbname is not None: self.dbname = dbname
+
+    def get_db(self):
+        logger.info(f"Connecting to Redis at {self.host}:{self.port}")
+        return redis.Redis(host=self.host, port=self.port, db=self.dbname)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        encoded_key = self._encode_key(key)
+        encoded_value = self._encode_value(value)
+        self.db.set(encoded_key, encoded_value)
+        logger.debug(f"Set key: {key}")
+
+    def __getitem__(self, key: str) -> Any:
+        encoded_key = self._encode_key(key)
+        encoded_value = self.db.get(encoded_key)
+        if encoded_value is None:
+            logger.warning(f"Key not found: {key}")
+            raise KeyError(key)
+        logger.debug(f"Retrieved key: {key}")
+        return self._decode_value(encoded_value)
+
+    def __contains__(self, key: str) -> bool:
+        encoded_key = self._encode_key(key)
+        exists = self.db.exists(encoded_key) == 1
+        logger.debug(f"Checked existence of key: {key}, result: {exists}")
+        return exists
+
+    def clear(self) -> None:
+        logger.info("Clearing Redis cache")
+        self.db.flushdb()
+        # self._stop_process()
+
+    def __len__(self) -> int:
+        size = self.db.dbsize()
+        logger.debug(f"Cache size: {size}")
+        return size
+
+    def __iter__(self):
+        logger.debug("Iterating over cache keys")
+        for key in self.db.scan_iter():
+            yield key.decode()
+
+
+
+
+
+
 def _start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir='.cache'):
     global _process_started, _container_id
 
@@ -113,63 +172,3 @@ _start_redis_server()
 
 # Register stop function to be called on exit
 atexit.register(_stop_redis_server)
-
-class RedisHashCacheModel(BaseHashCache):
-    engine = 'redis'
-    filename = 'data'
-    host = REDIS_HOST
-    port = REDIS_PORT
-    dbname = REDIS_DB
-
-    def __init__(self, *args, host=None,port=None,dbname=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        if host is not None: self.host = host
-        if port is not None: self.port = port
-        if dbname is not None: self.dbname = dbname
-
-    def get_db(self):
-        logger.info(f"Connecting to Redis at {self.host}:{self.port}")
-        return redis.Redis(host=self.host, port=self.port, db=self.dbname)
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        encoded_key = self._encode_key(key)
-        encoded_value = self._encode_value(value)
-        self.db.set(encoded_key, encoded_value)
-        logger.debug(f"Set key: {key}")
-
-    def __getitem__(self, key: str) -> Any:
-        encoded_key = self._encode_key(key)
-        encoded_value = self.db.get(encoded_key)
-        if encoded_value is None:
-            logger.warning(f"Key not found: {key}")
-            raise KeyError(key)
-        logger.debug(f"Retrieved key: {key}")
-        return self._decode_value(encoded_value)
-
-    def __contains__(self, key: str) -> bool:
-        encoded_key = self._encode_key(key)
-        exists = self.db.exists(encoded_key) == 1
-        logger.debug(f"Checked existence of key: {key}, result: {exists}")
-        return exists
-
-    def clear(self) -> None:
-        logger.info("Clearing Redis cache")
-        self.db.flushdb()
-        # self._stop_process()
-
-    def __len__(self) -> int:
-        size = self.db.dbsize()
-        logger.debug(f"Cache size: {size}")
-        return size
-
-    def __iter__(self):
-        logger.debug("Iterating over cache keys")
-        for key in self.db.scan_iter():
-            yield key.decode()
-
-
-cache = lru_cache(maxsize=None)
-
-@cache
-def RedisHashCache(*args, **kwargs):
-    return RedisHashCacheModel(*args,**kwargs)
