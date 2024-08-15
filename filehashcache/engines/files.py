@@ -6,19 +6,19 @@ import zlib
 from base64 import b64encode, b64decode
 from typing import Any, Optional
 from abc import ABC, abstractmethod
-from ..filehashcache import BaseHashCache
+from .base import BaseHashCache
+from ..constants import *
 
 class FileHashCache(BaseHashCache):
     engine = 'file'
     filename = 'dirs'
     
     def _encode_filepath(self, key):
-        key = super()._encode_key(key).decode()
-        newkey = f'{key[:2]}/{key[2:]}'
-        # Segment key[2:] placing / every 255 characters
-        segmented_key = '/'.join([key[2:][i:i+255] for i in range(0, len(key[2:]), 255)])
-        newkey = f'{key[:2]}/{segmented_key}'
-        return os.path.join(self.path, newkey)
+        key = super()._encode_key(key)
+        dirname,fname = key[:2], key[2:]
+        n = 100
+        segmented_key = [fname[i:i+n] for i in range(0, len(fname), n)]
+        return os.path.join(self.path, dirname, *segmented_key)
     
     def _decode_filepath(self, filepath):
         # Remove the base path
@@ -28,7 +28,7 @@ class FileHashCache(BaseHashCache):
         encoded_key = relative_path.replace('/','')
         
         # Decode the key
-        return encoded_key.encode()
+        return encoded_key
     
     def __setitem__(self, key: str, value: Any) -> None:
         """Set an item in the cache.
@@ -77,12 +77,19 @@ class FileHashCache(BaseHashCache):
         shutil.rmtree(self.path, ignore_errors=True)
         os.makedirs(self.path, exist_ok=True)
 
-    def _keys(self):
-        """Iterate over all keys in the cache."""
+    def __len__(self):
+        return sum(1 for x in self._paths())
+
+    def _paths(self):
         for root, dirs, files in os.walk(self.path):
             for file in files:
                 path = os.path.join(root, file)
-                yield self._decode_filepath(path)
+                yield path
+
+    def _keys(self):
+        """Iterate over all keys in the cache."""
+        for path in self._paths():
+            yield self._decode_filepath(path)
 
     def __delitem__(self, key: str) -> None:
         """Delete an item from the cache.

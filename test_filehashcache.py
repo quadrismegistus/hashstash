@@ -11,7 +11,7 @@ from filehashcache.engines.memory import MemoryHashCache
 from filehashcache.engines.shelve import ShelveHashCache
 import shelve
 import statistics
-from filehashcache.filehashcache import BaseHashCache
+from filehashcache.engines.base import BaseHashCache
 
 class TestHashCache(unittest.TestCase):
     def setUp(self):
@@ -79,13 +79,8 @@ class TestHashCache(unittest.TestCase):
                     if isinstance(cache, FileHashCache):
                         file_path = cache._encode_filepath("large_data")
                         cached_size = os.path.getsize(file_path)
-                    elif isinstance(cache, SqliteHashCache):
+                    else:
                         cached_size = len(cache.db[cache._encode_key("large_data")])
-                    elif isinstance(cache, MemoryHashCache):
-                        cached_size = len(cache._cache[cache._encode_key("large_data")])
-                    elif isinstance(cache, ShelveHashCache):
-                        with shelve.open(cache.db_path) as db:
-                            cached_size = len(db[cache._encode_key("large_data")])
                     
                     self.assertLess(cached_size, raw_size)
                     
@@ -117,13 +112,8 @@ class TestHashCache(unittest.TestCase):
                     if isinstance(cache, FileHashCache):
                         file_path = cache._encode_filepath("test_data")
                         cached_size = os.path.getsize(file_path)
-                    elif isinstance(cache, SqliteHashCache):
+                    else:
                         cached_size = len(cache.db[cache._encode_key("test_data")])
-                    elif isinstance(cache, MemoryHashCache):
-                        cached_size = len(cache._cache[cache._encode_key("test_data")])
-                    elif isinstance(cache, ShelveHashCache):
-                        with shelve.open(cache.db_path) as db:
-                            cached_size = len(db[cache._encode_key("test_data")])
                     
                     self.assertLess(cached_size, raw_size)
                     
@@ -159,13 +149,8 @@ class TestHashCache(unittest.TestCase):
                     if isinstance(cache, FileHashCache):
                         file_path = cache._encode_filepath("very_large_data")
                         cached_size = os.path.getsize(file_path)
-                    elif isinstance(cache, SqliteHashCache):
+                    else:
                         cached_size = len(cache.db[cache._encode_key("very_large_data")])
-                    elif isinstance(cache, MemoryHashCache):
-                        cached_size = len(cache._cache[cache._encode_key("very_large_data")])
-                    elif isinstance(cache, ShelveHashCache):
-                        with shelve.open(cache.db_path) as db:
-                            cached_size = len(db[cache._encode_key("very_large_data")])
                     
                     self.assertLess(cached_size, raw_size)
                     

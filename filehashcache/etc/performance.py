@@ -16,23 +16,12 @@ from tqdm import tqdm
 from functools import lru_cache
 from itertools import groupby
 import shutil
+from ..constants import *
 
 # cache = lru_cache(maxsize=None)
 cache = Cache(engine='file', root_dir='.cache_profile')
 
-DEFAULT_NUM_PROC = (1,2, mp.cpu_count())
-DEFAULT_DATA_SIZE = 1_000_000
-ENGINES = ("memory", "file", "sqlite", "shelve", "redis")
-ENGINE_TYPES = Literal["memory", "file", "sqlite", "shelve", "redis"]
-DEFAULT_ENGINE_TYPE = "file"
-INITIAL_SIZE = 1024
-
-DEFAULT_ITERATIONS = 1
-GROUPBY = ["Engine", "Encoding", "Method"]
-SORTBY = "MB/s"
-DEFAULT_INDEX = ["Encoding", "Engine"]
-
-def generate_profile_sizes(num_sizes: int = 5, multiplier: int = 4, initial_size: int = INITIAL_SIZE) -> tuple:
+def generate_profile_sizes(num_sizes: int = NUM_PROFILE_SIZES, multiplier: int = PROFILE_SIZE_MULTIPLIER, initial_size: int = INITIAL_PROFILE_SIZE) -> tuple:
     profile_sizes = []
     for n in range(num_sizes):
         if not profile_sizes:
@@ -41,8 +30,6 @@ def generate_profile_sizes(num_sizes: int = 5, multiplier: int = 4, initial_size
             profile_sizes.append(profile_sizes[-1] * multiplier)
     return tuple(profile_sizes)
 
-# Example usage:
-PROFILE_SIZES = generate_profile_sizes(num_sizes=6, multiplier=10, initial_size=10)
 
 
 class FileHashCacheProfiler:
@@ -149,15 +136,16 @@ class FileHashCacheProfiler:
     def profile(
         self,
         engine=ENGINES,
-        compress=(True, False),
-        b64=(True, False),
-        size=tuple(PROFILE_SIZES),
+        compress=[True, False],
+        b64=[True, False],
+        size=PROFILE_SIZES,
         iterations=DEFAULT_ITERATIONS,
         verbose: bool = False,
         num_proc: tuple = DEFAULT_NUM_PROC,
         group_by=('engine',),
     ):
-        
+        if not size:
+            size = generate_profile_sizes()
         
         results = []
         tasks = [

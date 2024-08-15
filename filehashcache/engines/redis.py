@@ -5,7 +5,8 @@ import os
 import logging
 from typing import Any
 from functools import cached_property, lru_cache
-from ..filehashcache import BaseHashCache
+from .base import BaseHashCache
+from ..constants import *
 import time
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 _process_started = False
 _container_id = None
 
-def _start_redis_server(host='localhost', port=6379, db=0, data_dir='.cache'):
+def _start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir='.cache'):
     global _process_started, _container_id
 
     if _process_started:
@@ -89,7 +90,7 @@ def _start_redis_server(host='localhost', port=6379, db=0, data_dir='.cache'):
                 logger.info("Redis server is ready to accept connections")
                 return
             except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError):
-                time.sleep(1)
+                time.sleep(.1)
         
         raise TimeoutError("Redis server did not start within the expected time")
     except subprocess.CalledProcessError as e:
@@ -111,53 +112,34 @@ def _stop_redis_server():
 _start_redis_server()
 
 # Register stop function to be called on exit
-# atexit.register(_stop_redis_server)
+atexit.register(_stop_redis_server)
 
 class RedisHashCacheModel(BaseHashCache):
     engine = 'redis'
     filename = 'data'
+    host = REDIS_HOST
+    port = REDIS_PORT
+    dbname = REDIS_DB
 
-    def __init__(
-        self,
-        root_dir: str = ".cache",
-        compress: bool = None,
-        b64: bool = None,
-        host: str = 'localhost',
-        port: int = 6379,
-        db: int = 0,
-    ) -> None:
-        super().__init__(
-            root_dir=root_dir,
-            compress=compress,
-            b64=b64,
-            ensure_dir=False
-        )
-        self.host = host
-        self.port = port
-        self.db = db
-        self.data_dir = os.path.abspath(self.path)  # Use absolute path here
-        logger.info(f"Initialized RedisHashCache with host={host}, port={port}, db={db}")
+    def __init__(self, *args, host=None,port=None,dbname=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if host is not None: self.host = host
+        if port is not None: self.port = port
+        if dbname is not None: self.dbname = dbname
 
-    @cached_property
-    def client(self):
+    def get_db(self):
         logger.info(f"Connecting to Redis at {self.host}:{self.port}")
-        return redis.Redis(host=self.host, port=self.port, db=self.db)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if 'client' in self.__dict__:
-            logger.info("Closing Redis client connection")
-            self.client.close()
-            del self.__dict__['client']
+        return redis.Redis(host=self.host, port=self.port, db=self.dbname)
 
     def __setitem__(self, key: str, value: Any) -> None:
         encoded_key = self._encode_key(key)
         encoded_value = self._encode_value(value)
-        self.client.set(encoded_key, encoded_value)
+        self.db.set(encoded_key, encoded_value)
         logger.debug(f"Set key: {key}")
 
     def __getitem__(self, key: str) -> Any:
         encoded_key = self._encode_key(key)
-        encoded_value = self.client.get(encoded_key)
+        encoded_value = self.db.get(encoded_key)
         if encoded_value is None:
             logger.warning(f"Key not found: {key}")
             raise KeyError(key)
@@ -166,23 +148,23 @@ class RedisHashCacheModel(BaseHashCache):
 
     def __contains__(self, key: str) -> bool:
         encoded_key = self._encode_key(key)
-        exists = self.client.exists(encoded_key) == 1
+        exists = self.db.exists(encoded_key) == 1
         logger.debug(f"Checked existence of key: {key}, result: {exists}")
         return exists
 
     def clear(self) -> None:
         logger.info("Clearing Redis cache")
-        self.client.flushdb()
+        self.db.flushdb()
         # self._stop_process()
 
     def __len__(self) -> int:
-        size = self.client.dbsize()
+        size = self.db.dbsize()
         logger.debug(f"Cache size: {size}")
         return size
 
     def __iter__(self):
         logger.debug("Iterating over cache keys")
-        for key in self.client.scan_iter():
+        for key in self.db.scan_iter():
             yield key.decode()
 
 
