@@ -10,8 +10,8 @@ class MemoryHashCache(BaseHashCache):
     def __init__(
         self,
         root_dir: str = ".cache",
-        compress: bool = True,
-        b64: bool = True,
+        compress: bool = None,
+        b64: bool = None,
     ) -> None:
         super().__init__(
             root_dir=root_dir,

@@ -11,69 +11,31 @@ from functools import cached_property
 
 
 class SqliteHashCache(BaseHashCache):
-    engine = 'sqlite'
-    filename = 'db.sqlitedict'
-
-    def __init__(
-        self,
-        root_dir: str = ".cache",
-        compress: bool = True,
-        b64: bool = True,
-    ) -> None:
-        super().__init__(
-            root_dir=root_dir,
-            compress=compress,
-            b64=b64,
-        )
-        self.db_path = self.path
-        self._db = None
-        self._db_r = None
-
-    @property
-    def db(self):
-        if not self._db:
-            self._db = self.get_db()
-        return self._db
-
-    @property
-    def db_r(self):
-        if not self._db_r:
-            self._db_r = self.get_db()
-        return self._db_r
+    engine = "sqlite"
+    filename = "db.sqlitedict"
 
     def get_db(self, read_only=False):
-        
         if read_only:
             try:
-                return SqliteDict(
-                    self.db_path,flag="r"
-                )
+                return SqliteDict(self.path, flag="r")
             except Exception:
                 pass
-        
-        return SqliteDict(self.db_path, flag='c', autocommit=True)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        for dbkey in ["_db", "_db_r"]:
-            db = getattr(self, dbkey, None)
-            if db is not None:
-                db.close()
-                setattr(self, dbkey, None)
+        return SqliteDict(self.path, flag="c", autocommit=True)
 
     def __setitem__(self, key: str, value: Any) -> None:
-        if self._db:
-            self._db[self._encode_key(key)] = self._encode_value(value)
-        else:
-            with self.get_db() as db:
-                db[self._encode_key(key)] = self._encode_value(value)
+        encoded_key = self._encode_key(key)
+        encoded_value = self._encode_value(value)
+        # db = self._db or self.get_db()
+        self.db[encoded_key] = encoded_value
 
     def __getitem__(self, key: str) -> Any:
+        encoded_key = self._encode_key(key)
         try:
-            if self._db_r:
-                return self._decode_value(self._db_r[self._encode_key(key)])
-            else:
-                with self.get_db(read_only=True) as db:
-                    return self._decode_value(db[self._encode_key(key)])
+            encoded_value = self.db_r[encoded_key]
+            try:
+                self._decode_value(encoded_value)
+            except ValueError:
+                return ValueError(key)
         except KeyError:
             raise KeyError(key)
 
@@ -86,22 +48,25 @@ class SqliteHashCache(BaseHashCache):
                 return encoded_key in db
 
     def clear(self) -> None:
-        if self._db:
-            self._db.clear()
-        else:
-            with SqliteDict(self.db_path, flag="c", autocommit=True) as db:
-                db.clear()
+        self.db.clear()
 
     def __len__(self) -> int:
-        if self._db_r:
-            return len(self._db_r)
-        else:
-            with self.get_db(read_only=True) as db:
-                return len(db)
+        return len(self.db_r)
 
     def __iter__(self):
+        yield from self.db_r.keys()
+
+    def __delitem__(self, key: str) -> None:
+        encoded_key = self._encode_key(key)
+        if self._db:
+            del self._db[encoded_key]
+        else:
+            with self.get_db() as db:
+                del db[encoded_key]
+
+    def _keys(self):
         if self._db_r:
-            yield from self._db_r.keys()
+            return self._db_r.keys()
         else:
             with self.get_db(read_only=True) as db:
-                yield from db.keys()
+                return db.keys()

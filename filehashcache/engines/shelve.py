@@ -1,95 +1,63 @@
-import os
 import shelve
 from typing import Any
 from ..filehashcache import BaseHashCache
-import fcntl
-import time
+from functools import lru_cache
 
-class ShelveHashCache(BaseHashCache):
+# Global shelve database
+GLOBAL_SHELVE_DB = None
+
+def get_global_shelve_db(db_path, writeback=True):
+    global GLOBAL_SHELVE_DB
+    if GLOBAL_SHELVE_DB is None:
+        GLOBAL_SHELVE_DB = shelve.open(db_path, writeback=writeback)
+    return GLOBAL_SHELVE_DB
+
+class ShelveHashCacheModel(BaseHashCache):
     engine = 'shelve'
     filename = 'db.shelve'
 
-    def __init__(self, root_dir: str = ".cache", compress: bool = True, b64: bool = True) -> None:
+    def __init__(self, root_dir: str = ".cache", compress: bool = None, b64: bool = None) -> None:
         super().__init__(root_dir=root_dir, compress=compress, b64=b64)
         self.db_path = self.path
-        self.lock_path = self.db_path + '.lock'
-        self._db = None
-
-    def __enter__(self):
-        self._db = shelve.open(self.db_path, writeback=True)
-        return self
+        self._db = get_global_shelve_db(self.db_path)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._db:
-            self._db.close()
-            self._db = None
-
-    def _acquire_lock(self):
-        while True:
-            try:
-                self.lock_file = open(self.lock_path, 'w')
-                fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return
-            except IOError:
-                time.sleep(0.1)
-
-    def _release_lock(self):
-        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
-        self.lock_file.close()
+        # Don't close the database here, as it's now managed globally
+        pass
 
     def __setitem__(self, key: str, value: Any) -> None:
         encoded_key = self._encode_key(key)
         encoded_value = self._encode_value(value)
-        self._acquire_lock()
-        try:
-            with shelve.open(self.db_path, writeback=True) as db:
-                db[encoded_key] = encoded_value
-        finally:
-            self._release_lock()
+        self._db[encoded_key] = encoded_value
 
     def __getitem__(self, key: str) -> Any:
         encoded_key = self._encode_key(key)
-        self._acquire_lock()
         try:
-            with shelve.open(self.db_path) as db:
-                try:
-                    encoded_value = db[encoded_key]
-                except KeyError:
-                    raise KeyError(key)
+            encoded_value = self._db[encoded_key]
             return self._decode_value(encoded_value)
-        finally:
-            self._release_lock()
-
+        except KeyError:
+            raise KeyError(key)
 
     def __contains__(self, key: str) -> bool:
         encoded_key = self._encode_key(key)
-        self._acquire_lock()
-        try:
-            with shelve.open(self.db_path) as db:
-                return encoded_key in db
-        finally:
-            self._release_lock()
+        return encoded_key in self._db
 
     def clear(self) -> None:
-        self._acquire_lock()
-        try:
-            with shelve.open(self.db_path, writeback=True) as db:
-                db.clear()
-        finally:
-            self._release_lock()
+        self._db.clear()
 
     def __len__(self) -> int:
-        self._acquire_lock()
-        try:
-            with shelve.open(self.db_path) as db:
-                return len(db)
-        finally:
-            self._release_lock()
+        return len(self._db)
         
-    def __iter__(self):
-        self._acquire_lock()
+    def _keys(self):
+        yield from self._db.keys()
+
+    def __delitem__(self, key: str) -> None:
+        encoded_key = self._encode_key(key)
         try:
-            with shelve.open(self.db_path) as db:
-                yield from db.keys()
-        finally:
-            self._release_lock()
+            del self._db[encoded_key]
+        except KeyError:
+            raise KeyError(key)
+
+@lru_cache(maxsize=None)
+def ShelveHashCache(*args, **kwargs):
+    return ShelveHashCacheModel(*args, **kwargs)

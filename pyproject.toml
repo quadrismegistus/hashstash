@@ -25,6 +25,7 @@ version = {attr = "filehashcache.__version__"}
 "Bug Tracker" = "https://github.com/yourusername/filehashcache/issues"
 
 [project.optional-dependencies]
+extra = ["pandas", "ipython", "tqdm", "orjson"]
 dev = ["pandas", "setuptools-scm", "ipython"]
 test = ["pytest"]
 
