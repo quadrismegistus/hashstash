@@ -1,5 +1,12 @@
+from typing import *
+import os
 import multiprocessing as mp
 from typing import Literal
+
+
+DEFAULT_ROOT_DIR = os.path.expanduser('~/.cache/hashdict')
+DEFAULT_NAME = 'default'
+
 
 # Default settings
 DEFAULT_COMPRESS = True

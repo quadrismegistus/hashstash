@@ -1,25 +1,13 @@
-import warnings
-warnings.filterwarnings('ignore')
-import plotnine as p9
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import json
-import random
-from pprint import pprint
-import time
+from filehashcache import *
+from filehashcache.engines.redis import *
 import pandas as pd
-import tempfile
-from filehashcache import Cache
-from typing import Literal
-import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor
+import plotnine as p9
+import itertools
 from tqdm import tqdm
-from functools import lru_cache
-from itertools import groupby
+import tempfile
 import shutil
-from ..constants import *
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
-# cache = lru_cache(maxsize=None)
-cache = Cache(engine='file', root_dir='.cache_profile')
 
 def generate_profile_sizes(num_sizes: int = NUM_PROFILE_SIZES, multiplier: int = PROFILE_SIZE_MULTIPLIER, initial_size: int = INITIAL_PROFILE_SIZE) -> tuple:
     profile_sizes = []
@@ -68,71 +56,105 @@ class FileHashCacheProfiler:
         return f"{engine} ({self.get_encoding_str(compress, b64)})"
 
     @classmethod
-    # @cache.decorator
     def profile_cache(
         self,
-        root_dir: str = ".cache_profile",
+        root_dir: str = DEFAULT_ROOT_DIR,
         engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE,
-        compress: bool = None,
-        b64: bool = None,
+        compress: bool = DEFAULT_COMPRESS,
+        b64: bool = DEFAULT_B64,
         size: int = DEFAULT_DATA_SIZE,
         verbose: bool = False,
-        shared_cache=None,
         iter=None,
+        name = 'performance_cache',
     ):
-        if shared_cache is not None:
-            cache = Cache(root_dir, engine=engine, compress=compress, b64=b64, shared_cache=shared_cache)
-        else:
-            cache = Cache(root_dir, engine=engine, compress=compress, b64=b64)
+        cache = Cache(name=name, engine=engine, root_dir=root_dir, compress=compress, b64=b64)
         data = self.generate_data(size)
         raw_size = len(json.dumps(data).encode())
+        cache_key = f"test_data_{size}_{random.random()}"
+
+        # Encode value to get cached size
+        encoded_value = cache.encode(data)
+        cached_size = len(encoded_value)
+
+        results = []
+        common_data = {
+            "Encoding": self.get_encoding_str(compress, b64),
+            "Engine": engine,
+            "Size (B)": int(size),
+            "Raw Size (B)": raw_size,
+            "Cached Size (B)": cached_size,
+            "Compression Ratio (%)": cached_size / raw_size * 100,
+            "Iteration": iter if iter else 0,
+        }
+
+        def add_result(operation, time_taken, additional_data=None):
+            result = {
+                "Operation": operation,
+                "Time (s)": time_taken,
+                "Rate (it/s)": 1 / time_taken,
+                "Speed (MB/s)": raw_size / time_taken / 1024 / 1024,
+                **common_data
+            }
+            if additional_data:
+                result.update(additional_data)
+            results.append(result)
+
+        # Measure key encoding speed
+        start_time = time.time()
+        encoded_key = cache.encode(cache_key)
+        key_encode_time = time.time() - start_time
+        add_result("Encode Key", key_encode_time)
+
+        # Measure key decoding speed
+        start_time = time.time()
+        _ = cache.decode(encoded_key)
+        key_decode_time = time.time() - start_time
+        add_result("Decode Key", key_decode_time)
+
+        # Measure value encoding speed
+        start_time = time.time()
+        encoded_value = cache.encode(data)
+        value_encode_time = time.time() - start_time
+        add_result("Encode Value", value_encode_time)
+
+        # Measure value decoding speed
+        start_time = time.time()
+        _ = cache.decode(encoded_value)
+        value_decode_time = time.time() - start_time
+        add_result("Decode Value", value_decode_time)
 
         # Measure write speed
         start_time = time.time()
-        cache_key = f"test_data_{size}_{random.random()}"
         cache[cache_key] = data
         write_time = time.time() - start_time
+        add_result("Write", write_time)
 
-        cached_size = len(cache._encode_value(data))
+        # Add compression data
+        add_result("Compress", value_encode_time)
 
         # Measure read speed
         start_time = time.time()
         _ = cache[cache_key]
         read_time = time.time() - start_time
+        add_result("Read", read_time)
 
-        outd = {
-            "Encoding": self.get_encoding_str(compress, b64),
-            "Engine": engine,
-            "Method": f"{self.get_method_str(engine,compress,b64)}",
-            "Write Speed (MB/s)": raw_size / write_time / 1024 / 1024,
-            "Read Speed (MB/s)": raw_size / read_time / 1024 / 1024,
-            "Write Rate (it/s)": 1 / write_time,  # New metric
-            "Read Rate (it/s)": 1 / read_time,  # New metric
-            "Space Saved (MB/GB)": (raw_size - cached_size)
-            / 1024
-            / 1024
-            / (raw_size / 1024 / 1024 / 1024),
-            "Size (B)": int(size),
-            "Write Time (s)": write_time,
-            "Read Time (s)": read_time,
-            "Raw Size (B)": raw_size,#
-            "Raw Size (MB)": raw_size / 1024 / 1024,
-            "Cached Size (MB)": cached_size / 1024 / 1024,
-            "Space Saved (MB)": (raw_size - cached_size) / 1024 / 1024,
-            "Compression Ratio (%)": cached_size / raw_size * 100,
-            "Iteration": iter if iter else 0,
-        }
+        # Calculate and add raw write and read times
+        raw_write_time = write_time - (key_encode_time + value_encode_time)
+        raw_read_time = read_time - (key_decode_time + value_decode_time)
+        add_result("Raw Write", raw_write_time)
+        add_result("Raw Read", raw_read_time)
 
         if verbose:
-            print(outd)
-        return outd
+            print(results)
+        return results
+        return results
 
     @classmethod
     def profile_cache_parallel(cls, args):
         return cls.profile_cache(**args)
 
     @classmethod
-    @cache.decorator
+    @cached_result
     def profile(
         self,
         engine=ENGINES,
@@ -142,50 +164,59 @@ class FileHashCacheProfiler:
         iterations=DEFAULT_ITERATIONS,
         verbose: bool = False,
         num_proc: tuple = DEFAULT_NUM_PROC,
-        group_by=('engine',),
+        profile_by=('size','engine'),
     ):
         if not size:
             size = generate_profile_sizes()
         
         results = []
-        tasks = [
-            {
-                'engine':random.choice(engine),
-                'compress': random.choice(compress),
-                'b64': random.choice(b64),
-                'size': random.choice(size),
-                'verbose': verbose,
-                'iter':i,
-            } for i in range(iterations)
+        
+        # Generate all possible group combinations
+        group_combinations = [
+            dict(zip(profile_by, values))
+            for values in itertools.product(*(
+                engine if param == 'engine' else
+                compress if param == 'compress' else
+                b64 if param == 'b64' else
+                size if param == 'size' else
+                [True, False] if param == 'verbose' else
+                [None]  # Default for any other parameter
+                for param in profile_by
+            ))
         ]
+        random.shuffle(group_combinations)
+        pbar = tqdm(group_combinations, desc='Group combinations', position=0, leave=True)
+        for group in pbar:
+            pbar.set_description(str(group))
+            tasks = []
+            for _ in range(iterations):
+                task = {
+                    'engine': group.get('engine', random.choice(engine)),
+                    'compress': group.get('compress', random.choice(compress)),
+                    'b64': group.get('b64', random.choice(b64)),
+                    'size': group.get('size', random.choice(size)),
+                    'verbose': group.get('verbose', verbose),
+                    'iter': _,
+                }
+                tasks.append(task)
 
-        # Group tasks by specified parameters
-        tasks.sort(key=lambda x: tuple(x[param] for param in group_by))
-        grouped_tasks = groupby(tasks, key=lambda x: tuple(x[param] for param in group_by))
-
-        # num_proc = num_proc + 1 if num_proc else mp.cpu_count()
-        # num_proc_l = list(range(1, num_proc))
-
-        for group_key, group_tasks in grouped_tasks:
-            group_tasks = [t for t in group_tasks]
-            print(f'\n{group_key}: {len(group_tasks)}')
-            random.shuffle(group_tasks)
-            for nproc in tqdm(num_proc, desc=f"Group {group_key}, Num Processors", position=1):
-                writenum=0
-                sizenow=0
-                timestart=time.time()
-                for res in self.profile_cache_nproc(group_tasks, nproc):
+            for nproc in num_proc:
+                writenum = 0
+                sizenow = 0
+                timestart = time.time()
+                for res in self.profile_cache_nproc(tasks, nproc, group):
                     if res is not None:
-                        writenum+=1
-                        sizenow+=res.get('Raw Size (MB)',0)
-                        results.append({**res, 'write_num':writenum, 'write_total_size':sizenow, 'write_total_time':time.time() - timestart})
+                        writenum += 1
+                        sizenow += res.get('Raw Size (MB)', 0)
+                        results.append({**res, 'write_num': writenum, 'write_total_size': sizenow, 'write_total_time': time.time() - timestart})
 
         return results
     
     @classmethod
-    def profile_cache_nproc(self, tasks, nproc):
+    def profile_cache_nproc(self, tasks, nproc, group=None):
         def return_iter(proc, numproc):
-            for result in tqdm(proc, desc=f'Processing {numproc}x', total=len(tasks), position=0):
+            for result in tqdm(proc, desc=f'Processing {numproc}x ({group})', total=len(tasks), position=0, leave=True):
+            # for result in proc:
                 if result is not None:
                     result["Num Processes"] = numproc
                     yield result
@@ -200,6 +231,9 @@ class FileHashCacheProfiler:
             else:
                 proc = (self.profile_cache(**task) for task in tasks)
                 yield from return_iter(proc, nproc)
+
+            cache_obj = Cache(engine=group['engine'], root_dir=root_dir)
+            cache_obj.clear()
 
             shutil.rmtree(root_dir, ignore_errors=True)
             

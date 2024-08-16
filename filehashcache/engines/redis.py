@@ -18,10 +18,11 @@ _container_id = None
 
 class RedisHashCache(BaseHashCache):
     engine = 'redis'
-    filename = 'data'
+    filename = 'db_redis'
     host = REDIS_HOST
     port = REDIS_PORT
     dbname = REDIS_DB
+    ensure_dir = False
 
     def __init__(self, *args, host=None,port=None,dbname=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -33,41 +34,28 @@ class RedisHashCache(BaseHashCache):
         logger.info(f"Connecting to Redis at {self.host}:{self.port}")
         return redis.Redis(host=self.host, port=self.port, db=self.dbname)
 
-    def __setitem__(self, key: str, value: Any) -> None:
-        encoded_key = self._encode_key(key)
-        encoded_value = self._encode_value(value)
-        self.db.set(encoded_key, encoded_value)
-        logger.debug(f"Set key: {key}")
-
-    def __getitem__(self, key: str) -> Any:
-        encoded_key = self._encode_key(key)
-        encoded_value = self.db.get(encoded_key)
-        if encoded_value is None:
-            logger.warning(f"Key not found: {key}")
-            raise KeyError(key)
-        logger.debug(f"Retrieved key: {key}")
-        return self._decode_value(encoded_value)
-
-    def __contains__(self, key: str) -> bool:
-        encoded_key = self._encode_key(key)
-        exists = self.db.exists(encoded_key) == 1
-        logger.debug(f"Checked existence of key: {key}, result: {exists}")
-        return exists
-
     def clear(self) -> None:
         logger.info("Clearing Redis cache")
-        self.db.flushdb()
-        # self._stop_process()
+        with self as cache, cache.db as db:
+            db.flushdb()
 
     def __len__(self) -> int:
-        size = self.db.dbsize()
-        logger.debug(f"Cache size: {size}")
-        return size
+        with self as cache, cache.db as db:
+            return db.dbsize()
 
-    def __iter__(self):
-        logger.debug("Iterating over cache keys")
-        for key in self.db.scan_iter():
-            yield key.decode()
+    def _keys(self):
+        with self as cache, cache.db as db:
+            yield from db.scan_iter()
+
+    def _values(self):
+        with self as cache, cache.db as db:
+            for k in db.scan_iter():
+                yield db[k]
+    
+    def _items(self):
+        with self as cache, cache.db as db:
+            for k in db.scan_iter():
+                yield k, db[k]
 
 
 
@@ -149,7 +137,7 @@ def _start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=
                 logger.info("Redis server is ready to accept connections")
                 return
             except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError):
-                time.sleep(.1)
+                time.sleep(1)
         
         raise TimeoutError("Redis server did not start within the expected time")
     except subprocess.CalledProcessError as e:

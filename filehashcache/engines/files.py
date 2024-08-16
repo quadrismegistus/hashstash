@@ -1,105 +1,75 @@
-import shutil
-import os
-import json
-import hashlib
-import zlib
-from base64 import b64encode, b64decode
-from typing import Any, Optional
-from abc import ABC, abstractmethod
-from .base import BaseHashCache
-from ..constants import *
+from .base import *
 
 class FileHashCache(BaseHashCache):
     engine = 'file'
-    filename = 'dirs'
+    filename = 'db_files'
     
-    def _encode_filepath(self, key):
-        key = super()._encode_key(key)
-        dirname,fname = key[:2], key[2:]
-        n = 100
-        segmented_key = [fname[i:i+n] for i in range(0, len(fname), n)]
-        return os.path.join(self.path, dirname, *segmented_key)
-    
-    def _decode_filepath(self, filepath):
-        # Remove the base path
-        relative_path = os.path.relpath(filepath, self.path)
-        
-        # Join all parts except the first two (which represent the first two characters of the encoded key)
-        encoded_key = relative_path.replace('/','')
-        
-        # Decode the key
-        return encoded_key
+    def _encode_filepath(self, encoded_key):
+        hashed_key = self.hash(encoded_key)
+        dir, fname = hashed_key[:2], hashed_key[2:]
+        return os.path.join(self.path, dir, fname)
     
     def __setitem__(self, key: str, value: Any) -> None:
-        """Set an item in the cache.
-
-        Args:
-            key: The cache key.
-            value: The value to cache.
-        """
-        filepath = self._encode_filepath(key)
+        encoded_key = self.encode_key(key)
+        filepath = self._encode_filepath(encoded_key)
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        encoded_value = self.encode(value)
+        
         with open(filepath, 'wb') as f:
-            f.write(self._encode_value(value))
-        #print(f"Item written to: {filepath}")  # Debug #print
+            f.write(encoded_key + b'\n' + encoded_value)
 
     def __getitem__(self, key: str) -> Any:
-        """Get an item from the cache.
-
-        Args:
-            key: The cache key.
-
-        Returns:
-            The cached value.
-
-        Raises:
-            KeyError: If the key is not found in the cache.
-        """
-        filepath = self._encode_filepath(key)
+        encoded_key = self.encode_key(key)
+        filepath = self._encode_filepath(encoded_key)
         if not os.path.exists(filepath):
             raise KeyError(key)
+        
         with open(filepath, 'rb') as f:
-            return self._decode_value(f.read())
+            f.readline() # skip key
+            encoded_value = f.read()
+        
+        return self.decode(encoded_value)
 
     def __contains__(self, key: str) -> bool:
-        """Check if a key exists in the cache.
-
-        Args:
-            key: The cache key.
-
-        Returns:
-            True if the key exists, False otherwise.
-        """
-        return os.path.exists(self._encode_filepath(key))
+        encoded_key = self.encode_key(key)
+        filepath = self._encode_filepath(encoded_key)
+        return os.path.exists(filepath)
 
     def clear(self) -> None:
-        """Clear all items from the cache."""
+        import shutil
         shutil.rmtree(self.path, ignore_errors=True)
         os.makedirs(self.path, exist_ok=True)
 
     def __len__(self):
-        return sum(1 for x in self._paths())
+        return sum(1 for _ in self._paths())
 
     def _paths(self):
-        for root, dirs, files in os.walk(self.path):
+        for root, _, files in os.walk(self.path):
             for file in files:
-                path = os.path.join(root, file)
-                yield path
+                if len(file) == 30 and file[0]!='.':
+                    yield os.path.join(root, file)
 
     def _keys(self):
-        """Iterate over all keys in the cache."""
         for path in self._paths():
-            yield self._decode_filepath(path)
+            with open(path, 'rb') as f:
+                yield f.readline().strip()
+    
+    def _values(self):
+        for path in self._paths():
+            with open(path, 'rb') as f:
+                f.readline()
+                yield f.readline().strip()
+
+    def _items(self):
+        for path in self._paths():
+            with open(path, 'rb') as f:
+                key = f.readline().strip()
+                val = f.readline().strip()
+                yield (key,val)
+    
 
     def __delitem__(self, key: str) -> None:
-        """Delete an item from the cache.
-
-        Args:
-            key: The cache key.
-
-        Raises:
-            KeyError: If the key is not found in the cache.
-        """
         filepath = self._encode_filepath(key)
         if not os.path.exists(filepath):
             raise KeyError(key)
