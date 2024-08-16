@@ -1,8 +1,7 @@
 from ..filehashcache import *
+from collections.abc import MutableMapping
 
-import threading
-
-class BaseHashCache(ABC):
+class BaseHashCache(MutableMapping):
     engine = 'base'
 
     root_dir = DEFAULT_ROOT_DIR
@@ -51,6 +50,10 @@ class BaseHashCache(ABC):
     @retry_patiently()
     def db(self):
         return self.get_db()
+    
+    @property
+    def data(self):
+        return self.db
     
     def get_db(self):
         return {}
@@ -124,6 +127,43 @@ class BaseHashCache(ABC):
     def __iter__(self):
         return self.keys()
     
+
+    def __iter__(self):
+        return self.keys()
+
+    def copy(self):
+        return dict(self.items())
+
+    def update(self, other=None, **kwargs):
+        if other is not None:
+            if hasattr(other, "keys"):
+                for key in other:
+                    self[key] = other[key]
+            else:
+                for key, value in other:
+                    self[key] = value
+        for key, value in kwargs.items():
+            self[key] = value
+
+    def setdefault(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            self[key] = default
+            return default
+
+    def pop(self, key, default=None):
+        try:
+            value = self[key]
+            del self[key]
+            return value
+        except KeyError:
+            return default
+
+    def popitem(self):
+        key, value = next(iter(self.items()))
+        del self[key]
+        return value
 
     def encode(self, obj: Any) -> bytes:
         return self.encoder.encode(obj)
