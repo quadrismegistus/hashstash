@@ -5,7 +5,7 @@ import os
 import logging
 from typing import Any
 from functools import cached_property, lru_cache
-from .base import BaseHashCache
+from .base import BaseHashDict
 from ..constants import *
 import time
 
@@ -16,7 +16,7 @@ _process_started = False
 _container_id = None
 
 
-class RedisHashCache(BaseHashCache):
+class RedisHashDict(BaseHashDict):
     engine = 'redis'
     filename = 'db_redis'
     host = REDIS_HOST

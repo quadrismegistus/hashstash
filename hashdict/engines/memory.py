@@ -1,5 +1,5 @@
 from typing import Any
-from .base import BaseHashCache
+from .base import BaseHashDict
 from collections import defaultdict, UserDict
 
 IN_MEMORY_CACHE = defaultdict(dict)
@@ -20,7 +20,7 @@ class MemoryDB(UserDict):
         global IN_MEMORY_CACHE
         IN_MEMORY_CACHE[self.name].clear()
 
-class MemoryHashCache(BaseHashCache):
+class MemoryHashDict(BaseHashDict):
     engine = 'memory'
     ensure_dir = False
 

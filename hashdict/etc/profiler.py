@@ -1,4 +1,4 @@
-from ..filehashcache import *
+from ..hashdict import *
 
 class Profiler:
     @staticmethod

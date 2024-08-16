@@ -1,12 +1,12 @@
-from ..filehashcache import *
+from ..hashdict import *
 
 @fcache
-def Cache(
+def HashDict(
     name: str = DEFAULT_NAME,
     engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE,
     *args,
     **kwargs,
-) -> 'BaseHashCache':
+) -> 'BaseHashDict':
     """
     Factory function to create the appropriate cache object.
 
@@ -16,7 +16,7 @@ def Cache(
         **kwargs: Additional keyword arguments to pass to the cache constructor.
 
     Returns:
-        An instance of the appropriate BaseHashCache subclass.
+        An instance of the appropriate BaseHashDict subclass.
 
     Raises:
         ValueError: If an invalid engine is provided.
@@ -24,24 +24,24 @@ def Cache(
     logger.debug(f"Cache called with engine: {engine}, name: {name}, args: {args}, kwargs: {kwargs}")
     
     if engine == "file":
-        from ..engines.files import FileHashCache
+        from ..engines.files import FileHashDict
 
-        return FileHashCache(*args, name=name, **kwargs)
+        return FileHashDict(*args, name=name, **kwargs)
     elif engine == "sqlite":
-        from ..engines.sqlite import SqliteHashCache
+        from ..engines.sqlite import SqliteHashDict
 
-        return SqliteHashCache(*args, name=name,**kwargs)
+        return SqliteHashDict(*args, name=name,**kwargs)
     elif engine == "memory":
-        from ..engines.memory import MemoryHashCache
+        from ..engines.memory import MemoryHashDict
 
-        return MemoryHashCache(*args, name=name,**kwargs)
+        return MemoryHashDict(*args, name=name,**kwargs)
     elif engine == "shelve":
-        from ..engines.shelve import ShelveHashCache
+        from ..engines.shelve import ShelveHashDict
 
-        return ShelveHashCache(*args, name=name,**kwargs)
+        return ShelveHashDict(*args, name=name,**kwargs)
     elif engine == "redis":
-        from ..engines.redis import RedisHashCache
-        return RedisHashCache(*args, name=name,**kwargs)
+        from ..engines.redis import RedisHashDict
+        return RedisHashDict(*args, name=name,**kwargs)
     else:
         raise ValueError(
             f"Invalid engine: {engine}. Choose 'file', 'sqlite', 'memory', or 'shelve'."
@@ -70,12 +70,12 @@ def retry_patiently(max_retries=10, base_delay=0.1, max_delay=10):
     return decorator
 
 
-def cached_result(_func=None, *cache_args, cache: Optional['BaseHashCache'] = None, force=False, **cache_kwargs):
+def cached_result(_func=None, *cache_args, cache: Optional['BaseHashDict'] = None, force=False, **cache_kwargs):
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
             nonlocal cache
-            cache_context = cache if cache is not None else Cache(*cache_args, **cache_kwargs)
+            cache_context = cache if cache is not None else HashDict(*cache_args, **cache_kwargs)
             # Create a unique key based on the function contents
             try:
                 func_code = inspect.getsource(func).strip()

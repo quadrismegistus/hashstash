@@ -1,5 +1,5 @@
-from filehashcache import *
-from filehashcache.engines.redis import *
+from hashdict import *
+from hashdict.engines.redis import *
 import pandas as pd
 import plotnine as p9
 import itertools
@@ -20,7 +20,7 @@ def generate_profile_sizes(num_sizes: int = NUM_PROFILE_SIZES, multiplier: int =
 
 
 
-class FileHashCacheProfiler:
+class FileHashDictProfiler:
     root_dir = ".cache_profile"
 
     @staticmethod
@@ -67,7 +67,7 @@ class FileHashCacheProfiler:
         iter=None,
         name = 'performance_cache',
     ):
-        cache = Cache(name=name, engine=engine, root_dir=root_dir, compress=compress, b64=b64)
+        cache = HashDict(name=name, engine=engine, root_dir=root_dir, compress=compress, b64=b64)
         data = self.generate_data(size)
         raw_size = len(json.dumps(data).encode())
         cache_key = f"test_data_{size}_{random.random()}"
@@ -232,7 +232,7 @@ class FileHashCacheProfiler:
                 proc = (self.profile_cache(**task) for task in tasks)
                 yield from return_iter(proc, nproc)
 
-            cache_obj = Cache(engine=group['engine'], root_dir=root_dir)
+            cache_obj = HashDict(engine=group['engine'], root_dir=root_dir)
             cache_obj.clear()
 
             shutil.rmtree(root_dir, ignore_errors=True)
@@ -366,7 +366,7 @@ def imap(executor, func, *iterables, chunksize=1):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Profile FileHashCache performance")
+    parser = argparse.ArgumentParser(description="Profile FileHashDict performance")
     parser.add_argument(
         "--engine",
         nargs="+",
@@ -422,7 +422,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    results = FileHashCacheProfiler.profile(
+    results = FileHashDictProfiler.profile(
         engine=tuple(args.engine),
         compress=tuple(args.compress),
         b64=tuple(args.b64),

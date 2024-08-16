@@ -1,7 +1,7 @@
-from ..filehashcache import *
+from ..hashdict import *
 from collections.abc import MutableMapping
 
-class BaseHashCache(MutableMapping):
+class BaseHashDict(MutableMapping):
     engine = 'base'
 
     root_dir = DEFAULT_ROOT_DIR

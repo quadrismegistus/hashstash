@@ -1,8 +1,8 @@
-from .base import BaseHashCache
+from .base import BaseHashDict
 from sqlitedict import SqliteDict
 from functools import cached_property
 
-class SqliteHashCache(BaseHashCache):
+class SqliteHashDict(BaseHashDict):
     engine = "sqlite"
     filename = "db.sqlite"
 

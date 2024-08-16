@@ -6,25 +6,25 @@ import json
 import random
 import time
 import pytest
-from filehashcache.engines.files import FileHashCache
-from filehashcache.engines.sqlite import SqliteHashCache
-from filehashcache.engines.memory import MemoryHashCache
-from filehashcache.engines.shelve import ShelveHashCache
-from filehashcache.engines.redis import RedisHashCache
+from hashdict.engines.files import FileHashDict
+from hashdict.engines.sqlite import SqliteHashDict
+from hashdict.engines.memory import MemoryHashDict
+from hashdict.engines.shelve import ShelveHashDict
+from hashdict.engines.redis import RedisHashDict
 
 TEST_CLASSES = [
-    FileHashCache,
-    SqliteHashCache,
-    MemoryHashCache,
-    ShelveHashCache,
-    RedisHashCache,
+    FileHashDict,
+    SqliteHashDict,
+    MemoryHashDict,
+    ShelveHashDict,
+    RedisHashDict,
 ]
 
 
 @pytest.fixture(params=TEST_CLASSES)
 def cache(request, tmp_path):
     cache_type = request.param
-    if cache_type == MemoryHashCache:
+    if cache_type == MemoryHashDict:
         cache = cache_type()
     else:
         cache = cache_type(name=f"{cache_type.__name__.lower()}_cache", root_dir=tmp_path)
@@ -33,7 +33,7 @@ def cache(request, tmp_path):
     yield cache
 
 
-class TestHashCache:
+class TestHashDict:
     def test_set_get(self, cache):
         cache["test_key"] = "test_value"
         assert cache["test_key"] == "test_value"
@@ -62,7 +62,7 @@ class TestHashCache:
 
         cache["large_data"] = large_data
 
-        if isinstance(cache, ShelveHashCache):
+        if isinstance(cache, ShelveHashDict):
             time.sleep(0.1)  # Add a small delay to ensure data is written
 
         cached_size = self._get_cached_size(cache, "large_data")
@@ -85,7 +85,7 @@ class TestHashCache:
         raw_size = len(json.dumps(test_data).encode())
 
         cache["test_data"] = test_data
-        if isinstance(cache, ShelveHashCache):
+        if isinstance(cache, ShelveHashDict):
             time.sleep(0.1)  # Add a small delay to ensure data is written
 
         cached_size = self._get_cached_size(cache, "test_data")
@@ -119,7 +119,7 @@ class TestHashCache:
         raw_size = len(json.dumps(very_large_data).encode())
 
         cache["very_large_data"] = very_large_data
-        if isinstance(cache, ShelveHashCache):
+        if isinstance(cache, ShelveHashDict):
             time.sleep(0.1)  # Add a small delay to ensure data is written
 
         cached_size = self._get_cached_size(cache, "very_large_data")
@@ -136,7 +136,7 @@ class TestHashCache:
         assert retrieved_data == very_large_data
 
     def test_cache_path(self, cache, tmp_path):
-        if not isinstance(cache, MemoryHashCache):
+        if not isinstance(cache, MemoryHashDict):
             assert str(cache.path).startswith(str(tmp_path))
 
     def test_cache_encoding(self, cache):
@@ -183,16 +183,16 @@ class TestHashCache:
 
     @staticmethod
     def _get_cached_size(cache, key):
-        if isinstance(cache, FileHashCache):
+        if isinstance(cache, FileHashDict):
             file_path = cache._encode_filepath(cache.encode_key(key))
             return os.path.getsize(file_path)
-        elif isinstance(cache, SqliteHashCache):
+        elif isinstance(cache, SqliteHashDict):
             return len(cache.db[cache.encode_key(key)])
-        elif isinstance(cache, MemoryHashCache):
+        elif isinstance(cache, MemoryHashDict):
             return len(cache.encode(cache.db[cache.encode_key(key)]))
-        elif isinstance(cache, ShelveHashCache):
+        elif isinstance(cache, ShelveHashDict):
             return len(cache.encode(cache.db[cache.encode_key(key)]))
-        elif isinstance(cache, RedisHashCache):
+        elif isinstance(cache, RedisHashDict):
             return len(cache.db.get(cache.encode_key(key)))
         else:
             raise ValueError(f"Unknown cache type: {type(cache)}")
