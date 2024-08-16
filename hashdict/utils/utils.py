@@ -12,7 +12,7 @@ def HashDict(
 
     Args:
         * args: Additional arguments to pass to the cache constructor.
-        engine: The type of cache to create ("file", "sqlite", "memory", or "shelve")
+        engine: The type of cache to create ("file", "sqlite", "memory", "shelve", "redis", "pickledb", or "diskcache")
         **kwargs: Additional keyword arguments to pass to the cache constructor.
 
     Returns:
@@ -42,9 +42,15 @@ def HashDict(
     elif engine == "redis":
         from ..engines.redis import RedisHashDict
         return RedisHashDict(*args, name=name,**kwargs)
+    elif engine == "pickledb":
+        from ..engines.pickledb import PickleDBHashDict
+        return PickleDBHashDict(*args, name=name, **kwargs)
+    elif engine == "diskcache":
+        from ..engines.diskcache import DiskCacheHashDict
+        return DiskCacheHashDict(*args, name=name, **kwargs)
     else:
         raise ValueError(
-            f"Invalid engine: {engine}. Choose 'file', 'sqlite', 'memory', or 'shelve'."
+            f"Invalid engine: {engine}. Choose 'file', 'sqlite', 'memory', 'shelve', 'redis', 'pickledb', or 'diskcache'."
         )
     
 
@@ -64,16 +70,16 @@ def retry_patiently(max_retries=10, base_delay=0.1, max_delay=10):
                         raise  # Re-raise the exception if max retries reached
                     
                     delay = min(base_delay * (2 ** retries) + random.uniform(0, 0.1 * (2 ** retries)), max_delay)
-                    print(f"Attempt {retries}/{max_retries} failed. Retrying in {delay:.2f} seconds. Error: {str(e)}")
+                    # print(f"Attempt {retries}/{max_retries} failed. Retrying in {delay:.2f} seconds. Error: {str(e)}")
                     time.sleep(delay)
         return wrapper
     return decorator
 
 
 def cached_result(_func=None, *cache_args, cache: Optional['BaseHashDict'] = None, force=False, **cache_kwargs):
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable, _force=force) -> Callable:
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args, _force=_force, **kwargs):
             nonlocal cache
             cache_context = cache if cache is not None else HashDict(*cache_args, **cache_kwargs)
             # Create a unique key based on the function contents
@@ -85,6 +91,7 @@ def cached_result(_func=None, *cache_args, cache: Optional['BaseHashDict'] = Non
                 func_code = func.__name__
             key = (func_code, args, kwargs)
 
+            force = kwargs.pop('_force', _force)
             # Check if the result is already in the cache and not forcing
             if not force and key in cache_context:
                 logger.debug(f"Cache hit for {func.__name__}. Returning cached result.")
@@ -113,4 +120,3 @@ class DictContext(UserDict):
 
     def __exit__(self, exc_type, exc_value, traceback):
         pass  # Nothing happens on close
-

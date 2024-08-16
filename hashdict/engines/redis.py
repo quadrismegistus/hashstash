@@ -29,31 +29,6 @@ class RedisHashDict(BaseHashDict):
         # return redis.Redis(host=self.host, port=self.port, db=self.dbname)
         return DictContext(RedisDict(namespace=self.name, host=self.host, port=self.port, db=self.dbname))
 
-    # def clear(self) -> None:
-    #     logger.info("Clearing Redis cache")
-    #     with self as cache, cache.db as db:
-    #         db.flushdb()
-
-    # def __len__(self) -> int:
-    #     with self as cache, cache.db as db:
-    #         return db.dbsize()
-
-    # def _keys(self):
-    #     with self as cache, cache.db as db:
-    #         yield from db.scan_iter()
-
-    # def _values(self):
-    #     with self as cache, cache.db as db:
-    #         for k in db.scan_iter():
-    #             yield db[k]
-    
-    # def _items(self):
-    #     with self as cache, cache.db as db:
-    #         for k in db.scan_iter():
-    #             yield k, db[k]
-
-
-
 
 
 

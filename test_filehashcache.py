@@ -11,6 +11,9 @@ from hashdict.engines.sqlite import SqliteHashDict
 from hashdict.engines.memory import MemoryHashDict
 from hashdict.engines.shelve import ShelveHashDict
 from hashdict.engines.redis import RedisHashDict
+from hashdict.engines.pickledb import PickleDBHashDict
+from hashdict.engines.diskcache import DiskCacheHashDict
+from hashdict.engines.lmdb import LMDBHashDict
 
 TEST_CLASSES = [
     FileHashDict,
@@ -18,6 +21,9 @@ TEST_CLASSES = [
     MemoryHashDict,
     ShelveHashDict,
     RedisHashDict,
+    # PickleDBHashDict,
+    DiskCacheHashDict,
+    LMDBHashDict
 ]
 
 
@@ -183,19 +189,8 @@ class TestHashDict:
 
     @staticmethod
     def _get_cached_size(cache, key):
-        if isinstance(cache, FileHashDict):
-            file_path = cache._encode_filepath(cache.encode_key(key))
-            return os.path.getsize(file_path)
-        elif isinstance(cache, SqliteHashDict):
-            return len(cache.db[cache.encode_key(key)])
-        elif isinstance(cache, MemoryHashDict):
-            return len(cache.encode(cache.db[cache.encode_key(key)]))
-        elif isinstance(cache, ShelveHashDict):
-            return len(cache.encode(cache.db[cache.encode_key(key)]))
-        elif isinstance(cache, RedisHashDict):
-            return len(cache.db.get(cache.encode_key(key)))
-        else:
-            raise ValueError(f"Unknown cache type: {type(cache)}")
+        return len(cache[key])
+        
 
 
 if __name__ == "__main__":

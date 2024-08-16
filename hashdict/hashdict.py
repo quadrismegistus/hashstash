@@ -2,6 +2,7 @@
 from .constants import *
 
 ## standard library
+from warnings import filterwarnings
 from collections import UserDict, defaultdict
 import subprocess
 import atexit
@@ -38,6 +39,7 @@ jsonpickle_numpy.register_handlers()
 jsonpickle_pandas.register_handlers()
 
 ## objects
+filterwarnings('ignore')
 fcache = lru_cache(maxsize=None)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

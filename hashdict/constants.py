@@ -13,17 +13,17 @@ DEFAULT_COMPRESS = True
 DEFAULT_B64 = True
 
 # Cache engines
-ENGINES = ("memory", "file", "sqlite", "shelve", "redis")
+ENGINES = ("memory", "file", "sqlite", "redis", "diskcache", "lmdb") # "shelve",  "pickledb"
 
 # Performance testing constants
 DEFAULT_NUM_PROC = (1, 2, mp.cpu_count())
 DEFAULT_DATA_SIZE = 1_000_000
-ENGINE_TYPES = Literal["memory", "file", "sqlite", "shelve", "redis"]
+ENGINE_TYPES = Literal["memory", "file", "sqlite", "redis", "diskcache", "lmdb", "shelve", "pickledb"]
 DEFAULT_ENGINE_TYPE = "file"
 INITIAL_SIZE = 1024
 DEFAULT_ITERATIONS = 1
-GROUPBY = ["Engine", "Encoding", "Method"]
-SORTBY = "MB/s"
+GROUPBY = ["Engine", "Encoding", "Operation", "write_num"]
+SORTBY = "Speed (MB/s)"
 DEFAULT_INDEX = ["Encoding", "Engine"]
 
 
