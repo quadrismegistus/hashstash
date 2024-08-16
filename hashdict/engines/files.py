@@ -14,7 +14,7 @@ class FileHashDict(BaseHashDict):
         filepath = self._encode_filepath(encoded_key)
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
-        encoded_value = self.encode(value)
+        encoded_value = self.encode_value(value)
         
         with open(filepath, 'wb') as f:
             f.write(encoded_key + b'\n' + encoded_value)

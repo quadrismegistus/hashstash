@@ -2,7 +2,9 @@
 from .constants import *
 
 ## standard library
-from collections import UserDict
+from collections import UserDict, defaultdict
+import subprocess
+import atexit
 import threading
 from contextlib import nullcontext
 from functools import cached_property

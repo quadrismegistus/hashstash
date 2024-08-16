@@ -102,3 +102,15 @@ def cached_result(_func=None, *cache_args, cache: Optional['BaseHashDict'] = Non
         return decorator
     else:
         return decorator(_func)
+
+
+class DictContext(UserDict):
+    def __init__(self, data, *args, **kwargs):
+        self.data = data
+
+    def __enter__(self):
+        return self.data
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass  # Nothing happens on close
+

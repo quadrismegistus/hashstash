@@ -12,6 +12,7 @@ class BaseHashDict(MutableMapping):
     b64 = DEFAULT_B64
     ensure_dir = True
     string_keys = False
+    string_values = False
 
     def __init__(
         self,
@@ -43,7 +44,8 @@ class BaseHashDict(MutableMapping):
         if self.ensure_dir:
             os.makedirs(self.dir, exist_ok=True)
 
-        self.encoder = Encoder(b64=self.b64, compress=self.compress)
+        self.key_encoder = Encoder(b64=self.b64, compress=self.compress, as_string=self.string_keys)
+        self.value_encoder = Encoder(b64=self.b64, compress=self.compress, as_string=self.string_values)
         self._lock = threading.Lock()
 
     @property
@@ -74,7 +76,7 @@ class BaseHashDict(MutableMapping):
             res = db.get(self.encode_key(key))
             if res is None:
                 raise KeyError(key)
-            return self.decode(res)
+            return self.decode_value(res)
     
 
     def __contains__(self, key: str) -> bool:
@@ -119,10 +121,10 @@ class BaseHashDict(MutableMapping):
         return (self.decode_key(x) for x in self._keys())
 
     def values(self):
-        return (self.decode(x) for x in self._values())
+        return (self.decode_value(x) for x in self._values())
     
     def items(self):
-        return ((self.decode_key(k), self.decode(v)) for k,v in self._items())
+        return ((self.decode_key(k), self.decode_value(v)) for k,v in self._items())
 
     def __iter__(self):
         return self.keys()
@@ -165,25 +167,23 @@ class BaseHashDict(MutableMapping):
         del self[key]
         return value
 
-    def encode(self, obj: Any) -> bytes:
-        return self.encoder.encode(obj)
-    
     def encode_key(self, obj: Any) -> bytes:
-        encoded_key=self.encode(obj)
-        if self.string_keys and type(encoded_key) is not str:
-            encoded_key = encoded_key.decode('utf-8')
-        return encoded_key
+        return self.key_encoder.encode(obj)
     
-    def decode_key(self, encoded_key: Any) -> bytes:
-        if type(encoded_key) is str: 
-            encoded_key = encoded_key.encode('utf-8') 
-        return self.decode(encoded_key)
+    def decode_key(self, obj: Any) -> bytes:
+        return self.key_encoder.decode(obj)
 
-    def decode(self, data: bytes) -> Any:
-        return self.encoder.decode(data)
+    def encode_value(self, obj: Any) -> bytes:
+        return self.value_encoder.encode(obj)
+    
+    def decode_value(self, obj: Any) -> bytes:
+        return self.value_encoder.decode(obj)
+
+    encode = encode_value
+    decode = decode_value
     
     def hash(self, data: bytes) -> str:
-        return self.encoder.hash(data)
+        return self.key_encoder.hash(data)
 
     @property
     def cached_result(self):

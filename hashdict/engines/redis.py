@@ -1,15 +1,7 @@
+from .base import *
 import redis
-import subprocess
-import atexit
-import os
-import logging
-from typing import Any
-from functools import cached_property, lru_cache
-from .base import BaseHashDict
-from ..constants import *
-import time
+from redis_dict import RedisDict
 
-logger = logging.getLogger(__name__)
 
 # Global variables
 _process_started = False
@@ -23,6 +15,8 @@ class RedisHashDict(BaseHashDict):
     port = REDIS_PORT
     dbname = REDIS_DB
     ensure_dir = False
+    string_keys = True
+    string_values = True
 
     def __init__(self, *args, host=None,port=None,dbname=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -32,30 +26,31 @@ class RedisHashDict(BaseHashDict):
 
     def get_db(self):
         logger.info(f"Connecting to Redis at {self.host}:{self.port}")
-        return redis.Redis(host=self.host, port=self.port, db=self.dbname)
+        # return redis.Redis(host=self.host, port=self.port, db=self.dbname)
+        return DictContext(RedisDict(namespace=self.name, host=self.host, port=self.port, db=self.dbname))
 
-    def clear(self) -> None:
-        logger.info("Clearing Redis cache")
-        with self as cache, cache.db as db:
-            db.flushdb()
+    # def clear(self) -> None:
+    #     logger.info("Clearing Redis cache")
+    #     with self as cache, cache.db as db:
+    #         db.flushdb()
 
-    def __len__(self) -> int:
-        with self as cache, cache.db as db:
-            return db.dbsize()
+    # def __len__(self) -> int:
+    #     with self as cache, cache.db as db:
+    #         return db.dbsize()
 
-    def _keys(self):
-        with self as cache, cache.db as db:
-            yield from db.scan_iter()
+    # def _keys(self):
+    #     with self as cache, cache.db as db:
+    #         yield from db.scan_iter()
 
-    def _values(self):
-        with self as cache, cache.db as db:
-            for k in db.scan_iter():
-                yield db[k]
+    # def _values(self):
+    #     with self as cache, cache.db as db:
+    #         for k in db.scan_iter():
+    #             yield db[k]
     
-    def _items(self):
-        with self as cache, cache.db as db:
-            for k in db.scan_iter():
-                yield k, db[k]
+    # def _items(self):
+    #     with self as cache, cache.db as db:
+    #         for k in db.scan_iter():
+    #             yield k, db[k]
 
 
 
