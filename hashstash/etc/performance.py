@@ -1,5 +1,5 @@
-from hashdict import *
-from hashdict.engines.redis import *
+from hashstash import *
+from hashstash.engines.redis import *
 import pandas as pd
 import plotnine as p9
 import itertools
@@ -20,7 +20,7 @@ def generate_profile_sizes(num_sizes: int = NUM_PROFILE_SIZES, multiplier: int =
 
 
 
-class HashDictProfiler:
+class HashStashProfiler:
     @staticmethod
     def generate_data(size):
         return {
@@ -65,7 +65,7 @@ class HashDictProfiler:
         iter=None,
         name = 'performance_cache',
     ):
-        cache = HashDict(name=name, engine=engine, root_dir=root_dir, compress=compress, b64=b64)
+        cache = HashStash(name=name, engine=engine, root_dir=root_dir, compress=compress, b64=b64)
         data = self.generate_data(size)
         raw_size = len(json.dumps(data).encode())
         cache_key = f"test_data_{size}_{random.random()}"
@@ -233,7 +233,7 @@ class HashDictProfiler:
                 proc = (self.profile_cache(**task) for task in tasks)
                 yield from return_iter(proc, nproc)
 
-            cache_obj = HashDict(engine=group['engine'], root_dir=root_dir)
+            cache_obj = HashStash(engine=group['engine'], root_dir=root_dir)
             cache_obj.clear()
 
             shutil.rmtree(root_dir, ignore_errors=True)
@@ -373,7 +373,7 @@ def imap(executor, func, *iterables, chunksize=1):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Profile FileHashDict performance")
+    parser = argparse.ArgumentParser(description="Profile FileHashStash performance")
     parser.add_argument(
         "--engine",
         nargs="+",
@@ -429,7 +429,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    results = FileHashDictProfiler.profile(
+    results = FileHashStashProfiler.profile(
         engine=tuple(args.engine),
         compress=tuple(args.compress),
         b64=tuple(args.b64),

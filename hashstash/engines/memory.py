@@ -12,7 +12,7 @@ class MemoryDB(DictContext):
         global IN_MEMORY_CACHE
         IN_MEMORY_CACHE[self.name].clear()
 
-class MemoryHashDict(BaseHashDict):
+class MemoryHashStash(BaseHashStash):
     engine = 'memory'
     ensure_dir = False
 

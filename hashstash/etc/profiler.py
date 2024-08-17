@@ -1,4 +1,4 @@
-from ..hashdict import *
+from ..hashstash import *
 
 class Profiler:
     @staticmethod

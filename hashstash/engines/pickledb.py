@@ -4,7 +4,7 @@ import pickledb
 # Create or load a database
 
 
-class PickleDBHashDict(BaseHashDict):
+class PickleDBHashStash(BaseHashStash):
     engine = "sqlite"
     filename = "db.pickledb"
     string_keys = True

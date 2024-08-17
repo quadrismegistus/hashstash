@@ -4,7 +4,7 @@ import multiprocessing as mp
 from typing import Literal
 
 
-DEFAULT_ROOT_DIR = os.path.expanduser('~/.cache/hashdict')
+DEFAULT_ROOT_DIR = os.path.expanduser('~/.cache/hashstash')
 DEFAULT_NAME = 'default'
 
 

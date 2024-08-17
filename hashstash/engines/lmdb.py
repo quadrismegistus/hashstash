@@ -1,7 +1,7 @@
 from .base import *
 import lmdb
 
-class LMDBHashDict(BaseHashDict):
+class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
     filename = 'db.lmdb'
 

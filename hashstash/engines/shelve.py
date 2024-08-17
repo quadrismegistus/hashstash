@@ -1,7 +1,7 @@
 from .base import *
 import shelve
 
-class ShelveHashDict(BaseHashDict):
+class ShelveHashStash(BaseHashStash):
     engine = 'shelve'
     filename = 'db.shelve'
     string_keys = True

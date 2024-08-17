@@ -1,6 +1,6 @@
 from .base import *
 
-class FileHashDict(BaseHashDict):
+class FileHashStash(BaseHashStash):
     engine = 'file'
     filename = 'db_files'
     

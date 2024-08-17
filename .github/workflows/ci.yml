@@ -24,7 +24,7 @@ jobs:
         pip install .[test]
         pip install pytest build twine
     - name: Check installation
-      run: pip list | grep hashdict
+      run: pip list | grep hashstash
     - name: Run tests
       run: |
         export PYTHONPATH=$PYTHONPATH:$(pwd)

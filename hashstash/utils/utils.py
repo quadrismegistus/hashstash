@@ -1,14 +1,14 @@
-from ..hashdict import *
+from ..hashstash import *
 from pprint import pprint
 import textwrap
 
 @fcache
-def HashDict(
+def HashStash(
     name: str = DEFAULT_NAME,
     engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE,
     *args,
     **kwargs,
-) -> 'BaseHashDict':
+) -> 'BaseHashStash':
     """
     Factory function to create the appropriate cache object.
 
@@ -18,7 +18,7 @@ def HashDict(
         **kwargs: Additional keyword arguments to pass to the cache constructor.
 
     Returns:
-        An instance of the appropriate BaseHashDict subclass.
+        An instance of the appropriate BaseHashStash subclass.
 
     Raises:
         ValueError: If an invalid engine is provided.
@@ -26,33 +26,33 @@ def HashDict(
     logger.debug(f"Cache called with engine: {engine}, name: {name}, args: {args}, kwargs: {kwargs}")
     
     if engine == "file":
-        from ..engines.files import FileHashDict
+        from ..engines.files import FileHashStash
 
-        return FileHashDict(*args, name=name, **kwargs)
+        return FileHashStash(*args, name=name, **kwargs)
     elif engine == "sqlite":
-        from ..engines.sqlite import SqliteHashDict
+        from ..engines.sqlite import SqliteHashStash
 
-        return SqliteHashDict(*args, name=name,**kwargs)
+        return SqliteHashStash(*args, name=name,**kwargs)
     elif engine == "memory":
-        from ..engines.memory import MemoryHashDict
+        from ..engines.memory import MemoryHashStash
 
-        return MemoryHashDict(*args, name=name,**kwargs)
+        return MemoryHashStash(*args, name=name,**kwargs)
     elif engine == "shelve":
-        from ..engines.shelve import ShelveHashDict
+        from ..engines.shelve import ShelveHashStash
 
-        return ShelveHashDict(*args, name=name,**kwargs)
+        return ShelveHashStash(*args, name=name,**kwargs)
     elif engine == "redis":
-        from ..engines.redis import RedisHashDict
-        return RedisHashDict(*args, name=name,**kwargs)
+        from ..engines.redis import RedisHashStash
+        return RedisHashStash(*args, name=name,**kwargs)
     elif engine == "pickledb":
-        from ..engines.pickledb import PickleDBHashDict
-        return PickleDBHashDict(*args, name=name, **kwargs)
+        from ..engines.pickledb import PickleDBHashStash
+        return PickleDBHashStash(*args, name=name, **kwargs)
     elif engine == "diskcache":
-        from ..engines.diskcache import DiskCacheHashDict
-        return DiskCacheHashDict(*args, name=name, **kwargs)
+        from ..engines.diskcache import DiskCacheHashStash
+        return DiskCacheHashStash(*args, name=name, **kwargs)
     elif engine == "lmdb":
-        from ..engines.lmdb import LMDBHashDict
-        return LMDBHashDict(*args, name=name, **kwargs)
+        from ..engines.lmdb import LMDBHashStash
+        return LMDBHashStash(*args, name=name, **kwargs)
         
     else:
         raise ValueError(
@@ -82,12 +82,12 @@ def retry_patiently(max_retries=10, base_delay=0.1, max_delay=10):
     return decorator
 
 
-def cached_result(_func=None, *cache_args, cache: Optional['BaseHashDict'] = None, force=False, **cache_kwargs):
+def cached_result(_func=None, *cache_args, cache: Optional['BaseHashStash'] = None, force=False, **cache_kwargs):
     def decorator(func: Callable, _force=force) -> Callable:
         @wraps(func)
         def wrapper(*args, _force=_force, **kwargs):
             nonlocal cache
-            cache_context = cache if cache is not None else HashDict(*cache_args, **cache_kwargs)
+            cache_context = cache if cache is not None else HashStash(*cache_args, **cache_kwargs)
             force = kwargs.pop('_force', _force)
 
             from .serialize import Serializer

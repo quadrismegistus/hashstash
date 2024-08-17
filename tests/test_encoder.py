@@ -1,5 +1,5 @@
 import pytest
-from hashdict.utils.encodings import Encoder, Decoder
+from hashstash.utils.encodings import Encoder, Decoder
 import json
 import base64
 import zlib

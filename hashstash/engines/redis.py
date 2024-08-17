@@ -8,7 +8,7 @@ _process_started = False
 _container_id = None
 
 
-class RedisHashDict(BaseHashDict):
+class RedisHashStash(BaseHashStash):
     engine = 'redis'
     filename = 'db_redis'
     host = REDIS_HOST

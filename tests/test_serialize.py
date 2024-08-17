@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import pandas as pd
-from hashdict.utils.serialize import Serializer, Deserializer
+from hashstash.utils.serialize import Serializer, Deserializer
 
 @pytest.fixture
 def serializer():

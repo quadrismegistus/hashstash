@@ -1,7 +1,7 @@
 from .base import *
 from diskcache import Cache
 
-class DiskCacheHashDict(BaseHashDict):
+class DiskCacheHashStash(BaseHashStash):
     engine = 'diskcache'
     filename = 'db.diskcache'
     string_keys = False
