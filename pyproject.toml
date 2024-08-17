@@ -1,28 +1,37 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "filehashcache"
-version = "0.1.0"
+name = "hashdict"
+dynamic = ["version"]
 authors = [
-  { name="Your Name", email="your.email@example.com" },
+  { name="Your Name", email="ryan.heuser@gmail.com" },
 ]
 description = "A simple file-based caching system using hash-based file names"
 readme = "README.md"
 requires-python = ">=3.7"
+dependencies = ["jsonpickle", "numpy", "pandas"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 
+[tool.setuptools.dynamic]
+version = {attr = "hashdict.__version__"}
+
 [project.urls]
-"Homepage" = "https://github.com/yourusername/filehashcache"
-"Bug Tracker" = "https://github.com/yourusername/filehashcache/issues"
+"Homepage" = "https://github.com/quadrismegistus/hashdict"
+"Bug Tracker" = "https://github.com/quadrismegistus/hashdict/issues"
+
+[project.optional-dependencies]
+extra = ["pandas", "ipython", "tqdm", "orjson"]
+dev = ["pandas", "setuptools-scm", "ipython"]
+test = ["pytest"]
 
 [tool.setuptools]
-py-modules = ["filehashcache"]
+py-modules = ["hashdict"]
 
 [tool.pytest.ini_options]
 addopts = "-v"
