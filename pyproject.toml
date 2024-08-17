@@ -31,9 +31,9 @@ diskcache = ["diskcache"]
 lmdb = ["lmdb"]
 pickledb = ["pickledb"]
 engines = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
-dev = ["pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
-test = ["pytest", "pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
-all = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "pandas", "numpy", "setuptools-scm", "ipython", "pytest"]
+dev = ["pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "plotnine", "tqdm"]
+test = ["pytest", "pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "plotnine", "tqdm"]
+all = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "pandas", "numpy", "setuptools-scm", "ipython", "pytest", "plotnine", "tqdm"]
 
 
 [tool.setuptools]

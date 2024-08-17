@@ -1,5 +1,6 @@
 from ..hashstash import *
 from collections.abc import MutableMapping
+import threading
 
 class BaseHashStash(MutableMapping):
     engine = 'base'
@@ -22,6 +23,7 @@ class BaseHashStash(MutableMapping):
         b64: bool = None,
         filename: str = None,
         dbname: str = None,
+        **kwargs
     ) -> None:
         if name is not None:
             self.name = name
@@ -33,6 +35,8 @@ class BaseHashStash(MutableMapping):
             self.b64 = b64
         if filename is not None:
             self.filename = filename
+        if dbname is not None:
+            self.dbname = dbname
 
         self.path = os.path.abspath(os.path.join(self.root_dir, self.name, self.filename))
         fn,ext=os.path.splitext(self.path)
@@ -47,6 +51,21 @@ class BaseHashStash(MutableMapping):
         self.key_encoder = Encoder(b64=self.b64, compress=self.compress, as_string=self.string_keys)
         self.value_encoder = Encoder(b64=self.b64, compress=self.compress, as_string=self.string_values)
         
+    def to_dict(self):
+        return {
+            'engine':self.engine,
+            'root_dir': self.root_dir,
+            'compress': self.compress,
+            'b64': self.b64,
+            'name': self.name,
+            'filename': self.filename,
+            'dbname': self.dbname,
+        }
+    
+    @staticmethod
+    def from_dict(d:dict):
+        return HashStash(**d)
+
     @cached_property
     def _lock(self): return threading.Lock()
 
@@ -191,11 +210,47 @@ class BaseHashStash(MutableMapping):
     def cached_result(self):
         return cached_result(cache=self)
 
-    @classmethod
-    def profile(cls,*args,**kwargs):
-        from ..etc.profiler import Profiler
-        return Profiler(cls, *args, **kwargs)
+    @cached_property
+    def profiler(self):
+        from ..etc.profiler import HashStashProfiler
+        return HashStashProfiler(self)
     
+    def sub(self, **kwargs):
+        new_instance = self.__class__(**{**self.__dict__, **kwargs})
+        new_instance._lock = threading.Lock()  # Create a new lock for the new instance
+        return new_instance
+    
+    def tmp(self, **kwargs):
+        return TemporaryHashStash(self, **kwargs)
+
     def __repr__(self):
         path = str(self.path).replace(os.path.expanduser('~'), '~')
-        return f"""{self.__class__.__name__}(name="{self.name}", path="{path}")"""
+        # return f"""{self.__class__.__name__}(name="{self.name}", path="{path}")"""
+        return f"""{self.__class__.__name__}({path})"""
+
+    def __reduce__(self):
+        # Return a tuple of (callable, args) that allows recreation of this object
+        return (self.__class__.from_dict, (self.to_dict(),))
+    
+
+class TemporaryHashStash(BaseHashStash):
+    def __init__(self, base_stash, **kwargs):
+        self.base_stash = base_stash
+        self.kwargs = kwargs
+        self.stash = None
+
+    def __enter__(self):
+        kwargs = {
+            **self.kwargs,
+            **dict(
+                root_dir=tempfile.mkdtemp(),
+                name=f"tmp_{uuid.uuid4().hex[:10]}",
+            )
+        }
+        self.stash = self.base_stash.sub(**kwargs)
+        return self.stash
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.stash:
+            threading.Thread(target=shutil.rmtree, args=(self.stash.root_dir,), daemon=True).start()
+        self.stash = None

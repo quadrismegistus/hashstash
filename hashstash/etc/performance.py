@@ -1,156 +1,14 @@
-from hashstash import *
-from hashstash.engines.redis import *
+from ..hashstash import *
+from ..engines.redis import *
 import pandas as pd
 import plotnine as p9
-import itertools
 from tqdm import tqdm
-import tempfile
-import shutil
-from concurrent.futures import ProcessPoolExecutor, as_completed
-
-
-def generate_profile_sizes(num_sizes: int = NUM_PROFILE_SIZES, multiplier: int = PROFILE_SIZE_MULTIPLIER, initial_size: int = INITIAL_PROFILE_SIZE) -> tuple:
-    profile_sizes = []
-    for n in range(num_sizes):
-        if not profile_sizes:
-            profile_sizes.append(initial_size)
-        else:
-            profile_sizes.append(profile_sizes[-1] * multiplier)
-    return tuple(profile_sizes)
 
 
 
-class HashStashProfiler:
-    @staticmethod
-    def generate_data(size):
-        return {
-            "string": "".join(
-                random.choices("abcdefghijklmnopqrstuvwxyz", k=size // 2)
-            ),
-            "number": random.randint(1, 1000000),
-            "list": [random.randint(1, 1000) for _ in range(size // 20)],
-            "nested": {
-                f"key_{i}": {"value": random.random()} for i in range(size // 200)
-            },
-        }
 
-    @staticmethod
-    def get_encoding_str(compress: bool = None, b64: bool = None):
-        encodings = []
-        if compress:
-            encodings.append("zlib")
-        if b64:
-            encodings.append("b64")
-        return "+".join(encodings) if encodings else "raw"
 
-    @classmethod
-    def get_method_str(
-        self,
-        engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE,
-        compress: bool = None,
-        b64: bool = None,
-        **kwargs,
-    ):
-        return f"{engine} ({self.get_encoding_str(compress, b64)})"
-
-    @classmethod
-    def profile_cache(
-        self,
-        root_dir: str = DEFAULT_ROOT_DIR,
-        engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE,
-        compress: bool = DEFAULT_COMPRESS,
-        b64: bool = DEFAULT_B64,
-        size: int = DEFAULT_DATA_SIZE,
-        verbose: bool = False,
-        iter=None,
-        name = 'performance_cache',
-    ):
-        cache = HashStash(name=name, engine=engine, root_dir=root_dir, compress=compress, b64=b64)
-        data = self.generate_data(size)
-        raw_size = len(json.dumps(data).encode())
-        cache_key = f"test_data_{size}_{random.random()}"
-
-        # Encode value to get cached size
-        encoded_value = cache.encode(data)
-        cached_size = len(encoded_value)
-
-        results = []
-        common_data = {
-            "Encoding": self.get_encoding_str(compress, b64),
-            "Engine": engine,
-            "Size (B)": int(size),
-            "Raw Size (B)": raw_size,
-            "Cached Size (B)": cached_size,
-            "Compression Ratio (%)": (cached_size / (raw_size * 100)) if raw_size else 0,
-            "Iteration": iter if iter else 0,
-        }
-
-        def add_result(operation, time_taken, additional_data=None):
-            result = {
-                "Operation": operation,
-                "Time (s)": time_taken,
-                "Rate (it/s)": (1 / time_taken) if time_taken else 0,
-                "Speed (MB/s)": ((raw_size / time_taken) if time_taken else 0) / 1024 / 1024,
-                **common_data
-            }
-            if additional_data:
-                result.update(additional_data)
-            results.append(result)
-
-        # Measure key encoding speed
-        start_time = time.time()
-        encoded_key = cache.encode(cache_key)
-        key_encode_time = time.time() - start_time
-        add_result("Encode Key", key_encode_time)
-
-        # Measure key decoding speed
-        start_time = time.time()
-        _ = cache.decode(encoded_key)
-        key_decode_time = time.time() - start_time
-        add_result("Decode Key", key_decode_time)
-
-        # Measure value encoding speed
-        start_time = time.time()
-        encoded_value = cache.encode(data)
-        value_encode_time = time.time() - start_time
-        add_result("Encode Value", value_encode_time)
-
-        # Measure value decoding speed
-        start_time = time.time()
-        _ = cache.decode(encoded_value)
-        value_decode_time = time.time() - start_time
-        add_result("Decode Value", value_decode_time)
-
-        # Measure write speed
-        start_time = time.time()
-        cache[cache_key] = data
-        write_time = time.time() - start_time
-        add_result("Write", write_time)
-
-        # Add compression data
-        # add_result("Compress", value_encode_time)
-
-        # Measure read speed
-        start_time = time.time()
-        _ = cache[cache_key]
-        read_time = time.time() - start_time
-        add_result("Read", read_time)
-
-        # Calculate and add raw write and read times
-        # raw_write_time = write_time - (key_encode_time + value_encode_time)
-        # raw_read_time = read_time - (key_decode_time + value_decode_time)
-        # add_result("Raw Write", raw_write_time)
-        # add_result("Raw Read", raw_read_time)
-
-        if verbose:
-            print(results)
-        return results
-        return results
-
-    @classmethod
-    def profile_cache_parallel(cls, args):
-        return cls.profile_cache(**args)
-
+class HashStashPerformance:
     @classmethod
     @cached_result
     def profile(
@@ -237,56 +95,29 @@ class HashStashProfiler:
             cache_obj.clear()
 
             shutil.rmtree(root_dir, ignore_errors=True)
-            
-
-
-    # @classmethod
-    # def profile_speed(self, *args, **kwargs):
-    #     df = pd.DataFrame(self.profile(*args, **kwargs))
-        
-    #     # Identify columns to melt
-    #     speed_columns = [col for col in df.columns if any(x in col for x in ['Speed', 'Rate', 'Time'])]
-    #     id_vars = [col for col in df.columns if col not in speed_columns]
-        
-    #     # Melt the dataframe
-    #     melted_df = pd.melt(df, 
-    #                         id_vars=id_vars,
-    #                         value_vars=speed_columns,
-    #                         var_name='Metric', value_name='Value')
-        
-    #     # Create 'Operation' and 'Measure' columns
-    #     melted_df['Operation'] = melted_df['Metric'].apply(lambda x: x.split()[0])
-    #     melted_df['Measure'] = melted_df['Metric'].apply(lambda x: x.split('(')[1].split(')')[0])
-        
-    #     # Pivot the dataframe
-    #     reshaped_df = melted_df.pivot_table(values='Value', 
-    #                                         index=id_vars + ['Operation'],
-    #                                         columns='Measure')
-        
-    #     # Reset index and sort
-    #     result_df = reshaped_df.reset_index()
-    #     if 'MB/s' in result_df.columns:
-    #         result_df = result_df.sort_values('MB/s', ascending=False)
-        
-    #     return result_df
+    
+    @classmethod
+    def profile_cache_parallel(cls, args):
+        return cls.profile_cache(**args)
+    
+    @staticmethod
+    def get_encoding_str(compress: bool = None, b64: bool = None):
+        encodings = []
+        if compress:
+            encodings.append("zlib")
+        if b64:
+            encodings.append("b64")
+        return "+".join(encodings) if encodings else "raw"
 
     @classmethod
-    def profile_df(self, *args, group_by=GROUPBY, sort_by=SORTBY, by_speed=False, operations={'Read','Write'},**kwargs):
-        df = self.profile(*args, **kwargs)
-        if operations:
-            df = df[df.Operation.isin(operations)]
-        df = pd.concat(
-            gdf.sort_values('write_num').assign(**{
-                'Cumulative Time (s)':gdf['Time (s)'].cumsum(),
-                'Cumulative Size (MB)':gdf['Size (B)'].cumsum() / 1024 / 1024,
-            })
-            for g,gdf in df.groupby([x for x in group_by if not x.startswith('write_num')])
-        )
-        if group_by:
-            df = df.groupby(group_by).mean(numeric_only=True).round(4).sort_index()
-        if sort_by:
-            df = df.sort_values(sort_by, ascending=False)
-        return df
+    def get_method_str(
+        self,
+        engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE,
+        compress: bool = None,
+        b64: bool = None,
+        **kwargs,
+    ):
+        return f"{engine} ({self.get_encoding_str(compress, b64)})"
     
     def plot_sizes(self, x='write_num', y='write_total_time', shape='Operation', 
             color='Engine', facet='Num Processes', **profile_kwargs):
@@ -336,37 +167,6 @@ class HashStashProfiler:
     
 
 
-
-def imap(executor, func, *iterables, chunksize=1):
-    """
-    A generator that mimics the behavior of multiprocessing.Pool.imap()
-    using ProcessPoolExecutor, yielding results in order as they become available.
-    """
-    # Create futures for each chunk
-    futures = {}
-    for i, args in enumerate(zip(*iterables)):
-        if len(args) == 1:
-            args = args[0]
-        future = executor.submit(func, args)
-        futures[future] = i
-
-    # Yield results in order
-    next_to_yield = 0
-    results = {}
-    for future in as_completed(futures):
-        index = futures[future]
-        result = future.result()
-        
-        if index == next_to_yield:
-            yield result
-            next_to_yield += 1
-            
-            # Yield any subsequent results that are ready
-            while next_to_yield in results:
-                yield results.pop(next_to_yield)
-                next_to_yield += 1
-        else:
-            results[index] = result
 
 
 

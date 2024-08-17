@@ -32,7 +32,7 @@ class RedisHashStash(BaseHashStash):
 
 
 
-def _start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir='.cache'):
+def _start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=DEFAULT_REDIS_DIR):
     global _process_started, _container_id
 
     if _process_started:
@@ -40,6 +40,7 @@ def _start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=
 
     # Convert data_dir to absolute path
     abs_data_dir = os.path.abspath(data_dir)
+    os.makedirs(abs_data_dir, exist_ok=True)
 
     try:
         # First, try to connect to Redis
@@ -87,6 +88,7 @@ def _start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=
                     '--name', f'redis-{port}',
                     '-p', f'{port}:{port}',
                     '-v', f'{abs_data_dir}:/data',  # Use absolute path here
+                    '--restart', 'unless-stopped',  # Add this line
                     'redis',
                     'redis-server', '--appendonly', 'yes'
                 ],
@@ -117,16 +119,5 @@ def _start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=
         logger.error(f"Unexpected error while starting Redis Docker container: {str(e)}", exc_info=True)
         raise
 
-def _stop_redis_server():
-    global _process_started, _container_id
-    if _process_started and _container_id:
-        logger.info(f"Stopping Redis Docker container: {_container_id}")
-        subprocess.run(['docker', 'stop', _container_id], check=True)
-        _process_started = False
-        _container_id = None
-
 # Start Redis server on import
 _start_redis_server()
-
-# Register stop function to be called on exit
-atexit.register(_stop_redis_server)
