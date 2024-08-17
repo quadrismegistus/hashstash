@@ -172,7 +172,7 @@ class HashDictProfiler:
         # Generate all possible group combinations
         group_combinations = [
             dict(zip(profile_by, values))
-            for values in itertools.product(*(
+            for values in sorted(itertools.product(*(
                 engine if param == 'engine' else
                 compress if param == 'compress' else
                 b64 if param == 'b64' else
@@ -180,9 +180,8 @@ class HashDictProfiler:
                 [True, False] if param == 'verbose' else
                 [None]  # Default for any other parameter
                 for param in profile_by
-            ))
+            )))
         ]
-        random.shuffle(group_combinations)
         pbar = tqdm(group_combinations, desc='Group combinations', position=0, leave=True)
         for group in pbar:
             pbar.set_description(str(group))
@@ -197,6 +196,8 @@ class HashDictProfiler:
                     'iter': _,
                 }
                 tasks.append(task)
+
+            random.shuffle(tasks)
 
             for nproc in num_proc:
                 writenum = 0
@@ -279,7 +280,7 @@ class HashDictProfiler:
                 'Cumulative Time (s)':gdf['Time (s)'].cumsum(),
                 'Cumulative Size (MB)':gdf['Size (B)'].cumsum() / 1024 / 1024,
             })
-            for g,gdf in df.groupby(['Engine', 'Operation', 'Encoding'])
+            for g,gdf in df.groupby([x for x in group_by if not x.startswith('write_num')])
         )
         if group_by:
             df = df.groupby(group_by).mean(numeric_only=True).round(4).sort_index()

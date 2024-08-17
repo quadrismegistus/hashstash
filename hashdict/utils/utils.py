@@ -1,4 +1,6 @@
 from ..hashdict import *
+from pprint import pprint
+import textwrap
 
 @fcache
 def HashDict(
@@ -48,6 +50,10 @@ def HashDict(
     elif engine == "diskcache":
         from ..engines.diskcache import DiskCacheHashDict
         return DiskCacheHashDict(*args, name=name, **kwargs)
+    elif engine == "lmdb":
+        from ..engines.lmdb import LMDBHashDict
+        return LMDBHashDict(*args, name=name, **kwargs)
+        
     else:
         raise ValueError(
             f"Invalid engine: {engine}. Choose 'file', 'sqlite', 'memory', 'shelve', 'redis', 'pickledb', or 'diskcache'."
@@ -82,22 +88,14 @@ def cached_result(_func=None, *cache_args, cache: Optional['BaseHashDict'] = Non
         def wrapper(*args, _force=_force, **kwargs):
             nonlocal cache
             cache_context = cache if cache is not None else HashDict(*cache_args, **cache_kwargs)
-            # Create a unique key based on the function contents
-            try:
-                func_code = inspect.getsource(func).strip()
-                if func_code and func_code[0]=='@' and '\n' in func_code:
-                    func_code='\n'.join(func_code.split('\n')[1:])
-            except Exception:
-                func_code = func.__name__
-            key = (func_code, args, kwargs)
-
             force = kwargs.pop('_force', _force)
-            # Check if the result is already in the cache and not forcing
+
+            from .serialize import Serializer
+            key = Serializer.encode((func,args,kwargs))
             if not force and key in cache_context:
                 logger.debug(f"Cache hit for {func.__name__}. Returning cached result.")
                 return cache_context[key]
             
-            # If forcing or cache miss, call the function
             logger.debug(f"{'Forced execution' if force else 'Cache miss'} for {func.__name__}. Executing function.")
             result = func(*args, **kwargs)
             logger.debug(f"Caching result for {func.__name__}.")
@@ -120,3 +118,47 @@ class DictContext(UserDict):
 
     def __exit__(self, exc_type, exc_value, traceback):
         pass  # Nothing happens on close
+
+
+def get_function_str(func):
+    source = inspect.getsource(func)
+    lines = source.splitlines()
+    # Find the function definition line
+    func_start = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith('def ')), None)
+    if func_start is not None:
+        # Extract function body (including definition line)
+        func_body = lines[func_start:]
+        # Dedent the function body
+        dedented_func = textwrap.dedent('\n'.join(func_body))
+        return dedented_func
+    return ''  # Return empty string if function definition not found
+
+def get_function_type(func):
+    return get_function_type_src(func)
+
+def get_function_type_src(func, args=None):
+    try:
+        source = inspect.getsource(func)
+        lines = [ln.strip() for ln in source.splitlines() if ln.strip()]
+        if not lines: return 'function' # default
+
+        if any(ln.startswith('@classmethod') for ln in lines):
+            return 'classmethod'
+        if any(ln.startswith('@staticmethod') for ln in lines):
+            return 'staticmethod'
+        
+        flines = [ln for ln in lines if ln.startswith('def ')]
+        if flines:
+            fline = flines[0][4:]
+            fname,argstr = fline.split('(',1)
+            farg = argstr.split(',')[0].strip()
+            if farg == 'self':
+                return 'method'
+            elif farg == 'cls':
+                return 'classmethod'
+        
+        # If none of the above conditions are met, it's a regular function
+        return "function"
+    except Exception:
+        # If we can't get the source (e.g., built-in functions), assume it's a function
+        return "function"

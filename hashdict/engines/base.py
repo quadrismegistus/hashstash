@@ -46,7 +46,9 @@ class BaseHashDict(MutableMapping):
 
         self.key_encoder = Encoder(b64=self.b64, compress=self.compress, as_string=self.string_keys)
         self.value_encoder = Encoder(b64=self.b64, compress=self.compress, as_string=self.string_values)
-        self._lock = threading.Lock()
+        
+    @cached_property
+    def _lock(self): return threading.Lock()
 
     @property
     @retry_patiently()

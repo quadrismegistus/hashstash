@@ -13,7 +13,7 @@ DEFAULT_COMPRESS = True
 DEFAULT_B64 = True
 
 # Cache engines
-ENGINES = ("memory", "file", "sqlite", "redis", "diskcache", "lmdb") # "shelve",  "pickledb"
+ENGINES = ("memory", "file", "sqlite", "redis", "diskcache", "lmdb", "shelve") #"pickledb"
 
 # Performance testing constants
 DEFAULT_NUM_PROC = (1, 2, mp.cpu_count())
