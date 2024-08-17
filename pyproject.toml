@@ -26,14 +26,14 @@ version = {attr = "hashdict.__version__"}
 
 [project.optional-dependencies]
 sqlite = ["sqlitedict"]
-redis = ["redis", "redisdict"]
+redis = ["redis", "redis_dict"]
 diskcache = ["diskcache"]
 lmdb = ["lmdb"]
 pickledb = ["pickledb"]
-engines = ["sqlitedict", "redis", "redisdict", "diskcache", "lmdb", "pickledb"]
-dev = ["pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redisdict", "diskcache", "lmdb", "pickledb"]
-test = ["pytest", "pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redisdict", "diskcache", "lmdb", "pickledb"]
-all = ["sqlitedict", "redis", "redisdict", "diskcache", "lmdb", "pickledb", "pandas", "numpy", "setuptools-scm", "ipython", "pytest"]
+engines = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
+dev = ["pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
+test = ["pytest", "pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
+all = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "pandas", "numpy", "setuptools-scm", "ipython", "pytest"]
 
 
 [tool.setuptools]
