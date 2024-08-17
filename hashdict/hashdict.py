@@ -36,15 +36,6 @@ import os
 import logging
 import inspect
 
-## non standard library
-import jsonpickle
-
-## ensure these are applied to ensure consistency of data storage type
-import jsonpickle.ext.numpy as jsonpickle_numpy
-import jsonpickle.ext.pandas as jsonpickle_pandas
-jsonpickle_numpy.register_handlers()
-jsonpickle_pandas.register_handlers()
-
 ## objects
 filterwarnings('ignore')
 fcache = lru_cache(maxsize=None)
