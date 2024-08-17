@@ -11,7 +11,6 @@ authors = [
 description = "A simple file-based caching system using hash-based file names"
 readme = "README.md"
 requires-python = ">=3.7"
-dependencies = ["jsonpickle", "numpy", "pandas"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -26,9 +25,16 @@ version = {attr = "hashdict.__version__"}
 "Bug Tracker" = "https://github.com/quadrismegistus/hashdict/issues"
 
 [project.optional-dependencies]
-extra = ["pandas", "ipython", "tqdm", "orjson"]
-dev = ["pandas", "setuptools-scm", "ipython"]
-test = ["pytest"]
+sqlite = ["sqlite"]
+redis = ["redis", "redisdict"]
+diskcache = ["diskcache"]
+lmdb = ["lmdb"]
+shelve = ["shelve"]
+pickledb = ["pickledb"]
+engines = ["${sqlite}", "${redis}", "${diskcache}", "${lmdb}", "${shelve}", "${pickledb}"]
+dev = ["pandas", "numpy", "setuptools-scm", "ipython", "${engines}"]
+test = ["pytest", "${dev}"]
+all = ["${engines}", "${dev}", "${test}"]
 
 [tool.setuptools]
 py-modules = ["hashdict"]
