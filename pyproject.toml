@@ -25,16 +25,15 @@ version = {attr = "hashdict.__version__"}
 "Bug Tracker" = "https://github.com/quadrismegistus/hashdict/issues"
 
 [project.optional-dependencies]
-sqlite = ["sqlite"]
+sqlite = ["sqlitedict"]
 redis = ["redis", "redisdict"]
 diskcache = ["diskcache"]
 lmdb = ["lmdb"]
-shelve = ["shelve"]
 pickledb = ["pickledb"]
-engines = ["sqlite", "redis", "redisdict", "diskcache", "lmdb", "shelve", "pickledb"]
-dev = ["pandas", "numpy", "setuptools-scm", "ipython", "sqlite", "redis", "redisdict", "diskcache", "lmdb", "shelve", "pickledb"]
-test = ["pytest", "pandas", "numpy", "setuptools-scm", "ipython", "sqlite", "redis", "redisdict", "diskcache", "lmdb", "shelve", "pickledb"]
-all = ["sqlite", "redis", "redisdict", "diskcache", "lmdb", "shelve", "pickledb", "pandas", "numpy", "setuptools-scm", "ipython", "pytest"]
+engines = ["sqlitedict", "redis", "redisdict", "diskcache", "lmdb", "pickledb"]
+dev = ["pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redisdict", "diskcache", "lmdb", "pickledb"]
+test = ["pytest", "pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redisdict", "diskcache", "lmdb", "pickledb"]
+all = ["sqlitedict", "redis", "redisdict", "diskcache", "lmdb", "pickledb", "pandas", "numpy", "setuptools-scm", "ipython", "pytest"]
 
 
 [tool.setuptools]
