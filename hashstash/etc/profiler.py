@@ -10,18 +10,7 @@ class HashStashProfiler:
     def __init__(self, stash):
         self.stash = stash
 
-    # def to_dict(self):
-    #     return {"stash": self.stash.to_dict()}
-
-    # def __reduce__(self):
-    #     return (self.__class__.from_dict, (self.to_dict(),))
-
-    # @classmethod
-    # def from_dict(cls, data: dict):
-    #     stash = HashStash(**data["stash"])
-    #     return cls(stash)
-
-    
+    @cached_result(name="profile_cache")
     def profile(
         self,
         size: list = PROFILE_SIZES,

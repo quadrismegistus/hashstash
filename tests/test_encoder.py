@@ -1,77 +1,67 @@
 import pytest
-from hashstash.utils.encodings import Encoder, Decoder
+from hashstash.utils.encodings import encode, decode, encode_hash
 import json
 import base64
 import zlib
 
 @pytest.fixture
-def encoder():
-    return Encoder(b64=True, compress=True, as_string=False)
+def default_params():
+    return {"b64": True, "compress": True, "as_string": False}
 
-@pytest.fixture
-def decoder():
-    return Decoder(b64=True, compress=True, as_string=False)
-
-def test_encoder_init():
-    encoder = Encoder(b64=True, compress=False, as_string=True)
-    assert encoder.b64 == True
-    assert encoder.compress == False
-    assert encoder.as_string == True
-
-def test_encoder_encode_decode(encoder, decoder):
+def test_encode_decode(default_params):
     data = {"test": "data", "number": 42}
-    encoded = encoder.encode(data)
-    decoded = decoder.decode(encoded)
+    encoded = encode(data, **default_params)
+    decoded = decode(encoded, **default_params)
     assert decoded == data
 
-def test_encoder_getitem(encoder, decoder):
+def test_encode_decode_list(default_params):
     data = ["list", "of", "items"]
-    encoded = encoder[data]
-    decoded = decoder[encoded]
+    encoded = encode(data, **default_params)
+    decoded = decode(encoded, **default_params)
     assert decoded == data
 
-def test_encoder_hash():
-    encoder = Encoder()
+def test_hash():
     data = b"test data"
-    hashed = encoder.hash(data)
+    hashed = encode_hash(data)
     assert len(hashed) == 32  # MD5 hash is 32 characters long
 
-def test_encoder_b64(encoder):
-    data = b"test data"
-    encoded = encoder._encode_b64(data)
-    assert base64.b64decode(encoded) == data
-
-def test_encoder_zlib(encoder):
-    data = b"test data"
-    compressed = encoder._encode_zlib(data)
-    assert zlib.decompress(compressed) == data
-
-def test_decoder_b64(decoder):
-    data = b"dGVzdCBkYXRh"  # "test data" in base64
-    decoded = decoder._decode_b64(data)
-    assert decoded == b"test data"
-
-def test_decoder_zlib(decoder):
-    data = b'x\x9c+I-.\x01\x00\x04]\x01\xc1'  # "test" compressed
-    decompressed = decoder._decode_zlib(data)
-    assert decompressed == b"test"
-
-def test_encoder_as_string():
-    encoder = Encoder(b64=True, compress=True, as_string=True)
+def test_b64_encoding(default_params):
     data = {"test": "data"}
-    encoded = encoder.encode(data)
-    assert isinstance(encoded, str)
-
-def test_decoder_as_string():
-    decoder = Decoder(b64=True, compress=True, as_string=True)
-    encoded_str = "eJyrVipJLS5RslJQSkksSVSqBQAs1AU1"  # Encoded and compressed {"test": "data"}
-    decoded = decoder.decode(encoded_str)
-    assert decoded == {"test": "data"}
-
-def test_encoder_no_compression():
-    encoder = Encoder(b64=True, compress=False)
-    data = {"test": "data"}
-    encoded = encoder.encode(data)
+    encoded = encode(data, b64=True, compress=False)
     decoded_json = base64.b64decode(encoded).decode('utf-8')
     assert json.loads(decoded_json) == data
 
+def test_compression(default_params):
+    data = {"test": "data" * 1000}  # Create a larger dataset to test compression
+    encoded_compressed = encode(data, b64=False, compress=True)
+    encoded_uncompressed = encode(data, b64=False, compress=False)
+    assert len(encoded_compressed) < len(encoded_uncompressed)
+
+def test_as_string(default_params):
+    data = {"test": "data"}
+    encoded = encode(data, as_string=True)
+    assert isinstance(encoded, str)
+    decoded = decode(encoded, as_string=True)
+    assert decoded == data
+
+def test_no_compression(default_params):
+    data = {"test": "data"}
+    encoded = encode(data, b64=True, compress=False)
+    decoded = decode(encoded, b64=True, compress=False)
+    assert decoded == data
+
+def test_different_combinations():
+    data = {"test": "data", "number": 42}
+    combinations = [
+        {"b64": True, "compress": True, "as_string": False},
+        {"b64": True, "compress": False, "as_string": False},
+        {"b64": False, "compress": True, "as_string": False},
+        {"b64": False, "compress": False, "as_string": False},
+        {"b64": True, "compress": True, "as_string": True},
+    ]
+    for params in combinations:
+        encoded = encode(data, **params)
+        decoded = decode(encoded, **params)
+        assert decoded == data, f"Failed with params: {params}"
+
+# Add more tests as needed

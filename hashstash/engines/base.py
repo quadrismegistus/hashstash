@@ -1,5 +1,7 @@
 from ..hashstash import *
+from ..utils.encodings import encode, decode, encode_hash
 from collections.abc import MutableMapping
+from functools import partial
 import threading
 
 class BaseHashStash(MutableMapping):
@@ -48,9 +50,12 @@ class BaseHashStash(MutableMapping):
         if self.ensure_dir:
             os.makedirs(self.dir, exist_ok=True)
 
-        self.key_encoder = Encoder(b64=self.b64, compress=self.compress, as_string=self.string_keys)
-        self.value_encoder = Encoder(b64=self.b64, compress=self.compress, as_string=self.string_values)
-        
+        self.encode_key = partial(encode, b64=self.b64, compress=self.compress, as_string=self.string_keys)
+        self.decode_key = partial(decode, b64=self.b64, compress=self.compress, as_string=self.string_keys)
+
+        self.encode = self.encode_value = partial(encode, b64=self.b64, compress=self.compress, as_string=self.string_values)
+        self.decode = self.decode_value = partial(decode, b64=self.b64, compress=self.compress, as_string=self.string_values)
+
     def to_dict(self):
         return {
             'engine':self.engine,
@@ -188,23 +193,9 @@ class BaseHashStash(MutableMapping):
         del self[key]
         return value
 
-    def encode_key(self, obj: Any) -> bytes:
-        return self.key_encoder.encode(obj)
-    
-    def decode_key(self, obj: Any) -> bytes:
-        return self.key_encoder.decode(obj)
-
-    def encode_value(self, obj: Any) -> bytes:
-        return self.value_encoder.encode(obj)
-    
-    def decode_value(self, obj: Any) -> bytes:
-        return self.value_encoder.decode(obj)
-
-    encode = encode_value
-    decode = decode_value
     
     def hash(self, data: bytes) -> str:
-        return self.key_encoder.hash(data)
+        return encode_hash(data)
 
     @property
     def cached_result(self):

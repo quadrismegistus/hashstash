@@ -2,7 +2,8 @@ from typing import *
 import os
 import multiprocessing as mp
 from typing import Literal
-
+import time
+import random
 
 DEFAULT_ROOT_DIR = os.path.expanduser('~/.cache/hashstash')
 DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, '_redis','data','db')
@@ -38,3 +39,24 @@ PROFILE_SIZES = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000]
 REDIS_HOST = 'localhost'
 REDIS_PORT = 6379
 REDIS_DB = 0
+
+OBJ_ADDR_KEY='__py__'
+OBJ_ARGS_KEY='__py_args__'
+OBJ_KWARGS_KEY='__py_kwargs__'
+OBJ_SRC_KEY = '__py_src__'
+
+
+
+class Dog:
+    goestoheaven = True
+
+    def __init__(self, name):
+        self.name = name
+        self.good = True
+
+    def bark(self):
+        print("woof ", end="", flush=True)
+        time.sleep(random.random() / 2)
+        print("woof")
+
+dog = Dog('rex')
