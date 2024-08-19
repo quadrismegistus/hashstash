@@ -40,7 +40,7 @@ def setup_logger(name, level=logging.INFO):
 
 # Setup the logger
 logger = setup_logger('hashstash')
-logger.setLevel('WARN')
+logger.setLevel('DEBUG')
 
 
 
@@ -62,17 +62,17 @@ def log(_func=None, level=logging.INFO):
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # with temporary_log_level(level, only_sub=True):
-            args_str = ', '.join(map(str, args))
+            args_to_log = args[1:] if args and isinstance(args[0], type(args[0])) else args
+            args_str = ', '.join(map(repr, args_to_log))
             kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items())
             params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
             
-            msg1 = f'{func.__name__}({params_str})'
+            msg1 = f'{func.__name__}() <<< ({params_str})'
             timenow=time.time()
-            # logger.log(level, msg1)
+            logger.log(level, msg1)
             result = func(*args, **kwargs)
-    
-            logger.log(level, f'{msg1}\n>>> {result}\n')
+            timetaken = time.time() - timenow
+            logger.log(level, f'{func.__name__}() >>> {result} [{timetaken:.3f}s]')
             return result
         return wrapper
     
@@ -81,12 +81,16 @@ def log(_func=None, level=logging.INFO):
     return decorator(_func)
 
 # debug = log
-#debug = partial(log, level=logging.DEBUG)
 
-def debug_quiet(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        return func(*args, **kwargs)
-    return wrapper
+if logger.level <= logging.DEBUG:
 
-debug = debug_quiet
+    debug = partial(log, level=logging.DEBUG)
+
+else:
+    def debug_quiet(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+        return wrapper
+
+    debug = debug_quiet

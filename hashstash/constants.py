@@ -1,3 +1,5 @@
+import sys; sys.path.insert(0,'/Users/ryan/github/prosodic')
+
 from typing import *
 import os
 import multiprocessing as mp
@@ -6,9 +8,11 @@ import time
 import random
 
 DEFAULT_ROOT_DIR = os.path.expanduser('~/.cache/hashstash')
-DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, '_redis','data','db')
 DEFAULT_NAME = 'default_cache'
-
+DEFAULT_PATH = os.path.join(DEFAULT_ROOT_DIR, DEFAULT_NAME)
+DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, '_redis','data','db')
+DEFAULT_DBNAME = 'hashstash'
+DEFAULT_FILENAME = "db"
 
 # Default settings
 DEFAULT_COMPRESS = True
@@ -45,7 +49,9 @@ OBJ_ARGS_KEY='__py_args__'
 OBJ_KWARGS_KEY='__py_kwargs__'
 OBJ_SRC_KEY = '__py_src__'
 
-
+BUILTIN_SERIALIZER = 'builtin'
+JSONPICKLE_SERIALIZER = 'jsonpickle'
+DEFAULT_SERIALIZER = BUILTIN_SERIALIZER
 
 class Dog:
     goestoheaven = True

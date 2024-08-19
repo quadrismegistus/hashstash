@@ -3,7 +3,32 @@ from ..serialize import *
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import random
 
+@fcache
+def get_sonnets():
+    try:
+        import prosodic as p
+        print('getting sonnets')
+        sonnets_file = '/Users/ryan/github/prosodic/corpora/corppoetry_en/en.shakespeare.txt'
+        sonnets = []
+        with open(sonnets_file) as f, p.logmap.quiet():
+            for sonnet in f.read().strip().split('\n\n'):
+                try:
+                    sonnets.append(p.Text(sonnet))
+                except Exception:
+                    pass
+        print('getting sonnets')
+        return sonnets
+    except Exception as e:
+        logger.warning(f'Prosodic not installed, will not generate prosodic data. Error: {e}')
+        return None
+
+
+def get_random_sonnet():
+    """Get a random full sonnet"""
+    return random.choice(get_sonnets())
+        
 
 def generate_primitive():
     primitives = [
@@ -62,10 +87,14 @@ def generate_data(
         "numpy",
         "pandas_df",
         "pandas_series",
+        "prosodic_text",
+        "prosodic_line",
     ],
 ) -> Dict[str, Any]:
     data = {}
     current_size = 0
+    if not get_sonnets():
+        data_types = [x for x in data_types if not x.startswith('prosodic')]
 
     while current_size < target_size:
         remaining_size = target_size - current_size
@@ -89,12 +118,17 @@ def generate_data(
                 max_rows=max(1, min(remaining_size // 100, 1000)),
                 max_cols=max(1, min(remaining_size // 1000, 50)),
             )
-        else:  # pandas_series
+        elif choice=='pandas_series':
             key = f"pandas_series_{len(data)}"
             value = generate_pandas_series(max_length=min(remaining_size // 10, 10000))
+        elif choice=='prosodic_text':
+            key = f'prosodic_text_{len(data)}'
+            value = get_random_sonnet()
+        else:
+            continue
 
         data[key] = value
-        current_size = len(serialize(data))
+        current_size = len(serialize(data).encode())
 
     return data
 
@@ -110,3 +144,4 @@ def generate_complex_data(size: int) -> Dict[str, Any]:
         "large_list": generate_list(depth=2, max_length=size // 10),
         "large_dict": generate_dict(depth=2, max_keys=size // 10),
     }
+

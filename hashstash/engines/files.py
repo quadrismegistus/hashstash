@@ -2,37 +2,31 @@ from .base import *
 
 class FileHashStash(BaseHashStash):
     engine = 'file'
-    filename = 'db_files'
     
     def _encode_filepath(self, encoded_key):
         hashed_key = self.hash(encoded_key)
         dir, fname = hashed_key[:2], hashed_key[2:]
         return os.path.join(self.path, dir, fname)
     
-    def __setitem__(self, key: str, value: Any) -> None:
-        encoded_key = self.encode_key(key)
-        filepath = self._encode_filepath(encoded_key)
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        
-        encoded_value = self.encode_value(value)
-        
-        with open(filepath, 'wb') as f:
-            f.write(encoded_key + b'\n' + encoded_value)
-
-    def __getitem__(self, key: str) -> Any:
-        encoded_key = self.encode_key(key)
+    def _get(self, encoded_key: Union[str,bytes]) -> Any:
         filepath = self._encode_filepath(encoded_key)
         if not os.path.exists(filepath):
-            raise KeyError(key)
+            return None
         
         with open(filepath, 'rb') as f:
             f.readline() # skip key
             encoded_value = f.read()
         
-        return self.decode_value(encoded_value)
+        return encoded_value
 
-    def __contains__(self, key: str) -> bool:
-        encoded_key = self.encode_key(key)
+    def _set(self, encoded_key: bytes, encoded_value: bytes) -> None:
+        filepath = self._encode_filepath(encoded_key)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'wb') as f:
+            f.write(encoded_key + b'\n' + encoded_value)
+
+
+    def _has(self, encoded_key: bytes) -> bool:
         filepath = self._encode_filepath(encoded_key)
         return os.path.exists(filepath)
 

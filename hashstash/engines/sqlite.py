@@ -1,4 +1,4 @@
-from .base import BaseHashStash
+from .base import *
 from sqlitedict import SqliteDict
 from functools import cached_property
 

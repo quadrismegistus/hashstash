@@ -1,14 +1,14 @@
 from .utils import *
 from ..serialize import deserialize, serialize
 
-
 @debug
-def encode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
-    data = serialize(data, as_string=True)
-    data_b = data.encode()
+def encode(data: Union[str, bytes], b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
+    if not isinstance(data, (str,bytes)):
+        raise ValueError("Input data must be either a string or bytes.")
+    data_b = data.encode() if type(data) is str else data
     return _encode(data_b, b64=b64 or as_string, compress=compress, as_string=as_string)
 
-def _encode(data_b, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
+def _encode(data_b:bytes, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
     if compress:
         data_b = encode_zlib(data_b)
     if b64:
@@ -17,14 +17,10 @@ def _encode(data_b, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False)
     return data_b if not as_string else data_b.decode('utf-8')
 
 @debug
-def decode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False, as_bytes=False):
-    data_b = data.encode('utf-8') if isinstance(data, str) else data
+def decode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
+    data_b = data.encode() if isinstance(data, str) else data
     data_b = _decode(data_b, b64=b64, compress=compress)
-    if as_bytes:
-        return data_b
-    else:
-        data = data_b.decode('utf-8')
-        return data if as_string else deserialize(data)
+    return data_b.decode('utf-8') if as_string else data_b
 
 def _decode(data_b, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS):
     if b64:

@@ -3,50 +3,70 @@ import logging
 import ast
 import inspect
 
-
-def serialize(obj, as_string=True, sort_keys=True):
-    logger.debug(f"Serializing object: {type(obj)}")
-    data = _serialize(obj)
-    if not as_string:
-        return data
-    return json.dumps(data, sort_keys=sort_keys)
-
-
 @debug
+def serialize(obj, as_string=True, sort_keys=True, method=DEFAULT_SERIALIZER):
+    # # logger.debug(f"Serializing object: {type(obj)}")
+    data = None
+    if method == JSONPICKLE_SERIALIZER:
+        data = _serialize_jsonpickle(obj)
+
+    if data is None:
+        data = _serialize(obj)
+        if not as_string:
+            return data
+        data = json.dumps(data, sort_keys=sort_keys)
+    
+    return data
+
+def _serialize_jsonpickle(obj):
+    try:
+        import jsonpickle
+        return jsonpickle.dumps(obj)
+    except Exception as e:
+        logger.warning(e)
+        return None
+
+# @debug
 def _serialize(obj):
-    logger.debug(f"_serialize called with object type {type(obj)}")
+    # # logger.debug(f"_serialize called with object type {type(obj)}")
 
     # first get any wrapped's
-    while hasattr(obj, "__wrapped__"):
+    while hasattr(obj, "__wrapped__") and obj.__wrapped__:
+        print(obj)
+        # # logger.debug("Unwrapping")
         obj = obj.__wrapped__
+        print(obj)
+        print()
 
     # if isinstance(obj, (list, tuple, set, frozenset)):
     if type(obj) is list:
-        logger.debug("Serializing list")
+        # # logger.debug("Serializing list")
         return [_serialize(item) for item in obj]
 
     elif type(obj) is dict:
+        # # logger.debug("Serializing dictionary")
         return {k: _serialize(v) for k, v in obj.items()}
 
     # (dict, list, str, int, float, bool, type(None)))
     elif is_jsonable(obj):
+        # logger.debug("Returning as jsonable")
         return obj
 
     elif isinstance(obj, types.FunctionType):
-        logger.debug("Serializing function")
+        # logger.debug("Serializing function")
         return serialize_function(obj)
 
     elif isinstance(obj, type):
-        logger.debug("Serializing class")
+        # logger.debug("Serializing class")
         return serialize_class(obj)
 
-    logger.debug("Serializing object")
+    # logger.debug("Serializing object")
     return serialize_object(obj)
 
 
-@debug
+#@debug
 def serialize_object(obj):
-    logger.debug(f"serialize_object called with type: {type(obj)}")
+    # logger.debug(f"serialize_object called with type: {type(obj)}")
 
     # is dict itself? continue
     if type(obj) is dict:
@@ -54,7 +74,7 @@ def serialize_object(obj):
 
     # otherwise make outd
     obj_addr = get_obj_addr(obj)
-    logger.info(f"Serializing object with address: {obj_addr}")
+    # logger.info(f"Serializing object with address: {obj_addr}")
 
     # object registered in custom serializer functions?
     
@@ -80,7 +100,7 @@ def serialize_object(obj):
         # return {f"__py/{get_obj_name(obj)}":res}
 
     # any dictionary at all?
-    obj_d = get_dict(obj, __ignore=False)
+    obj_d = prune_none_values(get_dict(obj, __ignore=False))
     if obj_d:
         return {
             OBJ_ADDR_KEY: obj_addr,
@@ -91,7 +111,7 @@ def serialize_object(obj):
     return serialize_unknown(obj)
 
 
-@debug
+#@debug
 def serialize_unknown(obj, pickle=False):
     logging.warning(f"Cannot serialize unknown object type: {type(obj)}")
     return None
@@ -105,9 +125,9 @@ def serialize_unknown(obj, pickle=False):
     return outd
 
 
-@debug
+#@debug
 def serialize_pickle(obj):
-    logger.info(f"Attempting to pickle object: {type(obj)}")
+    # logger.info(f"Attempting to pickle object: {type(obj)}")
     try:
         print("pickling", obj)
         out = base64.b64encode(pickle.dumps(obj))
@@ -117,9 +137,9 @@ def serialize_pickle(obj):
         logging.error(f"Failed to pickle object: {e}")
 
 
-@debug
+#@debug
 def serialize_function(obj):
-    logger.debug(f"Serializing function: {obj.__name__}")
+    # logger.debug(f"Serializing function: {obj.__name__}")
     obj_addr = get_obj_addr(obj)
     out = {OBJ_ADDR_KEY: obj_addr}
 
@@ -132,31 +152,35 @@ def serialize_function(obj):
     return out
 
 
-@debug
+#@debug
 def get_dict(obj, __ignore=True, _ignore=False, use_attrs=False):
-    logger.debug(f"get_dict called for object type: {type(obj)}")
+    # logger.debug(f"get_dict called for object type: {type(obj)}")
     if isinstance(obj, dict):
         return {**obj}
 
     try:
-        return prune_none_values(dict(obj.to_dict()))
+        obj = dict(obj.to_dict())
+        # logger.debug('using to_dict')
+        return obj
     except Exception:
         pass
 
     try:
-        # Get the __init__ parameters
-        # init_params = inspect.signature(obj.__class__.__init__).parameters.keys()
-        # Filter __dict__ to include only __init__ parameters
-        return prune_none_values({k: v for k, v in obj.__dict__.items()})# if k in init_params})
+        obj = {**obj.__dict__}
+        # logger.debug('using obj.__dict__')
+        return obj
     except Exception:
         pass
 
     try:
-        return prune_none_values(dict(obj))
+        obj = dict(obj)
+        # logger.debug('using dict(obj)')
+        return obj
     except Exception:
         pass
 
     if use_attrs:
+        # logger.debug('using dir(obj)')
         init_params = inspect.signature(obj.__class__.__init__).parameters.keys()
         return {
             attr: getattr(obj, attr)
@@ -169,9 +193,9 @@ def get_dict(obj, __ignore=True, _ignore=False, use_attrs=False):
 
 
 
-@debug
+#@debug
 def serialize_class(obj):
-    logger.debug(f"Serializing class: {obj.__name__}")
+    # logger.debug(f"Serializing class: {obj.__name__}")
     out = {
         OBJ_ADDR_KEY: get_obj_addr(obj),
     }

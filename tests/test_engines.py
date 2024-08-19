@@ -147,10 +147,18 @@ class TestHashStash:
 
     def test_cache_encoding(self, cache):
         test_data = {"key": "value"}
-        encoded_data = cache.encode(test_data)
+        serialized_data = json.dumps(test_data)
+        encoded_data = cache.encode_value(serialized_data)
         assert isinstance(encoded_data, bytes if not cache.string_values else str)
         decoded_data = cache.decode_value(encoded_data)
-        assert decoded_data == test_data
+        
+        # Check if decoded_data is already a dictionary
+        if isinstance(decoded_data, dict):
+            deserialized_data = decoded_data
+        else:
+            deserialized_data = json.loads(decoded_data)
+        
+        assert deserialized_data == test_data
 
     def test_cache_hash(self, cache):
         test_data = b"test data"

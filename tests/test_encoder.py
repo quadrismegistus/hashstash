@@ -9,16 +9,16 @@ def default_params():
     return {"b64": True, "compress": True, "as_string": False}
 
 def test_encode_decode(default_params):
-    data = {"test": "data", "number": 42}
+    data = json.dumps({"test": "data", "number": 42})
     encoded = encode(data, **default_params)
-    decoded = decode(encoded, **default_params)
-    assert decoded == data
+    decoded = json.loads(decode(encoded, **default_params).decode('utf-8'))
+    assert decoded == json.loads(data)
 
 def test_encode_decode_list(default_params):
-    data = ["list", "of", "items"]
+    data = json.dumps(["list", "of", "items"])
     encoded = encode(data, **default_params)
-    decoded = decode(encoded, **default_params)
-    assert decoded == data
+    decoded = json.loads(decode(encoded, **default_params).decode('utf-8'))
+    assert decoded == json.loads(data)
 
 def test_hash():
     data = b"test data"
@@ -26,32 +26,32 @@ def test_hash():
     assert len(hashed) == 32  # MD5 hash is 32 characters long
 
 def test_b64_encoding(default_params):
-    data = {"test": "data"}
+    data = json.dumps({"test": "data"})
     encoded = encode(data, b64=True, compress=False)
     decoded_json = base64.b64decode(encoded).decode('utf-8')
-    assert json.loads(decoded_json) == data
+    assert json.loads(decoded_json) == json.loads(data)
 
 def test_compression(default_params):
-    data = {"test": "data" * 1000}  # Create a larger dataset to test compression
+    data = json.dumps({"test": "data" * 1000})
     encoded_compressed = encode(data, b64=False, compress=True)
     encoded_uncompressed = encode(data, b64=False, compress=False)
     assert len(encoded_compressed) < len(encoded_uncompressed)
 
 def test_as_string(default_params):
-    data = {"test": "data"}
+    data = json.dumps({"test": "data"})
     encoded = encode(data, as_string=True)
     assert isinstance(encoded, str)
     decoded = decode(encoded, as_string=True)
     assert isinstance(decoded, str)
 
 def test_no_compression(default_params):
-    data = {"test": "data"}
+    data = json.dumps({"test": "data"})
     encoded = encode(data, b64=True, compress=False)
-    decoded = decode(encoded, b64=True, compress=False)
-    assert decoded == data
+    decoded = json.loads(decode(encoded, b64=True, compress=False).decode('utf-8'))
+    assert decoded == json.loads(data)
 
 def test_different_combinations():
-    data = {"test": "data", "number": 42}
+    data = json.dumps({"test": "data", "number": 42})
     combinations = [
         {"b64": True, "compress": True, "as_string": False},
         {"b64": True, "compress": False, "as_string": False},
@@ -63,7 +63,7 @@ def test_different_combinations():
         encoded = encode(data, **params)
         decparams = {**params}
         decparams['as_string'] = False
-        decoded = decode(encoded, **decparams)
-        assert decoded == data, f"Failed with params: {params}"
+        decoded = json.loads(decode(encoded, **decparams).decode('utf-8'))
+        assert decoded == json.loads(data), f"Failed with params: {params}"
 
 # Add more tests as needed

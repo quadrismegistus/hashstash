@@ -3,15 +3,17 @@ from .logs import *
 from .pmap import *
 import types
 
+@debug
 @fcache
 def HashStash(
     name: str = DEFAULT_NAME,
-    engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE,
-    root_dir: str = None,
-    compress: bool = None,
-    b64: bool = None,
-    filename: str = None,
-    dbname: str = None,
+    engine: str = DEFAULT_ENGINE_TYPE,
+    compress: bool = DEFAULT_COMPRESS,
+    b64: bool = DEFAULT_B64,
+    serializer: Literal[
+        BUILTIN_SERIALIZER,
+        JSONPICKLE_SERIALIZER,
+    ] = DEFAULT_SERIALIZER,
     **kwargs,
 ) -> "BaseHashStash":
     """
@@ -28,13 +30,9 @@ def HashStash(
     Raises:
         ValueError: If an invalid engine is provided.
     """
-    logger.debug(
-        f"Cache called with engine: {engine}, name: {name}, kwargs: {kwargs}"
-    )
 
     if engine == "file":
         from ..engines.files import FileHashStash
-
         cls = FileHashStash
     elif engine == "sqlite":
         from ..engines.sqlite import SqliteHashStash
@@ -68,14 +66,11 @@ def HashStash(
     
     object = cls(
         name=name,
-        root_dir=root_dir,
         compress=compress,
         b64=b64,
-        filename=filename,
-        dbname=dbname,
+        serializer=serializer,
         **kwargs
     )
-    logger.debug(f'Created: {object}')
     return object
 
 
@@ -318,7 +313,9 @@ def call_function_politely(func, *args, **kwargs):
     :param kwargs: Keyword arguments
     :return: The result of the function call
     """
-    logger.debug(f"Preparing to call {func.__name__} with refined arguments")
+    # logger.debug(f"Preparing to call {func.__name__} with refined arguments")
+    # logger.debug(f'Original args: {args}')
+    # logger.debug(f'Original kwargs: {kwargs}')
 
     # Handle partial functions
     if isinstance(func, partial):
@@ -332,7 +329,7 @@ def call_function_politely(func, *args, **kwargs):
     try:
         sig = inspect.signature(func)
     except Exception:
-        print((func,args,kwargs))
+        # logger.debug('could not get function signature; calling normally')
         return func(*args,**kwargs)
     
     # Filter args and kwargs
@@ -345,10 +342,35 @@ def call_function_politely(func, *args, **kwargs):
         if i < len(filtered_args) and param in filtered_kwargs:
             del filtered_kwargs[param]
 
-    logger.debug(f"Calling {func.__name__} with {len(filtered_args)} args and {len(filtered_kwargs)} kwargs")
-    
+    if filtered_args or filtered_kwargs:
+        # logger.debug(f"Calling {func.__name__} with {len(filtered_args)} args and {len(filtered_kwargs)} kwargs")
+        args = filtered_args
+        kwargs = filtered_kwargs
+
     try:
-        return func(*filtered_args, **filtered_kwargs)
+        return func(*args, **kwargs)
     except Exception as e:
-        logger.error(f"Error calling {func.__name__}: {e}")
-        raise
+        if args and not kwargs:
+            try:
+                return func(args)
+            except Exception as e2:
+                pass
+        elif kwargs and not args:
+            try:
+                return func(kwargs)
+            except Exception as e2:
+                pass
+
+        logger.error(f"Error calling {func.__name__}(*args, **kwargs): {e}")
+        raise e
+
+@debug
+def is_dir(path):
+    fn, ext = os.path.splitext(path)
+    return not bool(ext)
+
+@debug
+def ensure_dir(path):
+    if not is_dir(path): 
+        path=os.path.dirname(path)
+    return os.makedirs(path, exist_ok=True)

@@ -23,9 +23,9 @@ class RedisHashStash(BaseHashStash):
         if host is not None: self.host = host
         if port is not None: self.port = port
         if dbname is not None: self.dbname = dbname
-
+    
     def get_db(self):
-        logger.info(f"Connecting to Redis at {self.host}:{self.port}")
+        logger.debug(f"Connecting to Redis at {self.host}:{self.port}")
         # return redis.Redis(host=self.host, port=self.port, db=self.dbname)
         return DictContext(RedisDict(namespace=self.name, host=self.host, port=self.port, db=self.dbname))
 
