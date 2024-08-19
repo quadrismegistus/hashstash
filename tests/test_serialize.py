@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import pandas as pd
 import json
+from base64 import b64encode
 from hashstash.serialize import deserialize, serialize
 from hashstash.constants import OBJ_ADDR_KEY, OBJ_SRC_KEY, OBJ_ARGS_KEY, OBJ_KWARGS_KEY
 
@@ -15,13 +16,13 @@ def test_serialize_numpy():
     arr = np.array([1, 2, 3])
     result = json.loads(serialize(arr))
     assert result[OBJ_ADDR_KEY] == 'numpy.ndarray'
-    assert result[OBJ_ARGS_KEY] == [[1, 2, 3]]
+    assert result[OBJ_ARGS_KEY] == [b64encode(arr.tobytes()).decode('utf-8')]
 
 def test_serialize_pandas_df():
     df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
     result = json.loads(serialize(df))
     assert result[OBJ_ADDR_KEY] == 'pandas.core.frame.DataFrame'
-    assert result[OBJ_KWARGS_KEY]['values'] == [[1, 4], [2, 5], [3, 6]]
+    assert result[OBJ_ARGS_KEY] == [[[1, 4], [2, 5], [3, 6]]] # extra list for args
     assert result[OBJ_KWARGS_KEY]['columns'] == ['A', 'B']
     assert result[OBJ_KWARGS_KEY]['index_columns'] == []
 

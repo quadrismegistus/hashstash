@@ -3,40 +3,36 @@ from ..serialize import deserialize, serialize
 
 
 @debug
-def encode(obj, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
-    from ..serialize import serialize
-    data = serialize(obj)
+def encode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
+    data = serialize(data, as_string=True)
     data_b = data.encode()
+    return _encode(data_b, b64=b64 or as_string, compress=compress, as_string=as_string)
+
+def _encode(data_b, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
     if compress:
         data_b = encode_zlib(data_b)
-    if b64 or as_string:
-        data_b = encode_b64(data_b) # ensure decodable as string
+    if b64:
+        data_b = encode_b64(data_b)
+
     return data_b if not as_string else data_b.decode('utf-8')
 
 @debug
-def decode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=True):
-
-    print(f"Input data: {data}")  # Log first 100 characters
-
+def decode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False, as_bytes=False):
     data_b = data.encode('utf-8') if isinstance(data, str) else data
+    data_b = _decode(data_b, b64=b64, compress=compress)
+    if as_bytes:
+        return data_b
+    else:
+        data = data_b.decode('utf-8')
+        return data if as_string else deserialize(data)
 
-    if b64 or as_string:
+def _decode(data_b, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS):
+    if b64:
         data_b = decode_b64(data_b)
-
     if compress:
         data_b = decode_zlib(data_b)
+    return data_b
 
-    data = data_b.decode('utf-8')    
-    return deserialize(data)
-
-    # try:
-    #     parsed_data = json.loads(decoded_data)
-    #     logger.debug(f"Parsed JSON data: {parsed_data}")
-    # except json.JSONDecodeError as e:
-    #     logger.error(f"JSON parsing failed: {e}")
-    #     raise ValueError(f"Failed to parse JSON data: {e}")
-
-    return data
 
 def encode_zlib(data):
     try:

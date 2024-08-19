@@ -149,7 +149,7 @@ class TestHashStash:
         test_data = {"key": "value"}
         encoded_data = cache.encode(test_data)
         assert isinstance(encoded_data, bytes if not cache.string_values else str)
-        decoded_data = cache.decode(encoded_data)
+        decoded_data = cache.decode_value(encoded_data)
         assert decoded_data == test_data
 
     def test_cache_hash(self, cache):

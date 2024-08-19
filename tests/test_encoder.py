@@ -42,7 +42,7 @@ def test_as_string(default_params):
     encoded = encode(data, as_string=True)
     assert isinstance(encoded, str)
     decoded = decode(encoded, as_string=True)
-    assert decoded == data
+    assert isinstance(decoded, str)
 
 def test_no_compression(default_params):
     data = {"test": "data"}
@@ -61,7 +61,9 @@ def test_different_combinations():
     ]
     for params in combinations:
         encoded = encode(data, **params)
-        decoded = decode(encoded, **params)
+        decparams = {**params}
+        decparams['as_string'] = False
+        decoded = decode(encoded, **decparams)
         assert decoded == data, f"Failed with params: {params}"
 
 # Add more tests as needed

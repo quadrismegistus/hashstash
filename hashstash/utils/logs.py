@@ -40,7 +40,7 @@ def setup_logger(name, level=logging.INFO):
 
 # Setup the logger
 logger = setup_logger('hashstash')
-logger.setLevel('INFO')
+logger.setLevel('WARN')
 
 
 
@@ -80,5 +80,13 @@ def log(_func=None, level=logging.INFO):
         return decorator
     return decorator(_func)
 
-debug = log
+# debug = log
 #debug = partial(log, level=logging.DEBUG)
+
+def debug_quiet(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+debug = debug_quiet

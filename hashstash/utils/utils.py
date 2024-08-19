@@ -114,31 +114,33 @@ def cached_result(
     _func=None,
     *cache_args,
     cache: Optional["BaseHashStash"] = None,
-    name:str='cached_result',
+    name:str=None,
     force=False,
     **cache_kwargs,
 ):
     def decorator(func: Callable, _force=force) -> Callable:
         @wraps(func)
         def wrapper(*args, _force=_force, **kwargs):
-            nonlocal cache
-            cache_context = (
-                cache if cache is not None else HashStash(*cache_args,name=name, **cache_kwargs)
-            )
-            force = kwargs.pop("_force", _force)
             from ..serialize.serialize import serialize
-            key = serialize((func, args, kwargs))
-            print(key)
-            if not force and key in cache_context:
+            nonlocal cache, name
+
+            if name is None:
+                name = '/'.join(['cached_result', get_obj_addr(func)])
+            if cache is None:
+                cache = HashStash(*cache_args,name=name, **cache_kwargs)
+            func.stash = cache
+            force = kwargs.pop("_force", _force)
+            key = serialize([func, list(args), kwargs])
+            if not force and key in cache:
                 logger.debug(f"Cache hit for {func.__name__}. Returning cached result.")
-                return cache_context[key]
+                return cache[key]
 
             logger.debug(
                 f"{'Forced execution' if force else 'Cache miss'} for {func.__name__}. Executing function."
             )
             result = func(*args, **kwargs)
             logger.debug(f"Caching result for {func.__name__}.")
-            cache_context[key] = result
+            cache[key] = result
             return result
 
         return wrapper

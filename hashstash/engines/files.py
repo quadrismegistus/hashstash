@@ -29,7 +29,7 @@ class FileHashStash(BaseHashStash):
             f.readline() # skip key
             encoded_value = f.read()
         
-        return self.decode(encoded_value)
+        return self.decode_value(encoded_value)
 
     def __contains__(self, key: str) -> bool:
         encoded_key = self.encode_key(key)

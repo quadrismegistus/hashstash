@@ -4,6 +4,8 @@ from .serialize import *
 
 def deserialize(obj):
     logger.debug(f"Deserializing object: {obj}")
+    if type(obj) is bytes:
+        obj = obj.decode('utf-8')
 
     if type(obj) is str:
         obj = json.loads(obj)
@@ -21,7 +23,6 @@ def _deserialize_python(data:dict, init_funcs=['from_dict', '__init__']):
     if obj_addr in CUSTOM_OBJECT_DESERIALIZERS:
         obj_func = CUSTOM_OBJECT_DESERIALIZERS[obj_addr]
         x= obj_func(*args, **kwargs)
-        print('??',x)
         return x
     
     def call_func(func):

@@ -1,17 +1,36 @@
 from ..utils import *
 from .serialize import _serialize
 from .deserialize import _deserialize
-from ..utils.encodings import decode, encode
+from ..utils.encodings import _decode, _encode
 
 @debug
 def serialize_numpy(obj):
-    return [obj.tolist()]
+    out=_encode(obj.tobytes(), compress=False, b64=True, as_string=True)
+    return {
+        OBJ_ARGS_KEY:[out],
+        OBJ_KWARGS_KEY:{
+            'dtype':str(obj.dtype)
+        }
+    }
 
-def deserialize_numpy(obj):
+def deserialize_numpy(obj_b, dtype=None):
     import numpy as np
-    return np.array(obj)
+    arr_bytes = _decode(obj_b, compress=False, b64=True)
+    dtype = np.dtype(dtype) if dtype else None
+    return np.frombuffer(arr_bytes, dtype=dtype)
 
 
+
+# @debug
+# def serialize_pandas_df(obj):
+#     index = [x for x in obj.index.names if x is not None]
+#     if index:
+#         obj = obj.reset_index()
+#     return {
+#         "values": obj.values.tolist(),
+#         "columns": obj.columns.tolist(),
+#         "index_columns": index,
+#     }
 
 @debug
 def serialize_pandas_df(obj):
@@ -19,23 +38,22 @@ def serialize_pandas_df(obj):
     if index:
         obj = obj.reset_index()
     return {
-        "values": obj.values.tolist(),
-        "columns": obj.columns.tolist(),
-        "index_columns": index,
+        OBJ_ARGS_KEY: [obj.values.tolist()],
+        OBJ_KWARGS_KEY: {
+            'columns': obj.columns.tolist(),
+            'index_columns': index
+        }
     }
 
-
 @debug
-def deserialize_pandas_df(**obj):
+def deserialize_pandas_df(data, *args, columns=None, index_columns=None, **kwargs):
     import pandas as pd
     logger.debug("Deserializing pandas DataFrame")
-
-    values = obj["values"]
-    columns = obj["columns"]
-    index = obj["index_columns"]
-    df = pd.DataFrame(values, columns=columns)
-    if index:
-        df = df.set_index(index)
+    df = pd.DataFrame(data)
+    if columns:
+        df.columns = columns
+    if index_columns:
+        df = df.set_index(index_columns)
     return df
 
 
@@ -73,11 +91,11 @@ def deserialize_pandas_series(obj):
 
 @debug
 def serialize_bytes(obj):
-    return encode(obj, compress=False, b64=True, as_string=True)
+    return _encode(obj, compress=False, b64=True, as_string=True)
 
 @debug
 def deserialize_bytes(obj):
-    return decode(obj, compress=False, b64=True)
+    return _decode(obj, compress=False, b64=True)
 
 def serialize_set(obj):
     return [_serialize(v) for v in sorted(obj, key=lambda x: str(x))] # ensure pseudo sorted for deterministic output

@@ -163,7 +163,7 @@ def profile_stash_transaction(
 
     # Measure key decoding speed
     start_time = time.time()
-    _ = cache.decode(encoded_key)
+    _ = cache.decode_key(encoded_key)
     key_decode_time = time.time() - start_time
     add_result("Decode Key", key_decode_time)
 
@@ -175,7 +175,7 @@ def profile_stash_transaction(
 
     # Measure value decoding speed
     start_time = time.time()
-    _ = cache.decode(encoded_value)
+    _ = cache.decode_value(encoded_value)
     value_decode_time = time.time() - start_time
     add_result("Decode Value", value_decode_time)
 

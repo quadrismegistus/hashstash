@@ -4,12 +4,12 @@ import ast
 import inspect
 
 
-def serialize(obj, as_string=True):
+def serialize(obj, as_string=True, sort_keys=True):
     logger.debug(f"Serializing object: {type(obj)}")
-    data = prune_none_values(_serialize(obj))
+    data = _serialize(obj)
     if not as_string:
         return data
-    return json.dumps(data, sort_keys=True)
+    return json.dumps(data, sort_keys=sort_keys)
 
 
 @debug

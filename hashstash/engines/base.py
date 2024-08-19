@@ -1,5 +1,6 @@
 from ..hashstash import *
 from ..utils.encodings import encode, decode, encode_hash
+from ..serialize import serialize, deserialize
 from collections.abc import MutableMapping
 from functools import partial
 import threading
@@ -51,10 +52,14 @@ class BaseHashStash(MutableMapping):
             os.makedirs(self.dir, exist_ok=True)
 
         self.encode_key = partial(encode, b64=self.b64, compress=self.compress, as_string=self.string_keys)
-        self.decode_key = partial(decode, b64=self.b64, compress=self.compress, as_string=self.string_keys)
+        self.decode_key = partial(decode, b64=self.b64, compress=self.compress)
+        
+        self.encode_value = partial(encode, b64=self.b64, compress=self.compress, as_string=self.string_values)
+        self.decode_value = partial(decode, b64=self.b64, compress=self.compress)
 
-        self.encode = self.encode_value = partial(encode, b64=self.b64, compress=self.compress, as_string=self.string_values)
-        self.decode = self.decode_value = partial(decode, b64=self.b64, compress=self.compress, as_string=self.string_values)
+        self.encode = self.encode_value
+        self.decode = self.decode_value
+        
 
     def to_dict(self):
         return {
@@ -98,13 +103,15 @@ class BaseHashStash(MutableMapping):
             db[self.encode_key(key)] = self.encode(value)
 
     def __getitem__(self, key: str) -> Any:
+        return self.decode_value(self._get(key))
+            
+    def _get(self, key: str) -> Any:
         with self as cache, cache.db as db:
             res = db.get(self.encode_key(key))
             if res is None:
                 raise KeyError(key)
-            return self.decode_value(res)
+            return res
     
-
     def __contains__(self, key: str) -> bool:
         with self as cache, cache.db as db:
             return self.encode_key(key) in db
@@ -203,7 +210,7 @@ class BaseHashStash(MutableMapping):
 
     @cached_property
     def profiler(self):
-        from ..etc.profiler import HashStashProfiler
+        from ..profiler.engine_profiler import HashStashProfiler
         return HashStashProfiler(self)
     
     def sub(self, **kwargs):
