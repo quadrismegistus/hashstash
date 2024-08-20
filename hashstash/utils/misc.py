@@ -33,31 +33,6 @@ def is_dataframe(obj):
     addr = get_obj_addr(obj)
     return addr.startswith('pandas.') and addr.endswith('.DataFrame')
 
-
-def progress_bar(iterr, progress=True,**kwargs):
-    global current_depth
-
-    if not progress:
-        yield from iterr
-    else:
-        try:
-            from tqdm import tqdm
-            current_depth+=1
-            
-            class ColoredTqdm(tqdm):
-                def __init__(self, *args, desc=None, **kwargs):
-                    self.green = '\033[32m'
-                    self.reset = '\033[32m'
-                    desc = f"{self.green}{log_prefix_str(desc,reset=True)}{self.reset}"
-                    super().__init__(*args, desc=desc, **kwargs)
-                    
-
-            yield from ColoredTqdm(iterr, position=0, leave=False, **kwargs)
-        except ImportError:
-            yield from progress_bar(iterr, progress=False, **kwargs)
-        finally:
-            current_depth-=1
-
 def get_fn_ext(fn):
     # without period
     return fn.split('.')[-1]

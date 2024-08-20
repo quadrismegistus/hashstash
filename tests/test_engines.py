@@ -1,7 +1,4 @@
 from hashstash import *
-# from hashstash.engines.redis import start_redis_server
-# start_redis_server()
-
 import unittest
 import tempfile
 import shutil
@@ -10,6 +7,7 @@ import json
 import random
 import time
 import pytest
+import pandas as pd
 
 TEST_CLASSES = [
     PairtreeHashStash,
@@ -17,7 +15,6 @@ TEST_CLASSES = [
     MemoryHashStash,
     ShelveHashStash,
     RedisHashStash,
-    # PickleDBHashStash,
     DiskCacheHashStash,
     LMDBHashStash
 ]
@@ -190,6 +187,29 @@ class TestHashStash:
         assert len(items) == 2
         assert ("key1", "value1") in items
         assert ("key2", "value2") in items
+
+    def test_sub_function_results(self, cache):
+        def example_func(x, y):
+            return x + y
+
+        sub_stash = cache.sub_function_results(example_func)
+        assert isinstance(sub_stash, BaseHashStash)
+        assert "stashed_result" in sub_stash.dbname
+        assert "example_func" in sub_stash.dbname
+
+    def test_assemble_ld_and_df(self, cache):
+        cache[{"func": lambda x: x, "args": (1,), "kwargs": {}}] = {"result": 1}
+        cache[{"func": lambda x: x, "args": (2,), "kwargs": {}}] = {"result": 2}
+
+        ld = cache.assemble_ld()
+        assert len(ld) == 2
+        assert all("_arg1" in item for item in ld)
+        assert all("result" in item for item in ld)
+
+        df = cache.assemble_df()
+        assert len(df) == 2
+        assert "_arg1" in df.columns
+        assert "result" in df.columns
 
     @staticmethod
     def _get_cached_size(cache, key):

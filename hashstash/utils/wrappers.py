@@ -15,7 +15,7 @@ def stashed_result(
     **stash_kwargs,
 ):
     def decorator(func: Callable) -> Callable:
-        nonlocal stash, update_on_src_change
+        nonlocal stash, update_on_src_change, force
         if stash is None:
             from ..engines.base import HashStash
             from ..utils.encodings import encode_hash
@@ -41,18 +41,18 @@ def stashed_result(
             nonlocal force, stash, store_args
             wrapper.stash = stash
 
-            force = kwargs.pop("_force", force)
+            local_force = kwargs.pop("_force", force)
             key = {"func": func, "args": tuple(args), "kwargs": kwargs}
             if not store_args:
                 key = encode_hash(stash.serialize(key))
 
             # find it?
-            if not force and key in stash:
+            if not local_force and key in stash:
                 log.debug(f"Stash hit for {func.__name__}. Returning stashd result.")
                 return stash[key]
 
             # didn't find
-            note = "Forced execution" if force else "Stash miss"
+            note = "Forced execution" if local_force else "Stash miss"
             log.debug(f"{note} for {func.__name__}. Executing function.")
 
             # call func
