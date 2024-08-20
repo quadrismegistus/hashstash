@@ -36,6 +36,8 @@ def get_obj_name(obj):
         return obj.__class__.__name__
     return type(obj).__name__
 
+def get_obj_nice_name(obj):
+    return '.'.join(get_obj_addr(obj).split('.')[-2:]) if get_obj_module(obj) != 'builtins' else get_obj_name(obj)
 
 
 def flexible_import(obj_or_path):

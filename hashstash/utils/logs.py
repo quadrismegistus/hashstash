@@ -54,7 +54,7 @@ def temporary_log_level(temp_level, only_sub=False):
 
 # Add a global variable to track the current depth
 current_depth = 0
-indenter = '|  '
+indenter = ' | '
 last_log_time = None
 
 def log_wrapper(_func=None, level=logging.INFO):
@@ -69,18 +69,27 @@ def log_wrapper(_func=None, level=logging.INFO):
                 args_str = ', '.join(map(repr, args))
             except Exception:
                 args_str = ', '.join(map(repr, args[1:]))
-            kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items())
+            kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items() if v is not None)
             params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
+            if level>=logger.level:
+                log_func(f'{get_obj_nice_name(func)}  <<<  ({params_str.replace("\n", " ")})', level=level)
+                current_depth += 1
             
-            log_func(f'{get_obj_addr(func)}({params_str[:100]}) >>>', level=level)
+            try:
+                result = func(*args, **kwargs)
+            except Exception as e:
+                log.error(f"Error in {func.__name__}: {str(e)}")
+                current_depth = 0
+                raise e
 
-            current_depth += 1
-            result = func(*args, **kwargs)
-            current_depth -= 1
-            log_func(f'>>> {str(result)[:100]}', level=level)
+            if level>=logger.level:
+                current_depth -= 1
+                # if result is not None: 
+                log_func(f'{get_obj_nice_name(func)}  >>>  {repr(result).replace("\n", " ")}', level=level)
+                    # log_func(f'>>> {str(result)[:100]}', level=level)
 
-            if not current_depth:
-                last_log_time = None
+                if not current_depth:
+                    last_log_time = None
 
             return result
         return wrapper
@@ -89,15 +98,29 @@ def log_wrapper(_func=None, level=logging.INFO):
         return decorator
     return decorator(_func)
 
+last_log_time = time.time()
 
-def log_func(message, level=logging.DEBUG):
-    global current_depth, last_log_time
-    indent = indenter * current_depth
+def log_time_taken(reset=True):
+    global last_log_time
     timenow = time.time()
     timetaken = timenow - (last_log_time if last_log_time else timenow)
-    last_log_time = timenow
+    if reset: last_log_time = timenow
+    return timetaken
 
-    logger.log(level, f'[{timetaken:.2f}s] {indent}{message}')
+def log_time_taken_str(reset=True):
+    timetaken = log_time_taken(reset=reset)
+    return f'[{timetaken:.2f}s]'
+
+def log_indent_str():
+    global current_depth
+    return indenter * current_depth
+
+def log_prefix_str(message='', reset=True):
+    return  f'{log_time_taken_str(reset=reset)}{log_indent_str()}{" "+message if message else ""}'
+
+
+def log_func(message, level=logging.DEBUG, maxlen=100):
+    logger.log(level,log_prefix_str(message)[:maxlen])
 
 
 class log:
@@ -112,6 +135,7 @@ class log:
     debug = partial(log, level=logging.DEBUG)
     info = partial(log, level=logging.INFO)
     warn = partial(log, level=logging.WARNING)
+    warning = partial(log, level=logging.WARNING)
     error = partial(log, level=logging.ERROR)
 
 # if logger.level <= logging.DEBUG:

@@ -12,7 +12,7 @@ import time
 import pytest
 
 TEST_CLASSES = [
-    FileHashStash,
+    PairtreeHashStash,
     SqliteHashStash,
     MemoryHashStash,
     ShelveHashStash,

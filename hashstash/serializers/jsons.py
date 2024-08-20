@@ -1,4 +1,12 @@
 from . import *
+
+# try:
+#     import jsonpickle
+#     jsonpickle.set_encoder_options('json', sort_keys=True)
+# except ImportError:
+#     pass
+
+
 _jsonpickle_handlers_registered = False
 
 def serialize_orjson(obj):
@@ -9,11 +17,7 @@ def serialize_json(obj):
     return json.dumps(obj,sort_keys=True)
 
 def deserialize_json(obj):
-    try:
-        return deserialize_orjson(obj)
-    except ImportError:
-        return json.loads(obj)
-
+    return json.loads(obj)
 
 def deserialize_orjson(obj):
     import orjson
@@ -43,6 +47,8 @@ def deserialize_jsonpickle_ext(obj):
 
 
 def _register_jsonpickle_handlers():
+    import jsonpickle
+    jsonpickle.set_encoder_options('json', sort_keys=True)
     global _jsonpickle_handlers_registered
 
     if not _jsonpickle_handlers_registered:
@@ -53,6 +59,8 @@ def _register_jsonpickle_handlers():
         _jsonpickle_handlers_registered = True
 
 def _unregister_jsonpickle_handlers():
+    import jsonpickle
+    jsonpickle.set_encoder_options('json', sort_keys=True)
     global _jsonpickle_handlers_registered
     if _jsonpickle_handlers_registered:
         try:

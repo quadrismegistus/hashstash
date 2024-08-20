@@ -1,7 +1,4 @@
-from ..hashstash import *
-from tqdm import tqdm
-import pandas as pd
-import threading
+from . import *
 
 RAW_SIZE_KEY = "Raw Size (MB)"
 
@@ -10,7 +7,7 @@ class HashStashProfiler:
     def __init__(self, stash):
         self.stash = stash
 
-    @cached_result(name="profile_cache")
+    @stashed_result(name="profile_cache")
     def profile(
         self,
         size: list = PROFILE_SIZES,

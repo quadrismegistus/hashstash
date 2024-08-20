@@ -1,53 +1,66 @@
 from . import *
 
 
-@log.info
-def cached_result(
+
+
+@log.debug
+def stashed_result(
     _func=None,
-    *cache_args,
-    cache: Optional["BaseHashStash"] = None,
-    name:str=None,
-    dbname:str=None,
+    stash: Optional["BaseHashStash"] = None,
+    name: str = None,
+    dbname: str = None,
     force=False,
-    **cache_kwargs,
+    update_on_src_change=False,
+    store_args=True,
+    **stash_kwargs,
 ):
     def decorator(func: Callable) -> Callable:
+        nonlocal stash, update_on_src_change
+        if stash is None:
+            from ..engines.base import HashStash
+            from ..utils.encodings import encode_hash
+            from ..serializers import encode_hash
+            stash = HashStash(name=name, dbname=dbname, **stash_kwargs)
+        
+        if get_obj_module(func) == '__main__':
+            update_on_src_change = True
+        
+        stash = stash.sub_function_results(
+            func,
+            dbname = dbname,
+            update_on_src_change=update_on_src_change,
+            # *stash_args,
+            **stash_kwargs,
+        )
+
+        func.stash = stash
+
         @wraps(func)
-        def wrapper(*args,**kwargs):
-            from .encodings import encode_hash
-            from ..engines import HashStash
+        def wrapper(*args, **kwargs):
+            from ..serializers import serialize
+            nonlocal force, stash, store_args
+            wrapper.stash = stash
 
-            nonlocal cache, name, force, dbname, func
-
-            if cache is None:
-                
-                cache = HashStash(*cache_args, name=name, **cache_kwargs)
-            if dbname is None:
-                func_name = get_obj_addr(func)
-                # if func_name.startswith('__main__'):
-                func_name+='__'+encode_hash(get_function_str(func))[:8]
-                dbname = '/'.join(['cached_result', func_name])
-            cache = cache.sub(dbname = dbname)
-            wrapper.stash = cache
-            log.info(cache)
             force = kwargs.pop("_force", force)
-            
-            key = {
-                'func':func,
-                'args':tuple(args),
-                'kwargs': kwargs
-            }
-            
-            if not force and key in cache:
-                log.debug(f"Cache hit for {func.__name__}. Returning cached result.")
-                return cache[key]
+            key = {"func": func, "args": tuple(args), "kwargs": kwargs}
+            if not store_args:
+                key = encode_hash(stash.serialize(key))
 
-            log.debug(
-                f"{'Forced execution' if force else 'Cache miss'} for {func.__name__}. Executing function."
-            )
+            # find it?
+            if not force and key in stash:
+                log.debug(f"Stash hit for {func.__name__}. Returning stashd result.")
+                return stash[key]
+
+            # didn't find
+            note = "Forced execution" if force else "Stash miss"
+            log.debug(f"{note} for {func.__name__}. Executing function.")
+
+            # call func
             result = func(*args, **kwargs)
+
+            # stash
             log.debug(f"Caching result for {func.__name__}.")
-            cache[key] = result
+            stash[key] = result
             return result
 
         return wrapper
@@ -56,10 +69,6 @@ def cached_result(
         return decorator
     else:
         return decorator(_func)
-
-
-
-
 
 
 def retry_patiently(max_retries=10, base_delay=0.1, max_delay=10):
@@ -80,13 +89,14 @@ def retry_patiently(max_retries=10, base_delay=0.1, max_delay=10):
                         + random.uniform(0, 0.1 * (2**retries)),
                         max_delay,
                     )
-                    log.debug(f"Attempt {retries}/{max_retries} failed. Retrying in {delay:.2f} seconds. Error: {str(e)}")
+                    log.debug(
+                        f"Attempt {retries}/{max_retries} failed. Retrying in {delay:.2f} seconds. Error: {str(e)}"
+                    )
                     time.sleep(delay)
 
         return wrapper
 
     return decorator
-
 
 
 class DictContext(UserDict):

@@ -1,10 +1,8 @@
-import pytest
+from hashstash import *
 import numpy as np
 import pandas as pd
-import json
-from base64 import b64encode
-from hashstash.serializers import deserialize, serialize
-from hashstash.constants import OBJ_ADDR_KEY, OBJ_SRC_KEY, OBJ_ARGS_KEY, OBJ_KWARGS_KEY
+config.set_serializer('custom')
+
 
 def test_serialize_jsonable():
     assert json.loads(serialize(42)) == 42

@@ -3,7 +3,7 @@ from . import *
 def serialize_custom(obj):
     return serialize_json(_serialize(obj))
 
-@log.debug
+# @log.debug
 def _serialize(obj):
     # log.debug(f"_serialize called with object type {type(obj)}")
 

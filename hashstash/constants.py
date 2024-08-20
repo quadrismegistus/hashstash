@@ -1,4 +1,6 @@
-import sys; sys.path.insert(0,'/Users/ryan/github/prosodic')
+import sys
+
+sys.path.insert(0, "/Users/ryan/github/prosodic")
 import logging
 from typing import *
 import os
@@ -7,11 +9,11 @@ from typing import Literal
 import time
 import random
 
-DEFAULT_ROOT_DIR = os.path.expanduser('~/.cache/hashstash')
-DEFAULT_NAME = 'default_cache'
+DEFAULT_ROOT_DIR = os.path.expanduser("~/.cache/hashstash")
+DEFAULT_NAME = "default_cache"
 DEFAULT_PATH = os.path.join(DEFAULT_ROOT_DIR, DEFAULT_NAME)
-DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, '_redis','data','db')
-DEFAULT_DBNAME = 'main'
+DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, "_redis", "data", "db")
+DEFAULT_DBNAME = "main"
 DEFAULT_FILENAME = "db"
 
 DEFAULT_LOG_LEVEL = logging.INFO
@@ -21,13 +23,23 @@ DEFAULT_COMPRESS = True
 DEFAULT_B64 = True
 
 # Cache engines
-ENGINES = ("memory", "file", "sqlite", "redis", "diskcache", "lmdb", "shelve") #"pickledb"
+ENGINES = (
+    "memory",
+    "pairtree",
+    "sqlite",
+    "redis",
+    "diskcache",
+    "lmdb",
+    "shelve",
+)  # "pickledb"
 
 # Performance testing constants
 DEFAULT_NUM_PROC = mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1
 DEFAULT_DATA_SIZE = 1_000_000
-ENGINE_TYPES = Literal["memory", "file", "sqlite", "redis", "diskcache", "lmdb", "shelve", "pickledb"]
-DEFAULT_ENGINE_TYPE = "file"
+ENGINE_TYPES = Literal[
+    "memory", "pairtree", "sqlite", "redis", "diskcache", "lmdb", "shelve", "pickledb"
+]
+DEFAULT_ENGINE_TYPE = "pairtree"
 INITIAL_SIZE = 1024
 DEFAULT_ITERATIONS = 1000
 GROUPBY = ["Engine", "Encoding", "Operation", "write_num"]
@@ -42,17 +54,26 @@ INITIAL_PROFILE_SIZE = 10
 PROFILE_SIZES = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000]
 
 # Redis settings
-REDIS_HOST = 'localhost'
+REDIS_HOST = "localhost"
 REDIS_PORT = 6379
-REDIS_DB = 'hashstash'
+REDIS_DB = "hashstash"
 
-OBJ_ADDR_KEY='__py__'
-OBJ_ARGS_KEY='__py_args__'
-OBJ_KWARGS_KEY='__py_kwargs__'
-OBJ_SRC_KEY = '__py_src__'
+OBJ_ADDR_KEY = "__py__"
+OBJ_ARGS_KEY = "__py_args__"
+OBJ_KWARGS_KEY = "__py_kwargs__"
+OBJ_SRC_KEY = "__py_src__"
 
-DEFAULT_SERIALIZER = 'custom'
-SERIALIZER_TYPES = Literal["custom", "jsonpickle","jsonpickle_ext","pickle","orjson","json"]
+# DEFAULT_SERIALIZER = "custom"
+SERIALIZER_TYPES = Literal[
+    "jsonpickle_ext",  # if fails to decode a value, so will jsonpickle
+    "jsonpickle",      # will work as backup if numpy and pandas are not installed
+    "custom",          # flexible, but not as fast as jsonpickle
+    "pickle",          # fastest but not platform independent
+    "orjson",          # cannot handle pandas etc
+    "json",            # cannot handle pandas and numpy etc
+]
+DEFAULT_SERIALIZER = list(SERIALIZER_TYPES.__args__)
+
 
 class Dog:
     goestoheaven = True
@@ -66,4 +87,5 @@ class Dog:
         time.sleep(random.random() / 2)
         print("woof")
 
-dog = Dog('rex')
+
+dog = Dog("rex")

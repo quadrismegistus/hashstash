@@ -27,7 +27,7 @@ Here's a quick example of how to use HashStash:
 from hashstash import HashStash
 
 # Create a cache instance
-cache = HashStash(name="my_cache", engine="file", compress=True, b64=True)
+cache = HashStash(name="my_cache", engine="pairtree", compress=True, b64=True)
 
 # Store a value
 cache["my_key"] = {"name": "John", "age": 30}
@@ -52,7 +52,7 @@ cache.clear()
 
 HashStash supports the following storage engines:
 
-1. File (`engine="file"`)
+1. File (`engine="pairtree"`)
 2. SQLite (`engine="sqlite"`)
 3. In-memory (`engine="memory"`)
 4. Shelve (`engine="shelve"`)
@@ -103,11 +103,11 @@ HashStash includes a performance profiling tool to help you evaluate different c
 from hashstash import HashStash
 
 # Create a cache instance
-cache = HashStash(name="profile_cache", engine="file")
+cache = HashStash(name="profile_cache", engine="pairtree")
 
 # Run the profiler
 results = cache.profile(
-    engine=["file", "sqlite", "memory"],
+    engine=["pairtree", "sqlite", "memory"],
     compress=[True, False],
     b64=[True, False],
     size=[1000, 10000, 100000],
@@ -124,7 +124,7 @@ For more detailed usage of the profiler, refer to the `performance.py` file.
 
 HashStash provides various utility functions for encoding, serialization, and more. These utilities are used internally but can also be helpful for advanced users. Some key utilities include:
 
-- `cached_result`: A decorator for caching function results
+- `stashed_result`: A decorator for caching function results
 - `Encoder` and `Decoder` classes for handling data encoding and decoding
 - `Serializer` and `Deserializer` classes for object serialization
 

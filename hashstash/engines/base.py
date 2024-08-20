@@ -23,29 +23,22 @@ class BaseHashStash(MutableMapping):
         dbname: str = None,
         compress: bool = None,
         b64: bool = None,
-        serializer: SERIALIZER_TYPES = None,
+        serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = None,
         **kwargs,
     ) -> None:
         self.name = name if name else self.name
-        self.compress = compress if compress else self.compress
-        self.b64 = b64 if b64 else self.b64
-        self.serializer = serializer if serializer else self.serializer
+        self.compress = compress if compress else config.compress
+        self.b64 = b64 if b64 else config.b64
+        self.serializer = get_working_serializers(serializer if serializer else config.serializer)
         self.root_dir = root_dir if root_dir else self.root_dir
         self.dbname = dbname if dbname else self.dbname
-        subnames = [f"{self.engine}", f"{self.serializer}"]
+        subnames = [f"{self.engine}"]
         if self.compress:
             subnames += ["compressed"]
         if self.b64:
             subnames += ["b64"]
         if self.filename_ext:
-            subnames += [
-                (
-                    self.filename_ext
-                    if self.filename_ext[:1] != "."
-                    else self.filename_ext[1:]
-                )
-            ]
-
+            subnames += [get_fn_ext(self.filename_ext)]
         self.path = os.path.join(
             (
                 self.name
@@ -80,6 +73,7 @@ class BaseHashStash(MutableMapping):
             "name": self.name,
             "filename": self.filename,
             "dbname": self.dbname,
+            "serializer": self.serializer,
         }
 
     @staticmethod
@@ -209,13 +203,33 @@ class BaseHashStash(MutableMapping):
                 yield k, db[k]
 
     def keys(self):
-        return (self.decode_key(x) for x in self._keys())
+        for x in self._keys():
+            try:
+                yield self.decode_key(x)
+            except Exception as e:
+                log.error(f"Error decoding key: {e}")
 
     def values(self):
-        return (self.decode_value(x) for x in self._values())
+        for x in self._values():
+            try:
+                yield self.decode_value(x)
+            except Exception as e:
+                log.error(f"Error decoding value: {e}")
 
     def items(self):
-        return ((self.decode_key(k), self.decode_value(v)) for k, v in self._items())
+        for k, v in self._items():
+            try:
+                yield self.decode_key(k), self.decode_value(v)
+            except Exception as e:
+                log.error(f"Error decoding item: {e}")
+    def keys_l(self):
+        return list(self.keys())
+
+    def values_l(self):
+        return list(self.values())
+
+    def items_l(self):
+        return list(self.items())
 
     def __iter__(self):
         return self.keys()
@@ -261,8 +275,8 @@ class BaseHashStash(MutableMapping):
         return encode_hash(data)
 
     @property
-    def cached_result(self):
-        return cached_result(cache=self)
+    def stashed_result(self):
+        return stashed_result(stash=self)
 
     @cached_property
     def profiler(self):
@@ -298,72 +312,89 @@ class BaseHashStash(MutableMapping):
         # Return a tuple of (callable, args) that allows recreation of this object
         return (self.__class__.from_dict, (self.to_dict(),))
     
+    def sub_function_results(
+        self,
+        func,
+        dbname=None,
+        update_on_src_change=False,
+        **kwargs
+    ):
+        func_name = get_obj_addr(func)
+        if update_on_src_change:
+            func_name += "/" + encode_hash(get_function_str(func))#[:8]
+        stash = self.sub(dbname=f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}')
+        return stash
 
-
-
-# class TemporaryHashStash(BaseHashStash):
-#     def __init__(self, base_stash, **kwargs):
-#         self.base_stash = base_stash
-#         self.kwargs = kwargs
-
-#     def __getattr__(self, name):
-#         if name == 'stash':
-#             return self.__getattribute__(name)
-#         return getattr(self.stash, name)
-
-#     def __getitem__(self, key):
-#         return self.stash[key]
-
-#     def __setitem__(self, key, value):
-#         self.stash[key] = value
-
-#     def __delitem__(self, key):
-#         del self.stash[key]
-
-#     def __iter__(self):
-#         return iter(self.stash)
-
-#     def __len__(self):
-#         return len(self.stash)
-
-#     def __contains__(self, key):
-#         return key in self.stash
+    def assemble_ld(self, incl_func=False, incl_args=True, incl_kwargs=True):
         
-#     @cached_property
-#     @log.debug
-#     def stash(self):
-#         kwargs = {
-#             **self.kwargs,
-#             **dict(
-#                 root_dir=tempfile.mkdtemp(),
-#                 name=f"tmp_{uuid.uuid4().hex[:10]}",
-#             ),
-#         }
-#         return self.base_stash.sub(**kwargs)
+        ld = []
+        for k, v in progress_bar(self.items(), total=len(self), desc='assembling all data from stash'):
+            ind = {}
+            
+            if type(k) is dict:
+                if incl_func and 'func' in k:
+                    ind['_func'] = get_obj_addr(k['func'])
+                args = k.get('args', [])
+                argd = {f'_arg{i+1}': arg for i, arg in enumerate(args)}
+                kwargs = {f'_{k2}':v2 for k2,v2 in k.get('kwargs', {}).items()}
+                attrd = {}
+                if incl_args:
+                    attrd.update(argd)
+                if incl_kwargs:
+                    attrd.update(kwargs)
+                ind.update(attrd)
+            else:
+                ind['_key'] = k
+            
+            if isinstance(v, dict):
+                row = {**ind, **v}
+                ld.append(row)
+            elif isinstance(v, list):
+                for item in progress_bar(v, desc='iterating list',progress=False):
+                    if isinstance(item, dict):
+                        row = {**ind, **item}
+                    else:
+                        row = {**ind, 'result': item}
+                    ld.append(row)
+            elif is_dataframe(v):
+                for _,item in progress_bar(v.iterrows(), total=len(v),desc='iterating dataframe result',progress=False):
+                    row = {**ind, **dict(item)}
+                    ld.append(row)
+            else:
+                row = {**ind, 'result': v}
+                ld.append(row)
+        
+        return ld
+    
+    def assemble_df(self, **kwargs):
+        import pandas as pd
+        ld = self.assemble_ld(**kwargs)
+        if not ld: return pd.DataFrame()
+        df=pd.DataFrame(ld)
+        index = [k for k in df if k.startswith('_')]
+        return df#.set_index(index).sort_index()
+        
+    
+    @property
+    def df(self):
+        return self.assemble_df()
+    
+    def __hash__(self):
+        # Use a combination of class name and path for hashing
+        return hash(tuple(sorted(self.to_dict().items())))
 
-#     def __enter__(self):
-#         self.__dict__.pop('stash')
-#         return self.stash
-
-#     def __exit__(self, exc_type, exc_val, exc_tb):
-#         if self.__dict__.get('stash'):
-#             threading.Thread(
-#                 target=shutil.rmtree, args=(self.stash.root_dir,), daemon=True
-#             ).start()
-#         self.__dict__.pop('stash')
 
 
 
-
-@log.debug
-@fcache
+# @fcache
+@log.info
 def HashStash(
-    name: str = DEFAULT_NAME,
-    engine: str = DEFAULT_ENGINE_TYPE,
-    dbname: str = DEFAULT_DBNAME,
-    compress: bool = DEFAULT_COMPRESS,
-    b64: bool = DEFAULT_B64,
-    serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER,
+    name: str = None,
+    engine: ENGINE_TYPES = None,
+    dbname: str = None,
+    compress: bool = None,
+    b64: bool = None,
+    serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = None,
     **kwargs,
 ) -> "BaseHashStash":
     """
@@ -371,7 +402,7 @@ def HashStash(
 
     Args:
         * args: Additional arguments to pass to the cache constructor.
-        engine: The type of cache to create ("file", "sqlite", "memory", "shelve", "redis", "pickledb", or "diskcache")
+        engine: The type of cache to create ("pairtree", "sqlite", "memory", "shelve", "redis", "pickledb", or "diskcache")
         **kwargs: Additional keyword arguments to pass to the cache constructor.
 
     Returns:
@@ -380,10 +411,13 @@ def HashStash(
     Raises:
         ValueError: If an invalid engine is provided.
     """
+    log.info(f'HashStash({name}/{dbname})')
 
-    if engine == "file":
-        from .filepath import FileHashStash
-        cls = FileHashStash
+    engine = engine if engine is not None else config.engine
+
+    if engine == "pairtree":
+        from .pairtree import PairtreeHashStash
+        cls = PairtreeHashStash
     elif engine == "sqlite":
         from ..engines.sqlite import SqliteHashStash
 

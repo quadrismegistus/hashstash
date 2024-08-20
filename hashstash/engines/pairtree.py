@@ -1,14 +1,18 @@
 from . import *
 
-class FileHashStash(BaseHashStash):
-    engine = 'file'
+class PairtreeHashStash(BaseHashStash):
+    engine = 'pairtree'
     filename_is_dir = True
     
     def _encode_filepath(self, encoded_key):
         hashed_key = self.hash(encoded_key)
-        dir, fname = hashed_key[:2], hashed_key[2:]
-        return os.path.join(self.path, dir, fname)
+        dir1, dir2, dir3, fname = hashed_key[:2], hashed_key[2:4], hashed_key[4:6], hashed_key[6:]
+        return os.path.join(self.path, dir1, dir2, dir3, fname)
     
+    def encode_path(self, unencoded_key):
+        encoded_key = self.encode_key(unencoded_key)
+        return self._encode_filepath(encoded_key)
+
     def _get(self, encoded_key: Union[str,bytes]) -> Any:
         filepath = self._encode_filepath(encoded_key)
         if not os.path.exists(filepath):
@@ -42,7 +46,7 @@ class FileHashStash(BaseHashStash):
     def _paths(self):
         for root, _, files in os.walk(self.path):
             for file in files:
-                if len(file) == 30 and file[0]!='.':
+                if file[0]!='.':
                     yield os.path.join(root, file)
 
     def _keys(self):

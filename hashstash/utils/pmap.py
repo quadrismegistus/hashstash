@@ -1,5 +1,10 @@
 from . import *
+from .misc import progress_bar
+from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED
+import signal
 
+def init_worker():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 def pmap(func, objects=[], options=[], num_proc=1, chunksize=1, total=None, desc=None, progress=True, ordered=True, *common_args, **common_kwargs):
     if not objects and not options:
@@ -25,69 +30,46 @@ def pmap(func, objects=[], options=[], num_proc=1, chunksize=1, total=None, desc
         objects = [{**common_args, **obj} for obj in options]
 
     if progress:
-        from tqdm import tqdm
         if total is None:
             total = len(objects)
 
     
     items = [(func, obj, opt) for obj,opt in zip(objects,options)]
 
-    with tqdm(total=total, desc=desc) if progress else nullcontext() as pbar:
-        if num_proc == 1:
-            # Single-process: use a simple map
-            for result in map(_pmap_item, items):
-                yield result
-                if progress:
-                    pbar.update(1)
-        else:
-            # Multi-process: use ProcessPoolExecutor
-            with ProcessPoolExecutor(max_workers=num_proc) as executor:
-                if ordered:
-                    for result in imap(executor, _pmap_item, items, chunksize=chunksize):
-                        yield result
-                        if progress:
-                            pbar.update(1)
+    desc = '' if not desc else desc+' '
+    desc+=f'[{num_proc}x]'
+
+    iterator = range(len(items)) if total is None else range(total)
+    
+    with ProcessPoolExecutor(max_workers=num_proc, initializer=init_worker) as executor:
+        futures = [executor.submit(_pmap_item, item) for item in items]
+        
+        try:
+            for _ in progress_bar(iterator, desc=desc, disable=not progress):
+                if num_proc == 1:
+                    # Single-process: use a simple map
+                    yield _pmap_item(items[_])
                 else:
-                    futures = [executor.submit(_pmap_item, item) for item in items]
-                    for future in as_completed(futures):
-                        yield future.result()
-                        if progress:
-                            pbar.update(1)
+                    # Multi-process: use ProcessPoolExecutor
+                    if ordered:
+                        yield futures[_].result()
+                    else:
+                        done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            yield future.result()
+                            futures.remove(future)
+        except KeyboardInterrupt as e:
+            log.error(f"Caught {e}, terminating workers")
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        except Exception as e:
+            log.error(f"Caught {e}, terminating workers")
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            for future in futures:
+                future.cancel()
 
 def _pmap_item(item):
     func,args,kwargs = item
     return func(*args,**kwargs)
-
-
-def imap(executor, func, iterable, chunksize=1):
-    """
-    A generator that mimics the behavior of multiprocessing.Pool.imap()
-    using ProcessPoolExecutor, yielding results in order as they become available.
-    """
-    # Create futures for each item
-    futures = {}
-    for i, item in enumerate(iterable):
-        future = executor.submit(func, item)
-        futures[future] = i
-
-    # Yield results in order
-    next_to_yield = 0
-    results = {}
-    for future in as_completed(futures):
-        index = futures[future]
-        try:
-            result = future.result()
-        except Exception as e:
-            result = e  # or handle the exception as needed
-
-        if index == next_to_yield:
-            yield result
-            next_to_yield += 1
-
-            # Yield any subsequent results that are ready
-            while next_to_yield in results:
-                yield results.pop(next_to_yield)
-                next_to_yield += 1
-        else:
-            results[index] = result
-
