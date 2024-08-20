@@ -1,8 +1,4 @@
-from functools import partial, wraps
-import logging
-import time
-import sys
-from contextlib import contextmanager
+from . import *
 
 ## Logging setup
 class ColoredFormatter(logging.Formatter):
@@ -18,7 +14,7 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record):
-        log_fmt = f'%(asctime)s  {self.COLORS[record.levelname]}%(message)s{self.COLORS["RESET"]}'
+        log_fmt = f'{self.COLORS[record.levelname]}%(message)s{self.COLORS["RESET"]}'
         formatter = logging.Formatter(log_fmt, datefmt='%Y-%m-%d %H:%M:%S')
         return formatter.format(record)
 
@@ -40,7 +36,7 @@ def setup_logger(name, level=logging.INFO):
 
 # Setup the logger
 logger = setup_logger('hashstash')
-logger.setLevel('DEBUG')
+logger.setLevel(DEFAULT_LOG_LEVEL)
 
 
 
@@ -56,23 +52,36 @@ def temporary_log_level(temp_level, only_sub=False):
         logger.setLevel(original_level)
 
 
-def log(_func=None, level=logging.INFO):
+# Add a global variable to track the current depth
+current_depth = 0
+indenter = '|  '
+last_log_time = None
+
+def log_wrapper(_func=None, level=logging.INFO):
     """Decorator to automatically log function calls with module and function name."""
     def decorator(func):
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            args_to_log = args[1:] if args and isinstance(args[0], type(args[0])) else args
-            args_str = ', '.join(map(repr, args_to_log))
+            global current_depth, last_log_time
+            args = list(args)
+            try:
+                args_str = ', '.join(map(repr, args))
+            except Exception:
+                args_str = ', '.join(map(repr, args[1:]))
             kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items())
             params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
             
-            msg1 = f'{func.__name__}() <<< ({params_str})'
-            timenow=time.time()
-            logger.log(level, msg1)
+            log_func(f'{get_obj_addr(func)}({params_str[:100]}) >>>', level=level)
+
+            current_depth += 1
             result = func(*args, **kwargs)
-            timetaken = time.time() - timenow
-            logger.log(level, f'{func.__name__}() >>> {result} [{timetaken:.3f}s]')
+            current_depth -= 1
+            log_func(f'>>> {str(result)[:100]}', level=level)
+
+            if not current_depth:
+                last_log_time = None
+
             return result
         return wrapper
     
@@ -80,17 +89,54 @@ def log(_func=None, level=logging.INFO):
         return decorator
     return decorator(_func)
 
-# debug = log
 
-if logger.level <= logging.DEBUG:
+def log_func(message, level=logging.DEBUG):
+    global current_depth, last_log_time
+    indent = indenter * current_depth
+    timenow = time.time()
+    timetaken = timenow - (last_log_time if last_log_time else timenow)
+    last_log_time = timenow
+
+    logger.log(level, f'[{timetaken:.2f}s] {indent}{message}')
+
+
+class log:
+    @staticmethod
+    def log(_func=None, level=logging.DEBUG):
+        """Decorator to automatically log function calls with module and function name."""
+        if callable(_func):
+            return log_wrapper(_func, level=level)
+        else:
+            log_func(_func)
 
     debug = partial(log, level=logging.DEBUG)
+    info = partial(log, level=logging.INFO)
+    warn = partial(log, level=logging.WARNING)
+    error = partial(log, level=logging.ERROR)
 
-else:
-    def debug_quiet(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-        return wrapper
+# if logger.level <= logging.DEBUG:
+#     debug = debug
+# else:
+#     def debug_quiet(func_or_message):
+#         if callable(func_or_message):
+#             @wraps(func_or_message)
+#             def wrapper(*args, **kwargs):
+#                 return func_or_message(*args, **kwargs)
+#             return wrapper
+#         # Do nothing when called as a function
+    
+#     debug = debug_quiet
 
-    debug = debug_quiet
+
+
+@log.debug
+def ff(x):
+    log.debug('inner hello')
+    time.sleep(2)
+    return x*2
+
+@log.debug
+def f(x):
+    log.debug('outer hello')
+    time.sleep(1)
+    return ff(x)*2

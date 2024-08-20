@@ -1,7 +1,8 @@
-from .base import *
+from . import *
 
 class FileHashStash(BaseHashStash):
     engine = 'file'
+    filename_is_dir = True
     
     def _encode_filepath(self, encoded_key):
         hashed_key = self.hash(encoded_key)

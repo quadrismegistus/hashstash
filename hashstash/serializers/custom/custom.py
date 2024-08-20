@@ -1,11 +1,9 @@
-from ..utils import *
+from . import *
 from .serialize import _serialize
-from .deserialize import _deserialize
-from ..utils.encodings import _decode, _encode
 
-@debug
+@log.debug
 def serialize_numpy(obj):
-    out=_encode(obj.tobytes(), compress=False, b64=True, as_string=True)
+    out=encode(obj.tobytes(), compress=False, b64=True, as_string=True)
     return {
         OBJ_ARGS_KEY:[out],
         OBJ_KWARGS_KEY:{
@@ -15,13 +13,13 @@ def serialize_numpy(obj):
 
 def deserialize_numpy(obj_b, dtype=None):
     import numpy as np
-    arr_bytes = _decode(obj_b, compress=False, b64=True)
+    arr_bytes = decode(obj_b, compress=False, b64=True)
     dtype = np.dtype(dtype) if dtype else None
     return np.frombuffer(arr_bytes, dtype=dtype)
 
 
 
-# @debug
+# @log.debug
 # def serialize_pandas_df(obj):
 #     index = [x for x in obj.index.names if x is not None]
 #     if index:
@@ -32,7 +30,7 @@ def deserialize_numpy(obj_b, dtype=None):
 #         "index_columns": index,
 #     }
 
-@debug
+@log.debug
 def serialize_pandas_df(obj):
     index = [x for x in obj.index.names if x is not None]
     if index:
@@ -45,10 +43,10 @@ def serialize_pandas_df(obj):
         }
     }
 
-@debug
+@log.debug
 def deserialize_pandas_df(data, *args, columns=None, index_columns=None, **kwargs):
     import pandas as pd
-    logger.debug("Deserializing pandas DataFrame")
+    log.debug("Deserializing pandas DataFrame")
     df = pd.DataFrame(data)
     if columns:
         df.columns = columns
@@ -59,7 +57,7 @@ def deserialize_pandas_df(data, *args, columns=None, index_columns=None, **kwarg
 
 
 
-# @debug
+@log.debug
 # def serialize_pandas_series(obj):
 #     return {
 #         "values": obj.values.tolist(),
@@ -68,7 +66,7 @@ def deserialize_pandas_df(data, *args, columns=None, index_columns=None, **kwarg
 #         "dtype": str(obj.dtype),
 #     }
 
-@debug
+@log.debug
 def serialize_pandas_series(obj, attrs=['name']):
     kwargs = {k:getattr(obj,k) for k in attrs if hasattr(obj,k)}
     return {
@@ -78,9 +76,9 @@ def serialize_pandas_series(obj, attrs=['name']):
 
 
 
-@debug
+@log.debug
 def deserialize_pandas_series(obj):
-    logger.debug("Deserializing pandas Series")
+    log.debug("Deserializing pandas Series")
     import pandas as pd
 
     values = obj["values"]
@@ -89,11 +87,11 @@ def deserialize_pandas_series(obj):
     dtype = obj["dtype"]
     return pd.Series(values, index=index, name=name, dtype=dtype)
 
-@debug
+@log.debug
 def serialize_bytes(obj):
     return _encode(obj, compress=False, b64=True, as_string=True)
 
-@debug
+@log.debug
 def deserialize_bytes(obj):
     return _decode(obj, compress=False, b64=True)
 

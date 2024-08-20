@@ -1,30 +1,17 @@
-from .serialize import *
+from . import *
 
-@debug
-def deserialize(data, method=DEFAULT_SERIALIZER):
-    # logger.debug(f"Deserializing object: {obj}")
-    obj = None
-    if method == JSONPICKLE_SERIALIZER:
-        obj = _deserialize_jsonpickle(data)
-    
-    if obj is None:
-        if type(data) is bytes:
-            data = data.decode("utf-8")
-        if type(data) is str:
-            data = json.loads(data)
-        obj = _deserialize(data)
-
-    return obj
+def deserialize_custom(obj):
+    return _deserialize(deserialize_json(obj))
 
 
-# @debug
+
+@log.debug
 def _deserialize(data):
-    # logger.debug(f"Deserializing data: {data}")
     if isinstance(data, list):
         return [_deserialize(v) for v in data]
     elif isinstance(data, dict):
         if OBJ_ADDR_KEY in data:
-            return _deserialize_python(data)
+            return deserialize_python(data)
         else:
             return {k: _deserialize(v) for k, v in data.items()}
     elif is_jsonable(data):
@@ -35,16 +22,8 @@ def _deserialize(data):
 
 
 
-def _deserialize_jsonpickle(obj):
-    try:
-        import jsonpickle
-        return jsonpickle.loads(obj)
-    except Exception as e:
-        logger.warning(e)
-        return None
-
-#@debug
-def _deserialize_python(data: dict, init_funcs=["from_dict"]):
+@log.debug
+def deserialize_python(data: dict, init_funcs=["from_dict"]):
     if not OBJ_ADDR_KEY in data:
         return
 
@@ -88,9 +67,9 @@ def _deserialize_python(data: dict, init_funcs=["from_dict"]):
     return obj
 
 
-#@debug
+@log.debug
 def deserialize_class(data):
-    # logger.debug(f"Deserializing class: {data[OBJ_ADDR_KEY]}")
+    log.debug(f"Deserializing class: {data[OBJ_ADDR_KEY]}")
     if OBJ_SRC_KEY not in data:
         raise ValueError(
             f"Cannot deserialize class {data[OBJ_ADDR_KEY]}: no source code provided"
@@ -120,9 +99,9 @@ def deserialize_class(data):
 
 
 
-#@debug
+@log.debug
 def deserialize_function(src, func_path):
-    logger.debug(f"Recreating function from source: {func_path}")
+    log.debug(f"Recreating function from source: {func_path}")
     try:
         exec(src, globals())
         func_name = func_path.split(".")[-1]

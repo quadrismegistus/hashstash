@@ -1,3 +1,7 @@
+from hashstash import *
+# from hashstash.engines.redis import start_redis_server
+# start_redis_server()
+
 import unittest
 import tempfile
 import shutil
@@ -6,14 +10,6 @@ import json
 import random
 import time
 import pytest
-from hashstash.engines.files import FileHashStash
-from hashstash.engines.sqlite import SqliteHashStash
-from hashstash.engines.memory import MemoryHashStash
-from hashstash.engines.shelve import ShelveHashStash
-from hashstash.engines.redis import RedisHashStash
-from hashstash.engines.pickledb import PickleDBHashStash
-from hashstash.engines.diskcache import DiskCacheHashStash
-from hashstash.engines.lmdb import LMDBHashStash
 
 TEST_CLASSES = [
     FileHashStash,

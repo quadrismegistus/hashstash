@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import json
 from base64 import b64encode
-from hashstash.serialize import deserialize, serialize
+from hashstash.serializers import deserialize, serialize
 from hashstash.constants import OBJ_ADDR_KEY, OBJ_SRC_KEY, OBJ_ARGS_KEY, OBJ_KWARGS_KEY
 
 def test_serialize_jsonable():

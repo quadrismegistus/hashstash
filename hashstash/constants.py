@@ -1,5 +1,5 @@
 import sys; sys.path.insert(0,'/Users/ryan/github/prosodic')
-
+import logging
 from typing import *
 import os
 import multiprocessing as mp
@@ -11,8 +11,10 @@ DEFAULT_ROOT_DIR = os.path.expanduser('~/.cache/hashstash')
 DEFAULT_NAME = 'default_cache'
 DEFAULT_PATH = os.path.join(DEFAULT_ROOT_DIR, DEFAULT_NAME)
 DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, '_redis','data','db')
-DEFAULT_DBNAME = 'hashstash'
+DEFAULT_DBNAME = 'main'
 DEFAULT_FILENAME = "db"
+
+DEFAULT_LOG_LEVEL = logging.INFO
 
 # Default settings
 DEFAULT_COMPRESS = True
@@ -42,16 +44,15 @@ PROFILE_SIZES = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000]
 # Redis settings
 REDIS_HOST = 'localhost'
 REDIS_PORT = 6379
-REDIS_DB = 0
+REDIS_DB = 'hashstash'
 
 OBJ_ADDR_KEY='__py__'
 OBJ_ARGS_KEY='__py_args__'
 OBJ_KWARGS_KEY='__py_kwargs__'
 OBJ_SRC_KEY = '__py_src__'
 
-BUILTIN_SERIALIZER = 'builtin'
-JSONPICKLE_SERIALIZER = 'jsonpickle'
-DEFAULT_SERIALIZER = BUILTIN_SERIALIZER
+DEFAULT_SERIALIZER = 'custom'
+SERIALIZER_TYPES = Literal["custom", "jsonpickle","jsonpickle_ext","pickle","orjson","json"]
 
 class Dog:
     goestoheaven = True

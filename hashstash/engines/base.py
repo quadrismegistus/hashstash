@@ -1,10 +1,4 @@
-from ..hashstash import *
-from ..utils.encodings import encode, decode, encode_hash
-from ..serialize import serialize, deserialize
-from collections.abc import MutableMapping
-from functools import partial
-import threading
-
+from . import *
 
 class BaseHashStash(MutableMapping):
     engine = "base"
@@ -18,36 +12,52 @@ class BaseHashStash(MutableMapping):
     string_values = False
     serializer = DEFAULT_SERIALIZER
     root_dir = DEFAULT_ROOT_DIR
+    filename_ext = ".db"
+    filename_is_dir = False
 
-    @debug
+    @log.debug
     def __init__(
         self,
-        name: str = DEFAULT_NAME,
-        root_dir: str = DEFAULT_ROOT_DIR,
-        compress: bool = DEFAULT_COMPRESS,
-        b64: bool = DEFAULT_B64,
-        serializer: Literal[
-            BUILTIN_SERIALIZER,
-            JSONPICKLE_SERIALIZER,
-        ] = DEFAULT_SERIALIZER,
+        name: str = None,
+        root_dir: str = None,
+        dbname: str = None,
+        compress: bool = None,
+        b64: bool = None,
+        serializer: SERIALIZER_TYPES = None,
         **kwargs,
     ) -> None:
-        self.name = name
-        self.compress = compress
-        self.b64 = b64
-        self.serializer = serializer
-        self.root_dir = root_dir
+        self.name = name if name else self.name
+        self.compress = compress if compress else self.compress
+        self.b64 = b64 if b64 else self.b64
+        self.serializer = serializer if serializer else self.serializer
+        self.root_dir = root_dir if root_dir else self.root_dir
+        self.dbname = dbname if dbname else self.dbname
+        subnames = [f"{self.engine}", f"{self.serializer}"]
+        if self.compress:
+            subnames += ["compressed"]
+        if self.b64:
+            subnames += ["b64"]
+        if self.filename_ext:
+            subnames += [
+                (
+                    self.filename_ext
+                    if self.filename_ext[:1] != "."
+                    else self.filename_ext[1:]
+                )
+            ]
+
         self.path = os.path.join(
-            (self.name if os.path.isabs(self.name) else os.path.join(self.root_dir, self.name)),
-            self.engine+'_engine',
-            self.serializer+'_serializer',
-            self.filename,
+            (
+                self.name
+                if os.path.isabs(self.name)
+                else os.path.join(self.root_dir, self.name)
+            ),
+            self.dbname,
+            ".".join(subnames),
         )
-        print([self.ensure_dir, ensure_dir,self.path])
+        self.path_dirname = self.path if self.filename_is_dir else os.path.dirname(self.path)
         if self.ensure_dir:
-            print(self.path)
-            ensure_dir(self.path)
-            print(os.path.exists(os.path.dirname(self.path)))
+            ensure_dir(self.path_dirname)
 
     def encode(self, *args, **kwargs):
         return encode(*args, b64=self.b64, compress=self.compress, **kwargs)
@@ -56,10 +66,10 @@ class BaseHashStash(MutableMapping):
         return decode(*args, b64=self.b64, compress=self.compress, **kwargs)
 
     def serialize(self, *args, **kwargs):
-        return serialize(*args, method=self.serializer, **kwargs)
+        return serialize(*args, serializer=self.serializer, **kwargs)
 
     def deserialize(self, *args, **kwargs):
-        return deserialize(*args, method=self.serializer, **kwargs)
+        return deserialize(*args, serializer=self.serializer, **kwargs)
 
     def to_dict(self):
         return {
@@ -101,76 +111,76 @@ class BaseHashStash(MutableMapping):
         if self._lock.locked():
             self._lock.release()
 
-    @debug
+    @log.debug
     def __getitem__(self, unencoded_key: str) -> Any:
         obj = self.get(unencoded_key)
         if obj is None:
             raise KeyError(unencoded_key)
         return obj
 
-    @debug
+    @log.debug
     def __setitem__(self, unencoded_key: str, unencoded_value: Any) -> None:
         self.set(unencoded_key, unencoded_value)
 
-    @debug
+    @log.debug
     def get(self, unencoded_key: Any, default: Any = None) -> Any:
         unencoded_value = self._get(self.encode_key(unencoded_key))
         if unencoded_value is None:
             return default
         return self.decode_value(unencoded_value)
 
-    @debug
+    @log.debug
     def set(self, unencoded_key: Any, unencoded_value: Any) -> None:
         self._set(
             self.encode_key(unencoded_key),
             self.encode_value(unencoded_value),
         )
 
-    @debug
+    @log.debug
     def _get(self, encoded_key: str, default: Any = None) -> Any:
         with self as cache, cache.db as db:
             return db.get(encoded_key, default)
 
-    @debug
+    @log.debug
     def _set(self, encoded_key: str, encoded_value: Any) -> None:
         with self as cache, cache.db as db:
             db[encoded_key] = encoded_value
 
-    @debug
+    @log.debug
     def __contains__(self, unencoded_key: Any) -> bool:
         return self.has(unencoded_key)
 
     def has(self, unencoded_key: Any) -> bool:
         return self._has(self.encode_key(unencoded_key))
 
-    @debug
+    @log.debug
     def encode_key(self, unencoded_key: Any) -> Union[str, bytes]:
         return self.encode(
             self.serialize(unencoded_key),
             as_string=self.string_keys,
         )
 
-    @debug
+    @log.debug
     def encode_value(self, unencoded_value: Any) -> Union[str, bytes]:
         return self.encode(
             self.serialize(unencoded_value),
             as_string=self.string_values,
         )
 
-    @debug
+    @log.debug
     def decode_key(self, encoded_key: Any) -> Union[str, bytes]:
         return self.deserialize(self.decode(encoded_key))
 
-    @debug
+    @log.debug
     def decode_value(self, encoded_value: Any) -> Union[str, bytes]:
         return self.deserialize(self.decode(encoded_value))
 
-    @debug
+    @log.debug
     def _has(self, encoded_key: Union[str, bytes]):
         with self as cache, cache.db as db:
             return encoded_key in db
 
-    @debug
+    @log.debug
     def clear(self) -> None:
         with self as cache, cache.db as db:
             db.clear()
@@ -256,7 +266,7 @@ class BaseHashStash(MutableMapping):
 
     @cached_property
     def profiler(self):
-        from ..profiler.engine_profiler import HashStashProfiler
+        from ..profilers.engine_profiler import HashStashProfiler
 
         return HashStashProfiler(self)
 
@@ -266,38 +276,152 @@ class BaseHashStash(MutableMapping):
         return new_instance
 
     def tmp(self, **kwargs):
-        return TemporaryHashStash(self, **kwargs)
+        # return TemporaryHashStash(self, **kwargs)
+        kwargs = {
+            **kwargs,
+            **dict(
+                root_dir=tempfile.mkdtemp(),
+                dbname=f"{uuid.uuid4().hex[:10]}",
+                name='tmp'
+            ),
+        }
+        return self.sub(**kwargs)
 
     def __repr__(self):
-        path = str(self.path).replace(os.path.expanduser("~"), "~")
-        # return f"""{self.__class__.__name__}(name="{self.name}", path="{path}")"""
+        # path = self.path.replace(DEFAULT_ROOT_DIR+'/','').replace(os.path.expanduser("~"), "~")
+        path = self.path.replace(os.path.expanduser("~"), "~")
+        # path = os.path.dirname(path)
+        # path = f'{self.name}{"/" + self.dbname if self.dbname != DEFAULT_DBNAME else ""}'
         return f"""{self.__class__.__name__}({path})"""
 
     def __reduce__(self):
         # Return a tuple of (callable, args) that allows recreation of this object
         return (self.__class__.from_dict, (self.to_dict(),))
+    
 
 
-class TemporaryHashStash(BaseHashStash):
-    def __init__(self, base_stash, **kwargs):
-        self.base_stash = base_stash
-        self.kwargs = kwargs
-        self.stash = None
 
-    def __enter__(self):
-        kwargs = {
-            **self.kwargs,
-            **dict(
-                root_dir=tempfile.mkdtemp(),
-                name=f"tmp_{uuid.uuid4().hex[:10]}",
-            ),
-        }
-        self.stash = self.base_stash.sub(**kwargs)
-        return self.stash
+# class TemporaryHashStash(BaseHashStash):
+#     def __init__(self, base_stash, **kwargs):
+#         self.base_stash = base_stash
+#         self.kwargs = kwargs
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.stash:
-            threading.Thread(
-                target=shutil.rmtree, args=(self.stash.root_dir,), daemon=True
-            ).start()
-        self.stash = None
+#     def __getattr__(self, name):
+#         if name == 'stash':
+#             return self.__getattribute__(name)
+#         return getattr(self.stash, name)
+
+#     def __getitem__(self, key):
+#         return self.stash[key]
+
+#     def __setitem__(self, key, value):
+#         self.stash[key] = value
+
+#     def __delitem__(self, key):
+#         del self.stash[key]
+
+#     def __iter__(self):
+#         return iter(self.stash)
+
+#     def __len__(self):
+#         return len(self.stash)
+
+#     def __contains__(self, key):
+#         return key in self.stash
+        
+#     @cached_property
+#     @log.debug
+#     def stash(self):
+#         kwargs = {
+#             **self.kwargs,
+#             **dict(
+#                 root_dir=tempfile.mkdtemp(),
+#                 name=f"tmp_{uuid.uuid4().hex[:10]}",
+#             ),
+#         }
+#         return self.base_stash.sub(**kwargs)
+
+#     def __enter__(self):
+#         self.__dict__.pop('stash')
+#         return self.stash
+
+#     def __exit__(self, exc_type, exc_val, exc_tb):
+#         if self.__dict__.get('stash'):
+#             threading.Thread(
+#                 target=shutil.rmtree, args=(self.stash.root_dir,), daemon=True
+#             ).start()
+#         self.__dict__.pop('stash')
+
+
+
+
+@log.debug
+@fcache
+def HashStash(
+    name: str = DEFAULT_NAME,
+    engine: str = DEFAULT_ENGINE_TYPE,
+    dbname: str = DEFAULT_DBNAME,
+    compress: bool = DEFAULT_COMPRESS,
+    b64: bool = DEFAULT_B64,
+    serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER,
+    **kwargs,
+) -> "BaseHashStash":
+    """
+    Factory function to create the appropriate cache object.
+
+    Args:
+        * args: Additional arguments to pass to the cache constructor.
+        engine: The type of cache to create ("file", "sqlite", "memory", "shelve", "redis", "pickledb", or "diskcache")
+        **kwargs: Additional keyword arguments to pass to the cache constructor.
+
+    Returns:
+        An instance of the appropriate BaseHashStash subclass.
+
+    Raises:
+        ValueError: If an invalid engine is provided.
+    """
+
+    if engine == "file":
+        from .filepath import FileHashStash
+        cls = FileHashStash
+    elif engine == "sqlite":
+        from ..engines.sqlite import SqliteHashStash
+
+        cls = SqliteHashStash
+    elif engine == "memory":
+        from ..engines.memory import MemoryHashStash
+
+        cls = MemoryHashStash
+    elif engine == "shelve":
+        from ..engines.shelve import ShelveHashStash
+
+        cls = ShelveHashStash
+    elif engine == "redis":
+        from ..engines.redis import RedisHashStash
+
+        cls = RedisHashStash
+    elif engine == "pickledb":
+        from ..engines.pickledb import PickleDBHashStash
+
+        cls = PickleDBHashStash
+    elif engine == "diskcache":
+        from ..engines.diskcache import DiskCacheHashStash
+
+        cls = DiskCacheHashStash
+    elif engine == "lmdb":
+        from ..engines.lmdb import LMDBHashStash
+        cls = LMDBHashStash
+    else:
+        raise ValueError(f"Invalid engine: {engine}. Options: {", ".join(ENGINES)}.")
+    
+    object = cls(
+        name=name,
+        compress=compress,
+        b64=b64,
+        serializer=serializer,
+        dbname=dbname,
+        **kwargs
+    )
+    return object
+
+Stash = HashStash

@@ -1,4 +1,5 @@
 from .profiler import *
+import orjson
 import json
 import jsonpickle
 import pickle
@@ -21,6 +22,8 @@ SERIALIZERS = {
     'jsonpickle': jsonpickle.encode,
     'jsonpickle_ext': lambda obj: jsonpickle.encode(obj),
     'pickle': pickle.dumps,
+    'json': json.dumps,
+    'orjson': partial(orjson.dumps, option=orjson.OPT_SORT_KEYS | orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_SERIALIZE_DATACLASS),
 }
 
 DESERIALIZERS = {
@@ -28,6 +31,8 @@ DESERIALIZERS = {
     'jsonpickle': jsonpickle.decode,
     'jsonpickle_ext': jsonpickle.decode,
     'pickle': pickle.loads,
+    'json': json.dumps,
+    'orjson': orjson.loads
 }
 
 def time_function(func, *args, **kwargs):
@@ -41,6 +46,7 @@ def get_data_type(obj):
     return addr
     # return 'builtins' if addr.split('.')[0]=='builtins' else addr#.split('.')[-1]
 
+@log.debug
 def compare_serializers(obj, recurse=True):
     results = []
     input_size_mb = len(serialize(obj).encode()) / 1024 / 1024
@@ -71,13 +77,13 @@ def compare_serializers(obj, recurse=True):
             "input_size_mb":input_size_mb
         })
         
-        if recurse:
-            if type(obj) is list:
-                for subobj in obj:
-                    results.extend(compare_serializers(subobj,recurse=False))
-            elif type(obj) is dict:
-                for key, value in obj.items():
-                    results.extend(compare_serializers(value, recurse=False))
+        # if recurse:
+        #     if type(obj) is list:
+        #         for subobj in obj:
+        #             results.extend(compare_serializers(subobj,recurse=False))
+        #     elif type(obj) is dict:
+        #         for key, value in obj.items():
+        #             results.extend(compare_serializers(value, recurse=False))
                     
     return results
 
@@ -86,9 +92,10 @@ def run_comparisons(iterations=100, **y):
     results = []
     pbar=tqdm(range(iterations), desc=f"Iterations", leave=False)
     for _ in pbar:
-        size = random.randint(1_000, 100_000)
-        pbar.set_description(f'comparing to data of {size/1024:,.2f} KB')
-        data = generate_data(size)
+        size = 1_000_000 #random.randint(1_00, 10_000)
+        data = generate_data_simple(size)
+        realsize = len(serialize(data).encode())
+        pbar.set_description(f'comparing to data of {realsize/1024:,.2f} KB')
         results.extend(compare_serializers(data))
     
     return pd.DataFrame(results)

@@ -1,4 +1,4 @@
-from .utils import *
+from . import *
 
 
 def pmap(func, objects=[], options=[], num_proc=1, chunksize=1, total=None, desc=None, progress=True, ordered=True, *common_args, **common_kwargs):
@@ -91,8 +91,3 @@ def imap(executor, func, iterable, chunksize=1):
         else:
             results[index] = result
 
-
-def f(x):
-    print(x)
-    if not x % 2:
-        time.sleep(10)

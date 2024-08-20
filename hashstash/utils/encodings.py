@@ -1,7 +1,7 @@
-from .utils import *
-from ..serialize import deserialize, serialize
+from . import *
+# from ..serializers import deserialize, serialize
 
-@debug
+@log.debug
 def encode(data: Union[str, bytes], b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
     if not isinstance(data, (str,bytes)):
         raise ValueError("Input data must be either a string or bytes.")
@@ -16,7 +16,7 @@ def _encode(data_b:bytes, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=
 
     return data_b if not as_string else data_b.decode('utf-8')
 
-@debug
+@log.debug
 def decode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
     data_b = data.encode() if isinstance(data, str) else data
     data_b = _decode(data_b, b64=b64, compress=compress)
@@ -34,28 +34,28 @@ def encode_zlib(data):
     try:
         return zlib.compress(data)
     except Exception as e:
-        logger.debug(f"Compression error: {e}")
+        log.debug(f"Compression error: {e}")
         return data
 
 def encode_b64(data):
     try:
         return base64.b64encode(data)
     except Exception as e:
-        logger.debug(f"Base64 encoding error: {e}")
+        log.debug(f"Base64 encoding error: {e}")
         return data
 
 def decode_b64(data):
     try:
         return base64.b64decode(data)
     except Exception as e:
-        logger.debug(f"Base64 decoding error: {e}")
+        log.debug(f"Base64 decoding error: {e}")
         return data
 
 def decode_zlib(data):
     try:
         return zlib.decompress(data)
     except Exception as e:
-        logger.debug(f"Decompression error: {e}")
+        log.debug(f"Decompression error: {e}")
         return data
 
 def encode_hash(data_b):

@@ -1,9 +1,8 @@
-from .base import *
-import lmdb
+from . import *
 
 class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
-    filename = 'db.lmdb'
+    filename_is_dir = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -12,6 +11,7 @@ class LMDBHashStash(BaseHashStash):
     @property
     def db(self):
         if self._env is None:
+            import lmdb
             self._env = lmdb.open(self.path, map_size=1024**3)  # GB max size
         return self._env
 

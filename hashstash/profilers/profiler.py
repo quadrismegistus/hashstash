@@ -1,15 +1,15 @@
 from ..utils import *
-from ..serialize import *
+from ..serializers import *
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import random
 
 @fcache
+@log.info
 def get_sonnets():
     try:
         import prosodic as p
-        print('getting sonnets')
         sonnets_file = '/Users/ryan/github/prosodic/corpora/corppoetry_en/en.shakespeare.txt'
         sonnets = []
         with open(sonnets_file) as f, p.logmap.quiet():
@@ -18,7 +18,6 @@ def get_sonnets():
                     sonnets.append(p.Text(sonnet))
                 except Exception:
                     pass
-        print('getting sonnets')
         return sonnets
     except Exception as e:
         logger.warning(f'Prosodic not installed, will not generate prosodic data. Error: {e}')
@@ -77,7 +76,7 @@ def generate_pandas_series(max_length: int = 100) -> pd.Series:
     data = [generate_primitive() for _ in range(length)]
     return pd.Series(data)
 
-
+@log.debug
 def generate_data(
     target_size: int,
     data_types=[
@@ -145,3 +144,53 @@ def generate_complex_data(size: int) -> Dict[str, Any]:
         "large_dict": generate_dict(depth=2, max_keys=size // 10),
     }
 
+
+
+@log.debug
+def generate_data_simple(
+    target_size: int,
+    data_types=[
+        "primitive",
+        "list",
+        "dict",
+        "numpy",
+        "pandas_df",
+        "pandas_series",
+        "prosodic_text",
+        "prosodic_line",
+    ],
+) -> Dict[str, Any]:
+    data = {}
+    if not get_sonnets():
+        data_types = [x for x in data_types if not x.startswith('prosodic')]
+
+    choice = random.choice(data_types)
+
+    if choice == "primitive":
+        return generate_primitive()
+    elif choice == "list":
+        return generate_list_simple(min(target_size // 10, 1000))
+    elif choice == "dict":
+        return generate_dict_simple(min(target_size // 20, 100))
+    elif choice == "numpy":
+        return generate_numpy_array(max_dim=2, max_size=int(target_size**0.5))
+    elif choice == "pandas_df":
+        return generate_pandas_dataframe(
+            max_rows=max(1, min(target_size // 100, 1000)),
+            max_cols=max(1, min(target_size // 1000, 50)),
+        )
+    elif choice=='pandas_series':
+        return generate_pandas_series(max_length=min(target_size // 10, 10000))
+    elif choice=='prosodic_text':
+        return get_random_sonnet()
+    else:
+        return
+
+def generate_list_simple(max_length: int = 10) -> List[Any]:
+    return [generate_primitive() for _ in range(random.randint(0, max_length))]
+
+
+def generate_dict_simple(max_keys: int = 10) -> Dict[str, Any]:
+    return {
+        f"key_{i}": generate_list_simple(max_length=max_keys) for i in range(random.randint(0, max_keys))
+    }

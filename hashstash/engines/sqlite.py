@@ -1,10 +1,8 @@
-from .base import *
-from sqlitedict import SqliteDict
-from functools import cached_property
+from . import *
 
 class SqliteHashStash(BaseHashStash):
     engine = "sqlite"
-    filename = "db.sqlite"
 
     def get_db(self):
+        from sqlitedict import SqliteDict
         return SqliteDict(self.path, flag="c", autocommit=True)
