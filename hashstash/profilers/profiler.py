@@ -42,14 +42,14 @@ def generate_pandas_series(max_length: int = 100) -> pd.Series:
 
 def generate_complex_data(size: int) -> Dict[str, Any]:
     return {
-        "nested_structure": generate_data(depth=5),
+        "nested_structure": generate_data(target_size=size, depth=5),
         "dataframe": generate_pandas_dataframe(
             max_rows=size // 100, max_cols=size // 1000
         ),
         "numpy_array": generate_numpy_array(max_size=size // 100),
         "series": generate_pandas_series(max_length=size // 10),
-        "large_list": generate_list(depth=2, max_length=size // 10),
-        "large_dict": generate_dict(depth=2, max_keys=size // 10),
+        "large_list": generate_list(max_length=size // 10),
+        "large_dict": generate_dict(max_keys=size // 10),
     }
 
 
@@ -57,7 +57,7 @@ def generate_complex_data(size: int) -> Dict[str, Any]:
 @log.debug
 def generate_data(
     target_size: int,
-    data_types=[
+    data_types: List[str] = [
         "primitive",
         "list",
         "dict",
@@ -67,9 +67,11 @@ def generate_data(
         "prosodic_text",
         "prosodic_line",
     ],
-) -> Dict[str, Any]:
-    data = {}
-    
+    depth: int = 1,
+) -> Any:
+    if depth <= 0:
+        return generate_primitive()
+
     choice = random.choice(data_types)
 
     if choice == "primitive":
@@ -85,8 +87,12 @@ def generate_data(
             max_rows=max(1, min(target_size // 100, 1000)),
             max_cols=max(1, min(target_size // 1000, 50)),
         )
+    elif choice == "pandas_series":
+        return generate_pandas_series(max_length=min(target_size, 1000))
     else:
-        return
+        # For unsupported types, recursively call generate_data with reduced depth
+        return generate_data(target_size, data_types, depth - 1)
+
 
 def generate_list(max_length: int = 10) -> List[Any]:
     return [generate_primitive() for _ in range(random.randint(0, max_length))]

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "hashstash"
 dynamic = ["version"]
 authors = [
-  { name="Your Name", email="ryan.heuser@gmail.com" },
+  { name="Dr Ryan Heuser", email="ryan.heuser@gmail.com" },
 ]
 description = "A simple file-based caching system using hash-based file names"
 readme = "README.md"
@@ -25,15 +25,20 @@ version = {attr = "hashstash.__version__"}
 "Bug Tracker" = "https://github.com/quadrismegistus/hashstash/issues"
 
 [project.optional-dependencies]
-sqlite = ["sqlitedict"]
-redis = ["redis", "redis_dict"]
-diskcache = ["diskcache"]
-lmdb = ["lmdb"]
-pickledb = ["pickledb"]
+dev = [
+  "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", 
+  "jsonpickle", "orjson",
+  "pandas", "numpy", "tqdm",
+  "plotnine",
+  "pytest", "pytest-cov", "setuptools-scm", "ipython", 
+]
+all = [
+  "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", 
+  "jsonpickle", "orjson",
+  "pandas", "numpy", "tqdm"
+]
 engines = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
-dev = ["pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "plotnine", "tqdm"]
-test = ["pytest", "pandas", "numpy", "setuptools-scm", "ipython", "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "plotnine", "tqdm", "pytest-cov"]
-all = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "pandas", "numpy", "setuptools-scm", "ipython", "pytest", "plotnine", "tqdm", "pytest-cov"]
+serializers = ["jsonpickle", "orjson"]
 
 
 [tool.setuptools]

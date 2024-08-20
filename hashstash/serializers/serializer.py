@@ -96,3 +96,6 @@ def serialize_pickle(obj):
 
 def deserialize_pickle(data):
     return pickle.loads(data)
+
+def bytesize(obj, serializer='custom'):
+    return len(serialize(obj, serializer).encode())

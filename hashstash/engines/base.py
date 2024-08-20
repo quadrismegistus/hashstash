@@ -387,7 +387,7 @@ class BaseHashStash(MutableMapping):
 
 
 # @fcache
-@log.info
+# @log.info
 def HashStash(
     name: str = None,
     engine: ENGINE_TYPES = None,

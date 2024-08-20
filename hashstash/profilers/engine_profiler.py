@@ -2,6 +2,11 @@ from . import *
 
 RAW_SIZE_KEY = "Raw Size (MB)"
 
+def time_function(func, *args, **kwargs):
+    start_time = time.time()
+    result = func(*args, **kwargs)
+    end_time = time.time()
+    return result, end_time - start_time
 
 class HashStashProfiler:
     def __init__(self, stash):
@@ -11,64 +16,72 @@ class HashStashProfiler:
     def profile(
         self,
         size: list = PROFILE_SIZES,
-        iterations: list = DEFAULT_ITERATIONS,
+        iterations: int = DEFAULT_ITERATIONS,
         num_proc: int = DEFAULT_NUM_PROC,
         verbose: bool = False,
         progress: bool = True
     ):
         tasks = [{"size": random.choice(size)} for _ in range(iterations)]
+        results = pmap(
+            self.profile_stash_transaction,
+            objects=self.stash,
+            options=tasks,
+            num_proc=num_proc,
+            ordered=False,
+            progress=progress,
+            desc=f'Profiling {self.stash}'
+        )
+        return pd.DataFrame([{'Iteration':i, **r} for i,result in enumerate(results) if result for r in result])
 
-        def stream_results(stash):
-            write_num = 0
-            write_time = 0
-            write_size = 0
-            timenow = time.time()
+    def profile_stash_transaction(self, stash, size: int = DEFAULT_DATA_SIZE):
+        data = generate_data(size)
+        raw_size = bytesize(data)
+        cache_key = f"test_data_{size}_{random.random()}"
 
-            iterr = pmap(
-                profile_stash_transaction,
-                objects=stash,
-                options=tasks,
-                num_proc=num_proc,
-                ordered=False,
-                progress=progress,
-                desc=f'Profiling {stash}'
-            )
-            for result in iterr:
-                if not result:
-                    continue
+        results = []
+        common_data = {
+            "Engine": stash.engine,
+            "Compress": stash.compress,
+            "Base64": stash.b64,
+            "Size (MB)": int(size) / 1024 / 1024,
+            "Raw Size (MB)": raw_size / 1024 / 1024,
+        }
 
-                write_num += 1
-                timenownow = time.time()
-                write_time += timenownow - timenow
-                timenow = timenownow
+        def add_result(operation, time_taken, additional_data=None):
+            result = {
+                **common_data,
+                "Operation": operation,
+                "Time (s)": time_taken,
+                "Rate (it/s)": (1 / time_taken) if time_taken else 0,
+                "Speed (MB/s)": ((raw_size / time_taken) if time_taken else 0) / 1024 / 1024,
+            }
+            if additional_data:
+                result.update(additional_data)
+            results.append(result)
 
-                try:
-                    if isinstance(result, Exception):
-                        raise result
-                    sizenow = result[0][RAW_SIZE_KEY]
-                    write_size += sizenow
+        operations = [
+            ("Encode Key", lambda: stash.encode_key(cache_key)),
+            ("Decode Key", lambda: stash.decode_key(stash.encode_key(cache_key))),
+            ("Encode Value", lambda: stash.encode_value(data)),
+            ("Decode Value", lambda: stash.decode_value(stash.encode_value(data))),
+            ("Write", lambda: stash.set(cache_key, data)),
+            ("Read", lambda: stash.get(cache_key)),
+        ]
 
-                    for d in result:
-                        d["Num Processes"] = num_proc
-                        d["Iteration"] = write_num
-                        d["Cumulative Time (s)"] = write_time
-                        d["Cumulative Size (MB)"] = write_size
-                        yield d
-                except Exception as e:
-                    print(f"Error processing result: {e}")
-                    print(f"Result type: {type(result)}")
-                    print(f"Result content: {result}")
-                    continue
+        for operation, func in operations:
+            _, time_taken = time_function(func)
+            add_result(operation, time_taken)
 
-        with self.stash.tmp() as tmpstash:
-            return pd.DataFrame(stream_results(tmpstash))
+        # Add cached size and compression ratio after write operation
+        encoded_value = stash.encode_value(data)
+        for d in results:
+            d.update({
+                "Cached Size (MB)": len(encoded_value) / 1024 / 1024,
+                "Compression Ratio (%)": (len(encoded_value) / raw_size * 100) if raw_size else 0,
+            })
 
-    @staticmethod
-    def _profile_one(args):
-        profiler, task = args
-        return profiler.profile_one(**task)
+        return results
 
-    
     def profile_df(
         self,
         *args,
@@ -82,14 +95,14 @@ class HashStashProfiler:
         if operations:
             df = df[df.Operation.isin(operations)]
         df = pd.concat(
-            gdf.sort_values("write_num").assign(
+            gdf.sort_values("Iteration").assign(
                 **{
                     "Cumulative Time (s)": gdf["Time (s)"].cumsum(),
-                    "Cumulative Size (MB)": gdf["Size (B)"].cumsum() / 1024 / 1024,
+                    "Cumulative Size (MB)": gdf["Raw Size (MB)"].cumsum(),
                 }
             )
             for g, gdf in df.groupby(
-                [x for x in group_by if not x.startswith("write_num")]
+                [x for x in group_by if x != "Iteration"]
             )
         )
         if group_by:
@@ -98,105 +111,19 @@ class HashStashProfiler:
             df = df.sort_values(sort_by, ascending=False)
         return df
 
-def generate_data(size):
-    return {
-        "string": "".join(
-            random.choices("abcdefghijklmnopqrstuvwxyz", k=size // 2)
-        ),
-        "number": random.randint(1, 1000000),
-        "list": [random.randint(1, 1000) for _ in range(size // 20)],
-        "nested": {
-            f"key_{i}": {"value": random.random()} for i in range(size // 200)
-        },
-    }
+def run_engine_profile(iterations=1000, **kwargs):
+    with temporary_log_level(logging.WARN):
+        results_df = HashStashProfiler(HashStash()).profile(iterations=iterations, **kwargs)
+    
+    grouped_results = results_df.groupby(['Engine', 'Compress', 'Base64', 'Operation']).agg({
+        'Speed (MB/s)': 'median',
+        'Time (s)': 'sum',
+        'Raw Size (MB)': 'sum',
+        'Cached Size (MB)': 'mean',
+        'Compression Ratio (%)': 'mean',
+    }).reset_index()
+    
+    return grouped_results.sort_values(['Engine', 'Compress', 'Base64', 'Speed (MB/s)'], ascending=[True, True, True, False])
 
-
-def profile_stash_transaction(
-    stash,
-    size: int = DEFAULT_DATA_SIZE,
-    verbose: bool = False,
-):
-    cache = stash
-    if cache is None:
-        raise Exception('Profiler must be used as context manager')
-    data = generate_data(size)
-    raw_size = len(json.dumps(data).encode())
-    cache_key = f"test_data_{size}_{random.random()}"
-
-    # Encode value to get cached size
-    encoded_value = cache.encode(data)
-    cached_size = len(encoded_value)
-
-    results = []
-    common_data = {
-        "Engine": cache.engine,
-        "Compress": cache.compress,
-        "Base64": cache.b64,
-        "Size (MB)": int(size) / 1024 / 1024,
-        "Raw Size (MB)": raw_size / 1024 / 1024,
-        "Cached Size (MB)": cached_size / 1024 / 1024,
-        "Compression Ratio (%)": (cached_size / raw_size * 100) if raw_size else 0,
-    }
-
-    def add_result(operation, time_taken, additional_data=None):
-        result = {
-            **common_data,
-            "Operation": operation,
-            "Time (s)": time_taken,
-            "Rate (it/s)": (1 / time_taken) if time_taken else 0,
-            "Speed (MB/s)": ((raw_size / time_taken) if time_taken else 0)
-            / 1024
-            / 1024,
-        }
-        if additional_data:
-            result.update(additional_data)
-        results.append(result)
-
-    # Measure key encoding speed
-    start_time = time.time()
-    encoded_key = cache.encode(cache_key)
-    key_encode_time = time.time() - start_time
-    add_result("Encode Key", key_encode_time)
-
-    # Measure key decoding speed
-    start_time = time.time()
-    _ = cache.decode_key(encoded_key)
-    key_decode_time = time.time() - start_time
-    add_result("Decode Key", key_decode_time)
-
-    # Measure value encoding speed
-    start_time = time.time()
-    encoded_value = cache.encode(data)
-    value_encode_time = time.time() - start_time
-    add_result("Encode Value", value_encode_time)
-
-    # Measure value decoding speed
-    start_time = time.time()
-    _ = cache.decode_value(encoded_value)
-    value_decode_time = time.time() - start_time
-    add_result("Decode Value", value_decode_time)
-
-    # Measure write speed
-    start_time = time.time()
-    cache[cache_key] = data
-    write_time = time.time() - start_time
-    add_result("Write", write_time)
-
-    # Add compression data
-    # add_result("Compress", value_encode_time)
-
-    # Measure read speed
-    start_time = time.time()
-    _ = cache[cache_key]
-    read_time = time.time() - start_time
-    add_result("Read", read_time)
-
-    # Calculate and add raw write and read times
-    # raw_write_time = write_time - (key_encode_time + value_encode_time)
-    # raw_read_time = read_time - (key_decode_time + value_decode_time)
-    # add_result("Raw Write", raw_write_time)
-    # add_result("Raw Read", raw_read_time)
-
-    if verbose:
-        print(results)
-    return results
+if __name__ == "__main__":
+    run_engine_profile()
