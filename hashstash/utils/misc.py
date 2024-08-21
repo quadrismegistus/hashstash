@@ -36,3 +36,12 @@ def is_dataframe(obj):
 def get_fn_ext(fn):
     # without period
     return fn.split('.')[-1]
+
+
+def reformat_python_source(src):
+    lines = src.split('\n')
+    if lines:
+        leading_spaces = len(lines[0]) - len(lines[0].lstrip())
+        return '\n'.join(line[leading_spaces:] for line in lines)
+    else:
+        return src

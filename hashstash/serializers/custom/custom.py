@@ -1,5 +1,6 @@
 from . import *
 from .serialize import _serialize
+from .deserialize import _deserialize
 
 @log.debug
 def serialize_numpy(obj):
@@ -89,18 +90,27 @@ def deserialize_pandas_series(obj):
 
 @log.debug
 def serialize_bytes(obj):
-    return _encode(obj, compress=False, b64=True, as_string=True)
+    return encode(obj, compress=False, b64=True, as_string=True)
 
 @log.debug
 def deserialize_bytes(obj):
-    return _decode(obj, compress=False, b64=True)
+    return decode(obj, compress=False, b64=True)
 
+@log.debug
 def serialize_set(obj):
     return [_serialize(v) for v in sorted(obj, key=lambda x: str(x))] # ensure pseudo sorted for deterministic output
 
+@log.debug
+def deserialize_set(*args):
+    return {_deserialize(v) for v in args}
+
+@log.debug
 def serialize_tuple(obj):
     return [_serialize(v) for v in obj]
 
+@log.debug
+def deserialize_tuple(*args):
+    return tuple([_deserialize(v) for v in args])
     
 CUSTOM_OBJECT_SERIALIZERS = {
     'pandas.core.frame.DataFrame':serialize_pandas_df,

@@ -38,9 +38,11 @@ def deserialize_python(data: dict, init_funcs=["from_dict"]):
         x = obj_func(*args, **kwargs)
         return x
 
+    @log.debug
     def call_init():
         return call_function_politely(obj, *args, **kwargs)
 
+    @log.debug
     def call_init_func(func_name, args, kwargs):
         if hasattr(obj, func_name):
             func = getattr(obj, func_name)
@@ -53,9 +55,9 @@ def deserialize_python(data: dict, init_funcs=["from_dict"]):
     if obj is None and OBJ_SRC_KEY in data:
         src = data[OBJ_SRC_KEY]
         if src.startswith("class "):
-            return deserialize_class(data)
+            obj = deserialize_class(data)
         else:
-            return deserialize_function(src, obj_addr)
+            obj = deserialize_function(src, obj_addr)
 
     if args or kwargs:
         for initfunc in init_funcs:

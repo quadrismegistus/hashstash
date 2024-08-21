@@ -164,6 +164,11 @@ def ff(x):
 
 @log.debug
 def f(x):
+    def fff(y):
+        log.debug('inner inner hello')
+        time.sleep(1)
+        return y*2
     log.debug('outer hello')
-    time.sleep(1)
-    return ff(x)*2
+    # time.sleep(1)
+    from hashstash import serialize
+    return serialize(fff, 'jsonpickle_ext')

@@ -79,10 +79,14 @@ def serialize_object(obj):
     # any dictionary at all?
     obj_d = prune_none_values(get_dict(obj, __ignore=False))
     if obj_d:
-        return {
+        out = {
             OBJ_ADDR_KEY: obj_addr,
             OBJ_KWARGS_KEY: {k: _serialize(v) for k, v in obj_d.items()},
         }
+        if not can_import_object(obj):
+            out[OBJ_SRC_KEY] = reconstruct_class_source(obj.__class__)
+
+        return out
 
     # otherwise unknown
     return serialize_unknown(obj)
@@ -180,7 +184,7 @@ def serialize_class(obj):
     # Check if the class is defined in __main__ or can't be imported
     if obj.__module__ == '__main__' or not can_import_object(obj):
         try:
-            out[OBJ_SRC_KEY] = inspect.getsource(obj)
+            out[OBJ_SRC_KEY] = reformat_python_source(inspect.getsource(obj))
         except OSError:
             logger.warning(f"Could not get source for {obj.__name__} using inspect. Attempting to reconstruct.")
             try:
@@ -199,6 +203,7 @@ def serialize_class(obj):
 
     return out
 
+@log.info
 def reconstruct_class_source(cls):
     lines = [f"class {cls.__name__}:"]
     
@@ -219,11 +224,17 @@ def reconstruct_class_source(cls):
             try:
                 func_source = get_function_str(value)
                 # Remove any leading whitespace and add proper indentation
-                func_lines = [line.strip() for line in func_source.split('\n')]
-                func_lines = ["    " + line for line in func_lines if line]
+                func_lines = func_source.split('\n')
+                func_lines = ["    " + line if line.strip() else line for line in func_lines]
                 lines.extend(func_lines)
                 lines.append("")  # Add an empty line after each method
             except OSError:
                 logger.warning(f"Could not get source for method {name}")
     
-    return "\n".join(lines)
+    src = "\n".join(lines)
+    out = reformat_python_source(src)
+    print("reconstructed")
+    print(out)
+    print()
+
+    return out
