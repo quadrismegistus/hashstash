@@ -31,7 +31,8 @@ ENGINES = (
     "diskcache",
     "lmdb",
     "shelve",
-)  # "pickledb"
+    # "pickledb"
+)
 
 # Performance testing constants
 DEFAULT_NUM_PROC = mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1

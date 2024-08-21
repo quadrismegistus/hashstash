@@ -8,6 +8,8 @@ import random
 import time
 import pytest
 import pandas as pd
+logger.setLevel(logging.DEBUG)
+config.set_serializer('custom')
 
 start_redis_server()
 
@@ -18,18 +20,15 @@ TEST_CLASSES = [
     ShelveHashStash,
     RedisHashStash,
     DiskCacheHashStash,
-    LMDBHashStash
+    LMDBHashStash,
+    # PickleDBHashStash,
 ]
 
 
 @pytest.fixture(params=TEST_CLASSES)
 def cache(request, tmp_path):
     cache_type = request.param
-    if cache_type == MemoryHashStash:
-        cache = cache_type()
-    else:
-        cache = cache_type(name=f"{cache_type.__name__.lower()}_cache", root_dir=tmp_path)
-    
+    cache = cache_type(name=f"{cache_type.__name__.lower()}_cache", root_dir=tmp_path)
     cache.clear()
     yield cache
 
@@ -137,6 +136,7 @@ class TestHashStash:
         assert retrieved_data == very_large_data
 
     def test_cache_path(self, cache, tmp_path):
+        print([cache, cache.path, tmp_path])
         if not isinstance(cache, MemoryHashStash):
             assert str(cache.path).startswith(str(tmp_path))
 
@@ -275,6 +275,134 @@ class TestHashStash:
         assert len(result_df) == 6
         assert set(result_df.columns) == {"_key", "result", "nested", "col1", "col2"}
 
+    def test_delete_key(self, cache):
+        # Add a key-value pair
+        cache["test_key"] = "test_value"
+        assert "test_key" in cache
+
+        # Delete the key
+        del cache["test_key"]
+        assert "test_key" not in cache
+
+        # Attempt to delete a non-existent key
+        with pytest.raises(KeyError):
+            del cache["non_existent_key"]
+
+    def test_to_dict(self, cache):
+        cache_dict = cache.to_dict()
+        assert isinstance(cache_dict, dict)
+        assert "engine" in cache_dict
+        assert "root_dir" in cache_dict
+        assert "compress" in cache_dict
+        assert "b64" in cache_dict
+        assert "name" in cache_dict
+        assert "dbname" in cache_dict
+        assert "serializer" in cache_dict
+
+    def test_from_dict(self, cache):
+        cache_dict = cache.to_dict()
+        new_cache = BaseHashStash.from_dict(cache_dict)
+        assert isinstance(new_cache, BaseHashStash)
+        assert new_cache.engine == cache.engine
+        assert new_cache.root_dir == cache.root_dir
+        assert new_cache.compress == cache.compress
+        assert new_cache.b64 == cache.b64
+        assert new_cache.name == cache.name
+        assert new_cache.dbname == cache.dbname
+        assert new_cache.serializer == cache.serializer
+
+    def test_sub(self, cache):
+        sub_cache = cache.sub(name="sub_cache")
+        assert isinstance(sub_cache, BaseHashStash)
+        assert sub_cache.name == "sub_cache"
+        assert sub_cache.engine == cache.engine
+
+    def test_tmp(self, cache):
+        tmp_cache = cache.tmp()
+        assert isinstance(tmp_cache, BaseHashStash)
+        assert tmp_cache.root_dir != cache.root_dir
+        assert tmp_cache.name == "tmp"
+
+    def test_setdefault(self, cache):
+        assert cache.setdefault("new_key", "default_value") == "default_value"
+        assert cache["new_key"] == "default_value"
+        assert cache.setdefault("new_key", "another_value") == "default_value"
+
+    def test_pop(self, cache):
+        cache["pop_key"] = "pop_value"
+        assert cache.pop("pop_key") == "pop_value"
+        assert "pop_key" not in cache
+        assert cache.pop("non_existent", "default") == "default"
+
+    def test_popitem(self, cache):
+        cache.clear()
+        cache["popitem_key"] = "popitem_value"
+        item = cache.popitem()
+        assert item == "popitem_value"
+        assert len(cache) == 0
+
+    def test_keys_l(self, cache):
+        cache.clear()
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+        keys = cache.keys_l()
+        assert isinstance(keys, list)
+        assert set(keys) == {"key1", "key2"}
+
+    def test_values_l(self, cache):
+        cache.clear()
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+        values = cache.values_l()
+        assert isinstance(values, list)
+        assert set(values) == {"value1", "value2"}
+
+    def test_items_l(self, cache):
+        cache.clear()
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+        items = cache.items_l()
+        assert isinstance(items, list)
+        assert set(items) == {("key1", "value1"), ("key2", "value2")}
+
+    def test_copy(self, cache):
+        cache.clear()
+        cache["key1"] = "value1"
+        cache["key2"] = "value2"
+        copied = cache.copy()
+        assert isinstance(copied, dict)
+        assert copied == {"key1": "value1", "key2": "value2"}
+
+    def test_update(self, cache):
+        cache.clear()
+        cache["key1"] = "value1"
+        cache.update({"key2": "value2"}, key3="value3")
+        assert dict(cache.items()) == {"key1": "value1", "key2": "value2", "key3": "value3"}
+
+    def test_hash(self, cache):
+        data = b"test data"
+        hashed = cache.hash(data)
+        assert isinstance(hashed, str)
+        assert len(hashed) == 32  # MD5 hash length
+
+    def test_stashed_result(self, cache):
+        @cache.stashed_result
+        def test_func(x):
+            return x * 2
+
+        result = test_func(5)
+        assert result == 10
+        assert test_func.stash[{"func": test_func, "args": (5,), "kwargs": {}}] == 10
+
+    def test_sub_function_results(self, cache):
+        def test_func(x):
+            return x * 2
+
+        sub_stash = cache.sub_function_results(test_func)
+        assert isinstance(sub_stash, BaseHashStash)
+        assert "stashed_result" in sub_stash.dbname
+        assert "test_func" in sub_stash.dbname
+
     @staticmethod
     def _get_cached_size(cache, key):
         return len(cache[key])
@@ -367,10 +495,16 @@ def redis_client():
 def test_start_redis_server():
     # In GitHub Actions, Redis is already running, so this should just connect
     start_redis_server()
+    time.sleep(30)
+    start_redis_server()
     
     # Verify that we can connect to Redis
     client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
     assert client.ping()
+
+def test_encode_path():
+    cache = HashStash(engine='pairtree')
+    assert os.path.isabs(cache.encode_path('unencoded_key'))
 
 if __name__ == "__main__":
     pytest.main([__file__])

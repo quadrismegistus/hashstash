@@ -67,13 +67,12 @@ class PairtreeHashStash(BaseHashStash):
                 val = f.readline().strip()
                 yield (key,val)
     
-
-    def __delitem__(self, key: str) -> None:
-        filepath = self._encode_filepath(key)
+    def _del(self, encoded_key: Union[str, bytes]) -> None:
+        filepath = self._encode_filepath(encoded_key)
         if not os.path.exists(filepath):
-            raise KeyError(key)
+            raise KeyError(encoded_key)
         os.remove(filepath)
-        
+
         # Remove empty parent directories
         dir_path = os.path.dirname(filepath)
         while dir_path != self.path:

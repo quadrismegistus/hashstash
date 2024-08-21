@@ -4,7 +4,7 @@ from . import *
 
 
 class PickleDBHashStash(BaseHashStash):
-    engine = "sqlite"
+    engine = "pickledb"
     string_keys = True
     string_values = True
 

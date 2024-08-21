@@ -50,7 +50,7 @@ class BaseHashStash(MutableMapping):
         )
         self.path_dirname = self.path if self.filename_is_dir else os.path.dirname(self.path)
         if self.ensure_dir:
-            ensure_dir(self.path_dirname)
+            os.makedirs(self.path_dirname, exist_ok=True)
 
     def encode(self, *args, **kwargs):
         return encode(*args, b64=self.b64, compress=self.compress, **kwargs)
@@ -87,6 +87,8 @@ class BaseHashStash(MutableMapping):
     @property
     @retry_patiently()
     def db(self):
+        if self.ensure_dir:
+            os.makedirs(self.path_dirname, exist_ok=True)
         return self.get_db()
 
     @property
@@ -133,7 +135,8 @@ class BaseHashStash(MutableMapping):
     @log.debug
     def _get(self, encoded_key: str, default: Any = None) -> Any:
         with self as cache, cache.db as db:
-            return db.get(encoded_key, default)
+            res = db.get(encoded_key)
+            return res if res is not None else default
 
     @log.debug
     def _set(self, encoded_key: str, encoded_value: Any) -> None:
@@ -183,9 +186,14 @@ class BaseHashStash(MutableMapping):
         with self as cache, cache.db as db:
             return len(db)
 
-    def __delitem__(self, key: str) -> None:
+    def __delitem__(self, unencoded_key: str) -> None:
+        if not self.has(unencoded_key):
+            raise KeyError(unencoded_key)
+        self._del(self.encode_key(unencoded_key))
+
+    def _del(self, encoded_key: Union[str, bytes]) -> None:
         with self as cache, cache.db as db:
-            del db[self.encode_key(key)]
+            del db[encoded_key]
 
     def _keys(self):
         with self as cache, cache.db as db:
@@ -258,12 +266,14 @@ class BaseHashStash(MutableMapping):
             self[key] = default
             return default
 
-    def pop(self, key, default=None):
+    def pop(self, unencoded_key, default=object):
         try:
-            value = self[key]
-            del self[key]
+            value = self[unencoded_key]
+            del self[unencoded_key]
             return value
         except KeyError:
+            if default is object:
+                raise
             return default
 
     def popitem(self):

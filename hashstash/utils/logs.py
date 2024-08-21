@@ -66,7 +66,10 @@ def log_wrapper(_func=None, level=logging.INFO):
             global current_depth, last_log_time
             args = list(args)
             try:
-                args_str = ', '.join(map(repr, args))
+                if args and getattr(func, '__code__', None) and func.__code__.co_varnames and func.__code__.co_varnames[0] == 'self':
+                    args_str = ', '.join(map(repr, args[1:]))
+                else:
+                    args_str = ', '.join(map(repr, args))
             except Exception:
                 args_str = ', '.join(map(repr, args[1:]))
             kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items() if v is not None)
@@ -119,7 +122,7 @@ def log_prefix_str(message='', reset=True):
     return  f'{log_time_taken_str(reset=reset)}{log_indent_str()}{" "+message if message else ""}'
 
 
-def log_func(message, level=logging.DEBUG, maxlen=100):
+def log_func(message, level=logging.DEBUG, maxlen=None):
     logger.log(level,log_prefix_str(message)[:maxlen])
 
 
