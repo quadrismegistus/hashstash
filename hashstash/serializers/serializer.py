@@ -5,7 +5,6 @@ import functools
 
 def get_serializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = DEFAULT_SERIALIZER):
     serializer_dict = {
-        "custom": serialize_custom,
         "jsonpickle": serialize_jsonpickle,
         "jsonpickle_ext": serialize_jsonpickle_ext,
         "orjson": serialize_orjson,
@@ -20,7 +19,6 @@ def get_serializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] =
 
 def get_deserializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = SERIALIZER_TYPES.__args__):
     deserializer_dict = {
-        "custom": deserialize_custom,
         "jsonpickle": deserialize_jsonpickle,
         "jsonpickle_ext": deserialize_jsonpickle_ext,
         "orjson": deserialize_orjson,
@@ -97,5 +95,5 @@ def serialize_pickle(obj):
 def deserialize_pickle(data):
     return pickle.loads(data)
 
-def bytesize(obj, serializer='custom'):
-    return len(serialize(obj, serializer).encode())
+def bytesize(obj):
+    return len(serialize(obj).encode())

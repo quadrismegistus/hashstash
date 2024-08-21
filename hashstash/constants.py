@@ -68,7 +68,7 @@ OBJ_SRC_KEY = "__py_src__"
 SERIALIZER_TYPES = Literal[
     "jsonpickle_ext",  # if fails to decode a value, so will jsonpickle
     "jsonpickle",      # will work as backup if numpy and pandas are not installed
-    "custom",          # flexible, but not as fast as jsonpickle
+    # "custom",          # flexible, but not as fast as jsonpickle
     "pickle",          # fastest but not platform independent
     "orjson",          # cannot handle pandas etc
     "json",            # cannot handle pandas and numpy etc

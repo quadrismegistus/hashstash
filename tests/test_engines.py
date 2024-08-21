@@ -9,7 +9,6 @@ import time
 import pytest
 import pandas as pd
 logger.setLevel(logging.DEBUG)
-config.set_serializer('custom')
 
 start_redis_server()
 

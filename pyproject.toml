@@ -11,6 +11,7 @@ authors = [
 description = "A simple file-based caching system using hash-based file names"
 readme = "README.md"
 requires-python = ">=3.7"
+dependencies = ["jsonpickle"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -26,20 +27,35 @@ version = {attr = "hashstash.__version__"}
 
 [project.optional-dependencies]
 dev = [
-  "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", 
-  "jsonpickle", "orjson",
-  "pandas", "numpy", "tqdm",
+  "sqlitedict", 
+  "redis", 
+  "redis_dict", 
+  "diskcache", 
+  "lmdb", 
+  "pickledb", 
+  "orjson",
+  "pandas", 
+  "numpy", 
+  "tqdm",
   "plotnine",
-  "pytest", "pytest-cov", "setuptools-scm", "ipython", 
+  "pytest", 
+  "pytest-cov", 
+  "setuptools-scm", 
+  "ipython", 
 ]
 all = [
-  "sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", 
-  "jsonpickle", "orjson",
-  "pandas", "numpy", "tqdm"
+  "sqlitedict", 
+  "redis", 
+  "redis_dict", 
+  "diskcache", 
+  "lmdb", 
+  "pickledb", 
+  "orjson",
+  "pandas", 
+  "numpy", 
+  "tqdm"
 ]
 engines = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
-serializers = ["jsonpickle", "orjson"]
-
 
 [tool.setuptools]
 py-modules = ["hashstash"]
