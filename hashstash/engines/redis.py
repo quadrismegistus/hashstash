@@ -11,7 +11,7 @@ class RedisHashStash(BaseHashStash):
     engine = 'redis'
     host = REDIS_HOST
     port = REDIS_PORT
-    dbname = REDIS_DB
+    dbname = DEFAULT_DBNAME
     ensure_dir = False
     string_keys = True
     string_values = True
@@ -50,8 +50,8 @@ def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=D
         _process_started = True
         logger.info("Redis server is already running and accessible")
         return
-    except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError):
-        logger.info("Unable to connect to Redis. Checking Docker container status.")
+    except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError) as e:
+        logger.info(f"Unable to connect to Redis. Checking Docker container status. Error: {e}")
 
     try:
         # Check if a Redis container already exists

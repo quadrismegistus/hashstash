@@ -56,7 +56,7 @@ PROFILE_SIZES = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000]
 # Redis settings
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
-REDIS_DB = "hashstash"
+REDIS_DB = 0
 
 OBJ_ADDR_KEY = "__py__"
 OBJ_ARGS_KEY = "__py_args__"

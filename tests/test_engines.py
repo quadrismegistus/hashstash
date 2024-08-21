@@ -9,6 +9,8 @@ import time
 import pytest
 import pandas as pd
 
+start_redis_server()
+
 TEST_CLASSES = [
     PairtreeHashStash,
     SqliteHashStash,
@@ -210,12 +212,165 @@ class TestHashStash:
         assert len(df) == 2
         assert "_arg1" in df.columns
         assert "result" in df.columns
+    
+    def test_assemble_ld_with_list(self, cache):
+        cache["list_key"] = [{"a": 1}, {"b": 2}, 3, 4]
+        ld = cache.assemble_ld()
+        assert len(ld) == 4
+        assert ld[0] == {"_key": "list_key", "a": 1}
+        assert ld[1] == {"_key": "list_key", "b": 2}
+        assert ld[2] == {"_key": "list_key", "result": 3}
+        assert ld[3] == {"_key": "list_key", "result": 4}
+
+    def test_assemble_ld_with_dataframe(self, cache):
+        df = pd.DataFrame({'col1': [1, 2], 'col2': ['a', 'b']})
+        cache["df_key"] = df
+        ld = cache.assemble_ld()
+        assert len(ld) == 2
+        assert ld[0] == {"_key": "df_key", "col1": 1, "col2": "a"}
+        assert ld[1] == {"_key": "df_key", "col1": 2, "col2": "b"}
+
+    def test_assemble_ld_mixed_types(self, cache):
+        cache["key1"] = {"result": "simple_dict"}
+        cache["key2"] = [1, 2, {"nested": "dict"}]
+        df = pd.DataFrame({'col1': [3, 4], 'col2': ['c', 'd']})
+        cache["key3"] = df
+
+        ld = cache.assemble_ld()
+        assert len(ld) == 6  # 1 + 3 + 2
+
+        # Check simple dict
+        assert {"_key": "key1", "result": "simple_dict"} in ld
+
+        # Check list items
+        assert {"_key": "key2", "result": 1} in ld
+        assert {"_key": "key2", "result": 2} in ld
+        assert {"_key": "key2", "nested": "dict"} in ld
+
+        # Check dataframe rows
+        assert {"_key": "key3", "col1": 3, "col2": "c"} in ld
+        assert {"_key": "key3", "col1": 4, "col2": "d"} in ld
+
+    def test_assemble_df(self, cache):
+        cache["key1"] = {"result": "simple_dict"}
+        cache["key2"] = [1, 2, {"nested": "dict"}]
+        df = pd.DataFrame({'col1': [3, 4], 'col2': ['c', 'd']})
+        cache["key3"] = df
+
+        result_df = cache.assemble_df()
+        
+        assert isinstance(result_df, pd.DataFrame)
+        assert len(result_df) == 6
+        assert set(result_df.columns) == {"_key", "result", "nested", "col1", "col2"}
+
+    def test_df_property(self, cache):
+        cache["key1"] = {"result": "simple_dict"}
+        cache["key2"] = [1, 2, {"nested": "dict"}]
+        df = pd.DataFrame({'col1': [3, 4], 'col2': ['c', 'd']})
+        cache["key3"] = df
+
+        result_df = cache.df
+        
+        assert isinstance(result_df, pd.DataFrame)
+        assert len(result_df) == 6
+        assert set(result_df.columns) == {"_key", "result", "nested", "col1", "col2"}
 
     @staticmethod
     def _get_cached_size(cache, key):
         return len(cache[key])
-        
 
+class TestHashStashFactory:
+    def test_engine_selection(self):
+        for engine in ENGINES:
+            stash = HashStash(engine=engine)
+            assert stash.engine == engine
+
+    def test_name_parameter(self):
+        name = "test_stash"
+        stash = HashStash(name=name)
+        assert stash.name == name
+
+    def test_dbname_parameter(self):
+        dbname = "test_db"
+        stash = HashStash(dbname=dbname)
+        assert stash.dbname == dbname
+
+    def test_compress_parameter(self):
+        stash = HashStash(compress=True)
+        assert stash.compress == True
+        stash = HashStash(compress=False)
+        assert stash.compress == False
+
+    def test_b64_parameter(self):
+        stash = HashStash(b64=True)
+        assert stash.b64 == True
+        stash = HashStash(b64=False)
+        assert stash.b64 == False
+
+    def test_serializer_parameter(self):
+        serializer = "json"
+        stash = HashStash(serializer=serializer)
+        assert serializer in stash.serializer
+
+    def test_root_dir_parameter(self):
+        root_dir = "/tmp/test_root"
+        stash = HashStash(root_dir=root_dir)
+        assert stash.root_dir == root_dir
+
+    def test_invalid_engine(self):
+        with pytest.raises(ValueError):
+            HashStash(engine="invalid_engine")
+
+    def test_default_parameters(self):
+        stash = HashStash()
+        assert stash.engine == config.engine
+        assert stash.name == DEFAULT_NAME
+        assert stash.dbname == DEFAULT_DBNAME
+        assert stash.compress == config.compress
+        assert stash.b64 == config.b64
+        assert set(stash.serializer) == set(get_working_serializers(config.serializer))
+
+    def test_multiple_parameters(self):
+        name = "multi_test"
+        engine = "sqlite"
+        dbname = "multi_db"
+        compress = True
+        b64 = False
+        serializer = "pickle"
+
+        stash = HashStash(
+            name=name,
+            engine=engine,
+            dbname=dbname,
+            compress=compress,
+            b64=b64,
+            serializer=serializer
+        )
+
+        assert stash.name == name
+        assert stash.engine == engine
+        assert stash.dbname == dbname
+        assert stash.compress == compress
+        assert stash.b64 == b64
+        assert serializer in stash.serializer
+
+## specific engine tests
+
+import pytest
+import redis
+from hashstash.engines.redis import start_redis_server, REDIS_HOST, REDIS_PORT, REDIS_DB
+
+@pytest.fixture(scope="module")
+def redis_client():
+    return redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+
+def test_start_redis_server():
+    # In GitHub Actions, Redis is already running, so this should just connect
+    start_redis_server()
+    
+    # Verify that we can connect to Redis
+    client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+    assert client.ping()
 
 if __name__ == "__main__":
     pytest.main([__file__])

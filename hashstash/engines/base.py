@@ -26,12 +26,12 @@ class BaseHashStash(MutableMapping):
         serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = None,
         **kwargs,
     ) -> None:
-        self.name = name if name else self.name
-        self.compress = compress if compress else config.compress
-        self.b64 = b64 if b64 else config.b64
-        self.serializer = get_working_serializers(serializer if serializer else config.serializer)
-        self.root_dir = root_dir if root_dir else self.root_dir
-        self.dbname = dbname if dbname else self.dbname
+        self.name = name if name is not None else self.name
+        self.compress = compress if compress is not None else config.compress
+        self.b64 = b64 if b64 is not None else config.b64
+        self.serializer = get_working_serializers(serializer if serializer is not None else config.serializer)
+        self.root_dir = root_dir if root_dir is not None else self.root_dir
+        self.dbname = dbname if dbname is not None else self.dbname
         subnames = [f"{self.engine}"]
         if self.compress:
             subnames += ["compressed"]
