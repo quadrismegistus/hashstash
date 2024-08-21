@@ -1,4 +1,4 @@
-from .base import *
+from . import *
 
 IN_MEMORY_CACHE = defaultdict(dict)
 

@@ -1,9 +1,8 @@
-from .base import *
-import lmdb
+from . import *
 
 class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
-    filename = 'db.lmdb'
+    filename_is_dir = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -12,40 +11,31 @@ class LMDBHashStash(BaseHashStash):
     @property
     def db(self):
         if self._env is None:
+            import lmdb
             self._env = lmdb.open(self.path, map_size=1024**3)  # GB max size
         return self._env
 
     def get_db(self):
         return self.db
 
-    def __setitem__(self, key, value):
-        encoded_key = self.encode_key(key)
-        encoded_value = self.encode_value(value)
+    def _set(self, encoded_key, encoded_value):
         with self.db.begin(write=True) as txn:
             txn.put(encoded_key, encoded_value)
 
-    def __getitem__(self, key):
-        encoded_key = self.encode_key(key)
+    def _get(self, encoded_key):
         with self.db.begin() as txn:
-            value = txn.get(encoded_key)
-        if value is None:
-            raise KeyError(key)
-        return self.decode_value(value)
+            return txn.get(encoded_key)
 
-    def __delitem__(self, key):
-        encoded_key = self.encode_key(key)
+    def _del(self, encoded_key):
         with self.db.begin(write=True) as txn:
-            if not txn.delete(encoded_key):
-                raise KeyError(key)
+            txn.delete(encoded_key)
 
     def __len__(self):
         with self.db.begin() as txn:
             return txn.stat()['entries']
 
-    def __contains__(self, key):
-        encoded_key = self.encode_key(key)
-        with self.db.begin() as txn:
-            return txn.get(encoded_key) is not None
+    def _has(self, encoded_key):
+        return self._get(encoded_key) is not None
 
     def clear(self):
         with self.db.begin(write=True) as txn:

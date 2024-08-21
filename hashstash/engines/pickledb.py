@@ -1,16 +1,15 @@
-from .base import *
-import pickledb
+from . import *
 
 # Create or load a database
 
 
 class PickleDBHashStash(BaseHashStash):
-    engine = "sqlite"
-    filename = "db.pickledb"
+    engine = "pickledb"
     string_keys = True
     string_values = True
 
     def get_db(self):
+        import pickledb
         return DictContext(pickledb.load(self.path, True))
 
     def clear(self) -> None:

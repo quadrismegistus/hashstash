@@ -1,38 +1,37 @@
-from .base import *
+from . import *
 
-class FileHashStash(BaseHashStash):
-    engine = 'file'
-    filename = 'db_files'
+class PairtreeHashStash(BaseHashStash):
+    engine = 'pairtree'
+    filename_is_dir = True
     
     def _encode_filepath(self, encoded_key):
         hashed_key = self.hash(encoded_key)
-        dir, fname = hashed_key[:2], hashed_key[2:]
-        return os.path.join(self.path, dir, fname)
+        dir1, dir2, dir3, fname = hashed_key[:2], hashed_key[2:4], hashed_key[4:6], hashed_key[6:]
+        return os.path.join(self.path, dir1, dir2, dir3, fname)
     
-    def __setitem__(self, key: str, value: Any) -> None:
-        encoded_key = self.encode_key(key)
-        filepath = self._encode_filepath(encoded_key)
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        
-        encoded_value = self.encode_value(value)
-        
-        with open(filepath, 'wb') as f:
-            f.write(encoded_key + b'\n' + encoded_value)
+    def encode_path(self, unencoded_key):
+        encoded_key = self.encode_key(unencoded_key)
+        return self._encode_filepath(encoded_key)
 
-    def __getitem__(self, key: str) -> Any:
-        encoded_key = self.encode_key(key)
+    def _get(self, encoded_key: Union[str,bytes]) -> Any:
         filepath = self._encode_filepath(encoded_key)
         if not os.path.exists(filepath):
-            raise KeyError(key)
+            return None
         
         with open(filepath, 'rb') as f:
             f.readline() # skip key
             encoded_value = f.read()
         
-        return self.decode(encoded_value)
+        return encoded_value
 
-    def __contains__(self, key: str) -> bool:
-        encoded_key = self.encode_key(key)
+    def _set(self, encoded_key: bytes, encoded_value: bytes) -> None:
+        filepath = self._encode_filepath(encoded_key)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'wb') as f:
+            f.write(encoded_key + b'\n' + encoded_value)
+
+
+    def _has(self, encoded_key: bytes) -> bool:
         filepath = self._encode_filepath(encoded_key)
         return os.path.exists(filepath)
 
@@ -47,7 +46,7 @@ class FileHashStash(BaseHashStash):
     def _paths(self):
         for root, _, files in os.walk(self.path):
             for file in files:
-                if len(file) == 30 and file[0]!='.':
+                if file[0]!='.':
                     yield os.path.join(root, file)
 
     def _keys(self):
@@ -68,13 +67,12 @@ class FileHashStash(BaseHashStash):
                 val = f.readline().strip()
                 yield (key,val)
     
-
-    def __delitem__(self, key: str) -> None:
-        filepath = self._encode_filepath(key)
+    def _del(self, encoded_key: Union[str, bytes]) -> None:
+        filepath = self._encode_filepath(encoded_key)
         if not os.path.exists(filepath):
-            raise KeyError(key)
+            raise KeyError(encoded_key)
         os.remove(filepath)
-        
+
         # Remove empty parent directories
         dir_path = os.path.dirname(filepath)
         while dir_path != self.path:
