@@ -12,10 +12,8 @@ def time_function(func, *args, **kwargs):
 def get_data_type(obj):
     addr = get_obj_addr(obj)
     return addr
-    # return 'builtins' if addr.split('.')[0]=='builtins' else addr#.split('.')[-1]
 
-# @log.debug
-@stashed_result(serializer='jsonpickle', store_args=False)
+@stashed_result(store_args=False)
 def compare_serializers(obj, recurse=True):
     results = []
     input_size_mb = len(serialize(obj).encode()) / 1024 / 1024
