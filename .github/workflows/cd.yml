@@ -29,15 +29,21 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install .[dev]
-        pip install pytest build twine
+        pip install pytest pytest-cov build twine
     - name: Check installation
       run: pip list | grep hashstash
-    - name: Run tests
+    - name: Run tests with coverage
       run: |
-        export PYTHONPATH=$PYTHONPATH:$(pwd)
-        python -m pytest
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          pytest --cov=./ --cov-report=xml
       env:
         REDIS_URL: redis://localhost:6379
+
+    - name: Upload results to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        slug: quadrismegistus/hashstash
 
   github-release:
     name: "GitHub Release"
