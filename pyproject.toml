@@ -58,8 +58,7 @@ all = [
 engines = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
 
 [tool.setuptools]
-packages = ["hashstash"]
-package-dir = {"" = "."}
+packages = {find = {}}
 
 [tool.pytest.ini_options]
 addopts = "-v"
