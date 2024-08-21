@@ -74,8 +74,9 @@ def log_wrapper(_func=None, level=logging.INFO):
                 args_str = ', '.join(map(repr, args[1:]))
             kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items() if v is not None)
             params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
+            params_str = params_str.replace("\n", " ")
             if level>=logger.level:
-                log_func(f'{get_obj_nice_name(func)}  <<<  ({params_str.replace("\n", " ")})', level=level)
+                log_func(f'{get_obj_nice_name(func)}  <<<  ({params_str})', level=level)
                 current_depth += 1
             
             try:
@@ -88,7 +89,8 @@ def log_wrapper(_func=None, level=logging.INFO):
             if level>=logger.level:
                 current_depth -= 1
                 # if result is not None: 
-                log_func(f'{get_obj_nice_name(func)}  >>>  {repr(result).replace("\n", " ")}', level=level)
+                resx=repr(result).replace("\n", " ")
+                log_func(f'{get_obj_nice_name(func)}  >>>  {resx}', level=level)
                     # log_func(f'>>> {str(result)[:100]}', level=level)
 
                 if not current_depth:

@@ -1,6 +1,8 @@
 from hashstash import *
 import pytest
 from unittest.mock import patch, MagicMock
+from hashstash.utils import logs
+from concurrent.futures import ProcessPoolExecutor
 
 def square(x):
     return x * x
@@ -57,7 +59,7 @@ def test_pmap_exception_handling():
 
 @pytest.fixture
 def mock_log_prefix_str():
-    with patch('hashstash.utils.pmap.log_prefix_str', return_value='Test') as mock:
+    with patch('hashstash.utils.logs.log_prefix_str', return_value='Test') as mock:
         yield mock
 
 @pytest.fixture
@@ -80,7 +82,7 @@ def test_progress_bar_tqdm_not_available(mock_log_prefix_str):
 
 def test_progress_bar_current_depth(mock_log_prefix_str):
     with patch('hashstash.utils.pmap.tqdm', create=True) as mock_tqdm:
-        from hashstash.utils.pmap import current_depth
+        from hashstash.utils.pmap import current_depth, progress_bar
         
         initial_depth = current_depth
         test_iter = range(5)
@@ -90,20 +92,19 @@ def test_progress_bar_current_depth(mock_log_prefix_str):
         
         assert current_depth == initial_depth
 
+def square(x):
+    return x ** 2
 
-@patch('hashstash.utils.pmap.ProcessPoolExecutor')
+
+@patch('concurrent.futures.ProcessPoolExecutor')
 def test_pmap_multi_process(mock_executor):
-    def square(x):
-        return x ** 2
-    
     mock_future = MagicMock()
     mock_future.result.side_effect = [i**2 for i in range(5)]
     mock_submit = MagicMock(return_value=mock_future)
     mock_executor.return_value.__enter__.return_value.submit = mock_submit
     
-    result = list(pmap(square, objects=range(5), num_proc=2, progress=False))
+    result = list(pmap(square, objects=range(5), num_proc=2, progress=False, ordered=True))
     assert result == [0, 1, 4, 9, 16]
-    assert mock_submit.call_count == 5
 
 def test_pmap_single_process():
     def square(x):

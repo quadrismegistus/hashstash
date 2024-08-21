@@ -456,7 +456,7 @@ def HashStash(
         from ..engines.lmdb import LMDBHashStash
         cls = LMDBHashStash
     else:
-        raise ValueError(f"Invalid engine: {engine}. Options: {", ".join(ENGINES)}.")
+        raise ValueError(f"Invalid engine: {engine}. Options: {', '.join(ENGINES)}.")
     
     object = cls(
         name=name,
