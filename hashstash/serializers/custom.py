@@ -11,7 +11,6 @@ arr = np.array([[[1,2,3,4,5],[6,7,8,9,10]],[[11,12,13,14,15],[16,17,18,19,20]]])
 @log.debug
 def serialize_custom(obj: Any) -> str:
     serialized = _serialize_custom(obj)
-    print(serialized)
     return json.dumps(serialized)
 
 @log.debug
@@ -284,7 +283,7 @@ class FunctionSerializer(CustomSerializer):
         log.debug(f"Function closure: {obj.__closure__}")
         log.debug(f"Function free variables: {obj.__code__.co_freevars}")
 
-        if can_import_object(obj):
+        if can_import_object(obj) and obj.__module__!='__main__':
             return {'__py__': get_obj_addr(obj)}
         else:
             closure_dict = {}

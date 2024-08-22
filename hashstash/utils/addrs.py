@@ -69,6 +69,7 @@ def get_function_src(func):
 
 
 def flexible_import(obj_or_path):
+    from .logs import log
     if isinstance(obj_or_path, str):
         parts = obj_or_path.split('.')
         module = parts.pop(0)
@@ -83,7 +84,7 @@ def flexible_import(obj_or_path):
                     obj = importlib.import_module(f"{module}.{part}")
                     module = f"{module}.{part}"
                 except ImportError:
-                    print(f"Error importing {obj_or_path}: {part} not found in {module}")
+                    log.warning(f"Error importing {obj_or_path}: {part} not found in {module}")
                     return None
         return obj
     else:
@@ -116,7 +117,7 @@ def get_class_src(cls):
                 lines.extend(func_lines)
                 lines.append("")  # Add an empty line after each method
             except OSError:
-                logger.warning(f"Could not get source for method {name}")
+                log.warning(f"Could not get source for method {name}")
     
     src = "\n".join(lines)
     out = reformat_python_source(src)
@@ -150,7 +151,6 @@ def get_lambda_src(obj):
         else:
             # Fallback if regex fails
             source = f"lambda {inspect.signature(obj)}: ..."
-        print('LAMBDA SOURCE', source)
     except Exception:
         # Fallback for cases where we can't get the source
         source = f"lambda {inspect.signature(obj)}: ..."

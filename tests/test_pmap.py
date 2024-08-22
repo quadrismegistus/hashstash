@@ -3,6 +3,9 @@ import pytest
 from unittest.mock import patch, MagicMock
 from hashstash.utils import logs
 from concurrent.futures import ProcessPoolExecutor
+from hashstash.utils.pmap import pmap, _pmap_item, progress_bar
+from hashstash.engines.base import HashStash
+from hashstash.serializers.serializer import serialize, deserialize
 
 def square(x):
     return x * x
@@ -126,3 +129,62 @@ def test_pmap_error_handling():
 
     with pytest.raises(ValueError):
         list(pmap(lambda x: x, objects=[1, 2], options=[{}]))
+
+class MockHashStash:
+    def __init__(self):
+        self.storage = {}
+        self.get = MagicMock(side_effect=self._get)
+        self.set = MagicMock(side_effect=self._set)
+
+    def _get(self, key):
+        return self.storage.get(key, self.storage.get('default'))
+
+    def _set(self, key, value):
+        self.storage[key] = value
+
+def test_pmap_with_stash():
+    mock_stash = MockHashStash()
+    
+    result = list(pmap(square, objects=[1, 2, 3], num_proc=1, stash=mock_stash, progress=False))
+    assert result == [1, 4, 9]
+    assert mock_stash.set.call_count == 3
+
+def test_pmap_with_cached_results():
+    mock_stash = MockHashStash()
+    mock_stash.storage['default'] = serialize(4)  # Simulate cached result for all keys
+    
+    result = list(pmap(square, objects=[1, 2], num_proc=1, stash=mock_stash, progress=False))
+    assert result == [4, 4]  # Both results should be 4 due to caching
+    assert mock_stash.get.call_count == 2
+    assert mock_stash.set.call_count == 0  # No new results should be cached
+
+def test_pmap_item_without_stash():
+    func = serialize(square)
+    result = _pmap_item((func, [3], {}))
+    assert result == 9
+
+def test_pmap_item_with_stash():
+    mock_stash = MockHashStash()
+    
+    func = serialize(square)
+    result = _pmap_item((func, [3], {}), stash=mock_stash)
+    
+    assert result == 9
+    mock_stash.set.assert_called_once()
+
+def test_pmap_with_total():
+    result = list(pmap(square, objects=[1, 2, 3, 4], num_proc=2, total=3, progress=False))
+    assert result == [1, 4, 9]  # Should only process the first 3 items
+
+@pytest.mark.parametrize("num_proc", [1, 2, 4])
+def test_pmap_different_num_proc(num_proc):
+    result = list(pmap(square, objects=[1, 2, 3, 4], num_proc=num_proc, progress=False))
+    assert result == [1, 4, 9, 16]
+
+# def test_pmap_with_description():
+#     with patch('hashstash.utils.pmap.progress_bar') as mock_progress_bar:
+#         mock_progress_bar.side_effect = lambda iterr, **kwargs: iterr  # Simple pass-through for the iterator
+#         list(pmap(square, objects=[1, 2, 3], num_proc=2, desc="Test", progress=True))
+#         mock_progress_bar.assert_called_once()
+#         assert 'desc' in mock_progress_bar.call_args[1]
+#         assert mock_progress_bar.call_args[1]['desc'] == "Test [2x]"
