@@ -24,6 +24,8 @@ class BaseHashStash(MutableMapping):
         compress: bool = None,
         b64: bool = None,
         serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = None,
+        parent: "BaseHashStash" = None,
+        children: List["BaseHashStash"] = None,
         **kwargs,
     ) -> None:
         self.name = name if name is not None else self.name
@@ -32,6 +34,8 @@ class BaseHashStash(MutableMapping):
         self.serializer = get_working_serializers(serializer if serializer is not None else config.serializer)
         self.root_dir = root_dir if root_dir is not None else self.root_dir
         self.dbname = dbname if dbname is not None else self.dbname
+        self.parent = parent
+        self.children = [] if not children else children
         subnames = [f"{self.engine}"]
         if self.compress:
             subnames += ["compressed"]
@@ -295,8 +299,10 @@ class BaseHashStash(MutableMapping):
         return HashStashProfiler(self)
 
     def sub(self, **kwargs):
-        new_instance = self.__class__(**{**self.__dict__, **kwargs})
+        kwargs = {**self.to_dict(), **kwargs, 'parent': self}
+        new_instance = self.__class__(**kwargs)
         new_instance._lock = threading.Lock()  # Create a new lock for the new instance
+        self.children.append(new_instance)
         return new_instance
 
     def tmp(self, **kwargs):
@@ -330,9 +336,11 @@ class BaseHashStash(MutableMapping):
         **kwargs
     ):
         func_name = get_obj_addr(func)
+        print([func_name, func, dbname, update_on_src_change])
         if update_on_src_change:
-            func_name += "/" + encode_hash(get_function_str(func))#[:8]
+            func_name += "/" + encode_hash(get_function_src(func))[:10]
         stash = self.sub(dbname=f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}')
+        func.stash = stash
         return stash
 
     def assemble_ld(self, incl_func=False, incl_args=True, incl_kwargs=True):

@@ -62,6 +62,9 @@ def pmap(
     serialized_func = serialize(func)
 
     # Create a HashStash instance for caching
+    if stash is None:
+        stash = HashStash()
+    stash = stash.sub_function_results(func, dbname='pmap_result')
 
     items = [(serialized_func, obj, opt) for obj, opt in zip(objects, options)]
 
@@ -106,19 +109,21 @@ def _pmap_item(item, stash=None):
     serialized_func, args, kwargs = item
     func = deserialize(serialized_func)
 
-    if stash:
+    print('stash is',stash)
+
+    if stash is not None:
         # Create a unique key for the function call
-        key = serialize((func.__name__, args, kwargs))
+        # key = (args, kwargs)
+        key = {"args": tuple(args), "kwargs": kwargs}
 
         # Check if the result is already stashed
         cached_result = stash.get(key)
-        if cached_result is not None:
-            return deserialize(cached_result)
+        print('got cached result',cached_result)
 
     # If not cached or no cache is used, execute the function
     result = func(*args, **kwargs)
 
-    if stash:
+    if stash is not None:
         # Cache the result
         stash.set(key, result)
 

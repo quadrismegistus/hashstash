@@ -1,8 +1,6 @@
 from . import *
 
 
-
-
 @log.debug
 def stashed_result(
     _func=None,
@@ -20,14 +18,15 @@ def stashed_result(
             from ..engines.base import HashStash
             from ..utils.encodings import encode_hash
             from ..serializers import encode_hash
+
             stash = HashStash(name=name, dbname=dbname, **stash_kwargs)
-        
-        if get_obj_module(func) == '__main__':
+
+        if get_obj_module(func) == "__main__":
             update_on_src_change = True
-        
+
         stash = stash.sub_function_results(
             func,
-            dbname = dbname,
+            dbname=dbname,
             update_on_src_change=update_on_src_change,
             # *stash_args,
             **stash_kwargs,
@@ -38,11 +37,16 @@ def stashed_result(
         @wraps(func)
         def wrapper(*args, **kwargs):
             from ..serializers import serialize
+
             nonlocal force, stash, store_args
             wrapper.stash = stash
 
             local_force = kwargs.pop("_force", force)
-            key = {"func": get_obj_addr(func), "args": tuple(args), "kwargs": kwargs}
+            key = {
+                # "func": get_obj_addr(func),
+                "args": tuple(args),
+                "kwargs": kwargs,
+            }
             if not store_args:
                 key = encode_hash(stash.serialize(key))
 
@@ -108,3 +112,58 @@ class DictContext(UserDict):
 
     def __exit__(self, exc_type, exc_value, traceback):
         pass  # Nothing happens on close
+
+
+def parallelized(
+    _func=None,
+    num_proc=None,
+    progress=True,
+    desc=None,
+    ordered=True,
+    stash=None,
+    *pmap_args,
+    **pmap_kwargs,
+):
+    from .pmap import pmap
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Check if we're dealing with multiple sets of arguments
+            if args and isinstance(args[0], (list, tuple)):
+                objects = args[0]
+                if kwargs:
+                    options = [kwargs] * len(objects)
+                else:
+                    options = [{} for _ in objects]
+            else:
+                # Single function call, wrap arguments in a list
+                objects = [args]
+                options = [kwargs]
+
+            # Use pmap to execute the function(s)
+            results = pmap(
+                func,
+                objects=objects,
+                options=options,
+                num_proc=num_proc or os.cpu_count(),
+                progress=progress,
+                desc=desc or func.__name__,
+                ordered=ordered,
+                stash=stash,
+                *pmap_args,
+                **pmap_kwargs,
+            )
+
+            # Return results based on input
+            if len(objects) == 1:
+                return next(results)
+            else:
+                return list(results)
+
+        return wrapper
+
+    if _func is None:
+        return decorator
+    else:
+        return decorator(_func)

@@ -130,33 +130,21 @@ def test_pmap_error_handling():
     with pytest.raises(ValueError):
         list(pmap(lambda x: x, objects=[1, 2], options=[{}]))
 
-class MockHashStash:
-    def __init__(self):
-        self.storage = {}
-        self.get = MagicMock(side_effect=self._get)
-        self.set = MagicMock(side_effect=self._set)
-
-    def _get(self, key):
-        return self.storage.get(key, self.storage.get('default'))
-
-    def _set(self, key, value):
-        self.storage[key] = value
-
 def test_pmap_with_stash():
-    mock_stash = MockHashStash()
-    
-    result = list(pmap(square, objects=[1, 2, 3], num_proc=1, stash=mock_stash, progress=False))
+    stash = HashStash().tmp()
+    result = list(pmap(square, objects=[1, 2, 3], num_proc=1, stash=stash, progress=False))
+    func_stash = square.stash
     assert result == [1, 4, 9]
-    assert mock_stash.set.call_count == 3
-
-def test_pmap_with_cached_results():
-    mock_stash = MockHashStash()
-    mock_stash.storage['default'] = serialize(4)  # Simulate cached result for all keys
+    assert len(func_stash) == 3  # Check if 3 items were stored in the function's stash
+    assert len(stash) == 0  # The main stash should remain empty
     
-    result = list(pmap(square, objects=[1, 2], num_proc=1, stash=mock_stash, progress=False))
-    assert result == [4, 4]  # Both results should be 4 due to caching
-    assert mock_stash.get.call_count == 2
-    assert mock_stash.set.call_count == 0  # No new results should be cached
+    # Check if the function's stash is a sub-stash of the main stash
+    assert func_stash.parent == stash
+    
+    # Verify that the results are in the function's stash
+    print(func_stash.keys_l())
+    assert all(func_stash.get({'args':(i,), 'kwargs':{}}) == (i**2) for i in [1, 2, 3])
+
 
 def test_pmap_item_without_stash():
     func = serialize(square)
@@ -164,13 +152,13 @@ def test_pmap_item_without_stash():
     assert result == 9
 
 def test_pmap_item_with_stash():
-    mock_stash = MockHashStash()
+    stash = HashStash().tmp()
     
     func = serialize(square)
-    result = _pmap_item((func, [3], {}), stash=mock_stash)
+    result = _pmap_item((func, [3], {}), stash=stash)
     
     assert result == 9
-    mock_stash.set.assert_called_once()
+    assert len(stash) == 1  # Check if one item was stored in the stash
 
 def test_pmap_with_total():
     result = list(pmap(square, objects=[1, 2, 3, 4], num_proc=2, total=3, progress=False))
