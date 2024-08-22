@@ -8,7 +8,7 @@ import random
 import time
 import pytest
 import pandas as pd
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 start_redis_server()
 
@@ -391,7 +391,8 @@ class TestHashStash:
 
         result = test_func(5)
         assert result == 10
-        assert test_func.stash[{"func": test_func, "args": (5,), "kwargs": {}}] == 10
+        # assert test_func.stash.keys_l()[0]['func'](5) == 10
+        assert test_func.stash[{"func": get_obj_addr(test_func), "args": (5,), "kwargs": {}}] == 10
 
     def test_sub_function_results(self, cache):
         def test_func(x):

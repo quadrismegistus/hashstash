@@ -5,6 +5,7 @@ import functools
 
 def get_serializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = DEFAULT_SERIALIZER):
     serializer_dict = {
+        "custom": serialize_custom,
         "jsonpickle": serialize_jsonpickle,
         "jsonpickle_ext": serialize_jsonpickle_ext,
         "orjson": serialize_orjson,
@@ -19,6 +20,7 @@ def get_serializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] =
 
 def get_deserializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = SERIALIZER_TYPES.__args__):
     deserializer_dict = {
+        "custom": deserialize_custom,
         "jsonpickle": deserialize_jsonpickle,
         "jsonpickle_ext": deserialize_jsonpickle_ext,
         "orjson": deserialize_orjson,
@@ -48,6 +50,7 @@ def serialize(obj, serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] =
             )
         except Exception as e:
             log.warning(f"Serialization failed with {serializer_func.__name__}: {str(e)}")
+            raise e
     
     raise ValueError("All serialization attempts failed")
 
@@ -67,6 +70,7 @@ def deserialize(data, serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]
             return odata
         except Exception as e:
             log.warning(f"Deserialization failed with {deserializer_func.__name__}: {str(e)}")
+            raise e
     
     raise ValueError("All deserialization attempts failed")
 

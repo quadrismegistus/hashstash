@@ -76,7 +76,7 @@ def log_wrapper(_func=None, level=logging.INFO):
             params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
             params_str = params_str.replace("\n", " ")
             if level>=logger.level:
-                log_func(f'{get_obj_nice_name(func)}  <<<  ({params_str})', level=level)
+                log_func(f'{get_obj_nice_name(func)}  <<<  {params_str}', level=level)
                 current_depth += 1
             
             try:

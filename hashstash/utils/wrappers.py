@@ -42,7 +42,7 @@ def stashed_result(
             wrapper.stash = stash
 
             local_force = kwargs.pop("_force", force)
-            key = {"func": func, "args": tuple(args), "kwargs": kwargs}
+            key = {"func": get_obj_addr(func), "args": tuple(args), "kwargs": kwargs}
             if not store_args:
                 key = encode_hash(stash.serialize(key))
 

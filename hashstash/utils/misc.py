@@ -24,11 +24,11 @@ def ensure_dir(path):
     return os.makedirs(path, exist_ok=True)
 
 def reset_index(df):
+    import pandas as pd
     index = [x for x in df.index.names if x is not None]
-    if index:
-        df = df.reset_index()
-    return df
-    
+    df = df.reset_index() if index else df.rename_axis('_index').reset_index()
+    return df, index if index else ['_index']
+
 def is_dataframe(obj):
     addr = get_obj_addr(obj)
     return addr.startswith('pandas.') and addr.endswith('.DataFrame')
