@@ -36,3 +36,12 @@ def is_dataframe(obj):
 def get_fn_ext(fn):
     # without period
     return fn.split('.')[-1]
+
+class ReusableGenerator:
+    def __init__(self, func, *args, **kwargs):
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+
+    def __iter__(self):
+        return self.func(*self.args, **self.kwargs)

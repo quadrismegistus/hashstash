@@ -62,9 +62,11 @@ def pmap(
     serialized_func = serialize(func)
 
     # Create a HashStash instance for caching
-    if stash is None:
-        stash = HashStash()
-    stash = stash.sub_function_results(func, dbname='pmap_result')
+    if stash is not None:
+        func_stash = stash.sub_function_results(func, dbname='pmap_result')
+        func.stash = func_stash
+    else:
+        func_stash = None
 
     items = [(serialized_func, obj, opt) for obj, opt in zip(objects, options)]
 
@@ -73,34 +75,37 @@ def pmap(
 
     iterator = range(len(items)) if total is None else range(total)
 
-    with ProcessPoolExecutor(max_workers=num_proc, initializer=init_worker) as executor:
-        futures = [executor.submit(_pmap_item, item, stash) for item in items]
+    def yield_results():
+        with ProcessPoolExecutor(max_workers=num_proc, initializer=init_worker) as executor:
+            futures = [executor.submit(_pmap_item, item, func_stash) for item in items]
 
-        try:
-            for _ in progress_bar(iterator, desc=desc, progress=progress):
-                if num_proc == 1:
-                    # Single-process: use a simple map
-                    yield _pmap_item(items[_], stash)
-                else:
-                    # Multi-process: use ProcessPoolExecutor
-                    if ordered:
-                        yield futures[_].result()
+            try:
+                for _ in progress_bar(iterator, desc=desc, progress=progress):
+                    if num_proc == 1:
+                        # Single-process: use a simple map
+                        yield _pmap_item(items[_], func_stash)
                     else:
-                        done, _ = wait(futures, return_when=FIRST_COMPLETED)
-                        for future in done:
-                            yield future.result()
-                            futures.remove(future)
-        except KeyboardInterrupt as e:
-            log.error(f"Caught {e}, terminating workers")
-            executor.shutdown(wait=False, cancel_futures=True)
-            raise
-        except Exception as e:
-            log.error(f"Caught {e}, terminating workers")
-            executor.shutdown(wait=False, cancel_futures=True)
-            raise
-        finally:
-            for future in futures:
-                future.cancel()
+                        # Multi-process: use ProcessPoolExecutor
+                        if ordered:
+                            yield futures[_].result()
+                        else:
+                            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                            for future in done:
+                                yield future.result()
+                                futures.remove(future)
+            except KeyboardInterrupt as e:
+                log.error(f"Caught {e}, terminating workers")
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+            except Exception as e:
+                log.error(f"Caught {e}, terminating workers")
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+            finally:
+                for future in futures:
+                    future.cancel()
+    
+    return iter(yield_results())
 
 
 def _pmap_item(item, stash=None):
@@ -108,8 +113,6 @@ def _pmap_item(item, stash=None):
 
     serialized_func, args, kwargs = item
     func = deserialize(serialized_func)
-
-    print('stash is',stash)
 
     if stash is not None:
         # Create a unique key for the function call
@@ -154,4 +157,8 @@ def progress_bar(iterr, progress=True, **kwargs):
         finally:
             current_depth -= 1
 
+
+
+
 pmap.progress_bar = progress_bar
+

@@ -1,5 +1,6 @@
 from . import *
 
+
 class BaseHashStash(MutableMapping):
     engine = "base"
     name = DEFAULT_NAME
@@ -26,16 +27,20 @@ class BaseHashStash(MutableMapping):
         serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = None,
         parent: "BaseHashStash" = None,
         children: List["BaseHashStash"] = None,
+        is_function_stash=None,
         **kwargs,
     ) -> None:
         self.name = name if name is not None else self.name
         self.compress = compress if compress is not None else config.compress
         self.b64 = b64 if b64 is not None else config.b64
-        self.serializer = get_working_serializers(serializer if serializer is not None else config.serializer)
+        self.serializer = get_working_serializers(
+            serializer if serializer is not None else config.serializer
+        )
         self.root_dir = root_dir if root_dir is not None else self.root_dir
         self.dbname = dbname if dbname is not None else self.dbname
         self.parent = parent
         self.children = [] if not children else children
+        self.is_function_stash = is_function_stash
         subnames = [f"{self.engine}"]
         if self.compress:
             subnames += ["compressed"]
@@ -52,7 +57,9 @@ class BaseHashStash(MutableMapping):
             self.dbname,
             ".".join(subnames),
         )
-        self.path_dirname = self.path if self.filename_is_dir else os.path.dirname(self.path)
+        self.path_dirname = (
+            self.path if self.filename_is_dir else os.path.dirname(self.path)
+        )
         if self.ensure_dir:
             os.makedirs(self.path_dirname, exist_ok=True)
 
@@ -113,7 +120,7 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __getitem__(self, unencoded_key: str) -> Any:
-        obj = self.get(unencoded_key)
+        obj = self.get_(unencoded_key)
         if obj is None:
             raise KeyError(unencoded_key)
         return obj
@@ -123,8 +130,25 @@ class BaseHashStash(MutableMapping):
         self.set(unencoded_key, unencoded_value)
 
     @log.debug
-    def get(self, unencoded_key: Any, default: Any = None) -> Any:
+    def get(self, unencoded_key: Any, default: Any = None, as_function=None,  *args, **kwargs) -> Any:
+        if self.is_function_stash and as_function is not False:
+            return self.get_func(
+                *[unencoded_key] + list(args),
+                default=default,
+                **kwargs,
+            )
+        return self.get_(unencoded_key, default=default)        
+    
+    def get_(self, unencoded_key: Any, *args, default: Any = None, as_function=None, **kwargs) -> Any:
         unencoded_value = self._get(self.encode_key(unencoded_key))
+        if unencoded_value is None:
+            return default
+        return self.decode_value(unencoded_value)
+
+    @log.debug
+    def get_func(self, *args, default=None, **kwargs):
+        key = {"args": tuple(args), "kwargs": kwargs}
+        unencoded_value = self._get(self.encode_key(key))
         if unencoded_value is None:
             return default
         return self.decode_value(unencoded_value)
@@ -234,6 +258,7 @@ class BaseHashStash(MutableMapping):
                 yield self.decode_key(k), self.decode_value(v)
             except Exception as e:
                 log.error(f"Error decoding item: {e}")
+
     def keys_l(self):
         return list(self.keys())
 
@@ -299,7 +324,7 @@ class BaseHashStash(MutableMapping):
         return HashStashProfiler(self)
 
     def sub(self, **kwargs):
-        kwargs = {**self.to_dict(), **kwargs, 'parent': self}
+        kwargs = {**self.to_dict(), **kwargs, "parent": self}
         new_instance = self.__class__(**kwargs)
         new_instance._lock = threading.Lock()  # Create a new lock for the new instance
         self.children.append(new_instance)
@@ -312,7 +337,7 @@ class BaseHashStash(MutableMapping):
             **dict(
                 root_dir=tempfile.mkdtemp(),
                 dbname=f"{uuid.uuid4().hex[:10]}",
-                name='tmp'
+                name="tmp",
             ),
         }
         return self.sub(**kwargs)
@@ -327,34 +352,42 @@ class BaseHashStash(MutableMapping):
     def __reduce__(self):
         # Return a tuple of (callable, args) that allows recreation of this object
         return (self.__class__.from_dict, (self.to_dict(),))
-    
+
     def sub_function_results(
-        self,
-        func,
-        dbname=None,
-        update_on_src_change=False,
-        **kwargs
+        self, func, dbname=None, update_on_src_change=False, **kwargs
     ):
+        # import types
+
         func_name = get_obj_addr(func)
         print([func_name, func, dbname, update_on_src_change])
         if update_on_src_change:
             func_name += "/" + encode_hash(get_function_src(func))[:10]
-        stash = self.sub(dbname=f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}')
+        stash = self.sub(
+            dbname=f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}',
+            is_function_stash=True,
+        )
         func.stash = stash
+
+        # Bind the new methods to the instance
+        # stash.get = types.MethodType(get_func, stash)
+        # stash.encode_key = types.MethodType(encode_key_func, stash)
+
         return stash
 
     def assemble_ld(self, incl_func=False, incl_args=True, incl_kwargs=True):
-        
+
         ld = []
-        for k, v in progress_bar(self.items(), total=len(self), desc='assembling all data from stash'):
+        for k, v in progress_bar(
+            self.items(), total=len(self), desc="assembling all data from stash"
+        ):
             ind = {}
-            
+
             if type(k) is dict:
-                if incl_func and 'func' in k:
-                    ind['_func'] = get_obj_addr(k['func'])
-                args = k.get('args', [])
-                argd = {f'_arg{i+1}': arg for i, arg in enumerate(args)}
-                kwargs = {f'_{k2}':v2 for k2,v2 in k.get('kwargs', {}).items()}
+                if incl_func and "func" in k:
+                    ind["_func"] = get_obj_addr(k["func"])
+                args = k.get("args", [])
+                argd = {f"_arg{i+1}": arg for i, arg in enumerate(args)}
+                kwargs = {f"_{k2}": v2 for k2, v2 in k.get("kwargs", {}).items()}
                 attrd = {}
                 if incl_args:
                     attrd.update(argd)
@@ -362,46 +395,50 @@ class BaseHashStash(MutableMapping):
                     attrd.update(kwargs)
                 ind.update(attrd)
             else:
-                ind['_key'] = k
-            
+                ind["_key"] = k
+
             if isinstance(v, dict):
                 row = {**ind, **v}
                 ld.append(row)
             elif isinstance(v, list):
-                for item in progress_bar(v, desc='iterating list',progress=False):
+                for item in progress_bar(v, desc="iterating list", progress=False):
                     if isinstance(item, dict):
                         row = {**ind, **item}
                     else:
-                        row = {**ind, 'result': item}
+                        row = {**ind, "result": item}
                     ld.append(row)
             elif is_dataframe(v):
-                for _,item in progress_bar(v.iterrows(), total=len(v),desc='iterating dataframe result',progress=False):
+                for _, item in progress_bar(
+                    v.iterrows(),
+                    total=len(v),
+                    desc="iterating dataframe result",
+                    progress=False,
+                ):
                     row = {**ind, **dict(item)}
                     ld.append(row)
             else:
-                row = {**ind, 'result': v}
+                row = {**ind, "result": v}
                 ld.append(row)
-        
+
         return ld
-    
+
     def assemble_df(self, **kwargs):
         import pandas as pd
+
         ld = self.assemble_ld(**kwargs)
-        if not ld: return pd.DataFrame()
-        df=pd.DataFrame(ld)
-        index = [k for k in df if k.startswith('_')]
-        return df#.set_index(index).sort_index()
-        
-    
+        if not ld:
+            return pd.DataFrame()
+        df = pd.DataFrame(ld)
+        index = [k for k in df if k.startswith("_")]
+        return df  # .set_index(index).sort_index()
+
     @property
     def df(self):
         return self.assemble_df()
-    
+
     def __hash__(self):
         # Use a combination of class name and path for hashing
         return hash(tuple(sorted(self.to_dict().items())))
-
-
 
 
 # @fcache
@@ -429,12 +466,13 @@ def HashStash(
     Raises:
         ValueError: If an invalid engine is provided.
     """
-    log.info(f'HashStash({name}/{dbname})')
+    log.info(f"HashStash({name}/{dbname})")
 
     engine = engine if engine is not None else config.engine
 
     if engine == "pairtree":
         from .pairtree import PairtreeHashStash
+
         cls = PairtreeHashStash
     elif engine == "sqlite":
         from ..engines.sqlite import SqliteHashStash
@@ -462,18 +500,20 @@ def HashStash(
         cls = DiskCacheHashStash
     elif engine == "lmdb":
         from ..engines.lmdb import LMDBHashStash
+
         cls = LMDBHashStash
     else:
         raise ValueError(f"Invalid engine: {engine}. Options: {', '.join(ENGINES)}.")
-    
+
     object = cls(
         name=name,
         compress=compress,
         b64=b64,
         serializer=serializer,
         dbname=dbname,
-        **kwargs
+        **kwargs,
     )
     return object
+
 
 Stash = HashStash

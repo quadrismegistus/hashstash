@@ -1,7 +1,7 @@
 from . import *
 # from ..serializers import deserialize, serialize
 
-@log.debug
+# @log.debug
 def encode(data: Union[str, bytes], b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
     if not isinstance(data, (str,bytes)):
         raise ValueError("Input data must be either a string or bytes.")
@@ -16,7 +16,7 @@ def _encode(data_b:bytes, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=
 
     return data_b if not as_string else data_b.decode('utf-8')
 
-@log.debug
+# @log.debug
 def decode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
     data_b = data.encode() if isinstance(data, str) else data
     data_b = _decode(data_b, b64=b64, compress=compress)

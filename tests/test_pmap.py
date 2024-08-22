@@ -143,7 +143,7 @@ def test_pmap_with_stash():
     
     # Verify that the results are in the function's stash
     print(func_stash.keys_l())
-    assert all(func_stash.get({'args':(i,), 'kwargs':{}}) == (i**2) for i in [1, 2, 3])
+    assert all(func_stash.get(i) == (i**2) for i in [1, 2, 3])
 
 
 def test_pmap_item_without_stash():

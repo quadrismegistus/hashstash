@@ -7,6 +7,9 @@ def get_obj_module(obj):
     return type(obj).__module__
 
 def get_obj_addr(obj):
+    if isinstance(obj, types.BuiltinFunctionType):
+        return f"builtins.{obj.__name__}"
+    
     if isinstance(obj, types.FunctionType):
         # Handle functions and unbound methods
         if hasattr(obj, '__qualname__'):
@@ -31,6 +34,8 @@ def get_obj_addr(obj):
     return f'{module}.{name}'
 
 def get_obj_name(obj):
+    if isinstance(obj, (types.FunctionType, types.MethodType, types.BuiltinFunctionType)):
+        return obj.__name__
     if isinstance(obj, type):
         return obj.__name__
     if hasattr(obj, '__class__'):
@@ -38,10 +43,9 @@ def get_obj_name(obj):
     return type(obj).__name__
 
 def get_obj_nice_name(obj):
-    return '.'.join(get_obj_addr(obj).split('.')[-2:]) if get_obj_module(obj) != 'builtins' else get_obj_name(obj)
-
-
-
+    if get_obj_module(obj) == 'builtins':
+        return get_obj_name(obj)
+    return '.'.join(get_obj_addr(obj).split('.')[-2:])
 
 def get_function_src(func):
     if func.__name__ == '<lambda>':
@@ -157,5 +161,7 @@ def get_lambda_src(obj):
     return source
 
 def can_import_object(obj):
-    return flexible_import(obj) is not None
-
+    try:
+        return flexible_import(obj) is not None
+    except ImportError:
+        return False

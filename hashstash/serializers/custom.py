@@ -6,15 +6,16 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from ..utils.misc import ReusableGenerator
 
 arr = np.array([[[1,2,3,4,5],[6,7,8,9,10]],[[11,12,13,14,15],[16,17,18,19,20]]])
 
-@log.debug
+# @log.debug
 def serialize_custom(obj: Any) -> str:
     serialized = _serialize_custom(obj)
     return json.dumps(serialized)
 
-@log.debug
+# @log.debug
 def _serialize_custom(obj: Any) -> Any:
     if obj is None:
         return None
@@ -453,6 +454,23 @@ class PathSerializer(CustomSerializer):
     def deserialize(data):
         return Path(data['__data__'])
 
+class ReusableGeneratorSerializer(CustomSerializer):
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': get_obj_addr(obj),
+            '__func__': FunctionSerializer.serialize(obj.func),
+            '__args__': _serialize_custom(obj.args),
+            '__kwargs__': _serialize_custom(obj.kwargs)
+        }
+
+    @staticmethod
+    def deserialize(data):
+        func = FunctionSerializer.deserialize(data['__func__'])
+        args = _deserialize_custom(data['__args__'])
+        kwargs = _deserialize_custom(data['__kwargs__'])
+        return ReusableGenerator(func, *args, **kwargs)
+
 CUSTOM_SERIALIZERS = {
     'pandas.core.frame.DataFrame': PandasDataFrameSerializer.serialize,
     'pandas.core.series.Series': PandasSeriesSerializer.serialize,
@@ -468,6 +486,7 @@ CUSTOM_SERIALIZERS = {
     'types.GeneratorType': GeneratorSerializer.serialize,
     'pathlib.PosixPath': PathSerializer.serialize,
     'pathlib.WindowsPath': PathSerializer.serialize,
+    'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.serialize,
 }
 
 CUSTOM_DESERIALIZERS = {
@@ -484,4 +503,5 @@ CUSTOM_DESERIALIZERS = {
     'types.GeneratorType': GeneratorSerializer.deserialize,
     'pathlib.PosixPath': PathSerializer.deserialize,
     'pathlib.WindowsPath': PathSerializer.deserialize,
+    'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.deserialize,
 }

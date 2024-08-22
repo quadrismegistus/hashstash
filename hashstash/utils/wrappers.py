@@ -12,6 +12,7 @@ def stashed_result(
     store_args=True,
     **stash_kwargs,
 ):
+    @log.info
     def decorator(func: Callable) -> Callable:
         nonlocal stash, update_on_src_change, force
         if stash is None:
@@ -34,9 +35,11 @@ def stashed_result(
 
         func.stash = stash
 
+        @log.info
         @wraps(func)
         def wrapper(*args, **kwargs):
             from ..serializers import serialize
+            from .misc import ReusableGenerator
 
             nonlocal force, stash, store_args
             wrapper.stash = stash
@@ -50,10 +53,13 @@ def stashed_result(
             if not store_args:
                 key = encode_hash(stash.serialize(key))
 
+
             # find it?
-            if not local_force and key in stash:
-                log.debug(f"Stash hit for {func.__name__}. Returning stashd result.")
-                return stash[key]
+            if not local_force:
+                res = stash.get(key,as_function=False)
+                if res is not None:
+                    log.debug(f"Stash hit for {func.__name__}. Returning stashed result.")
+                    return res
 
             # didn't find
             note = "Forced execution" if local_force else "Stash miss"
@@ -61,8 +67,8 @@ def stashed_result(
 
             # call func
             result = func(*args, **kwargs)
-
-            # stash
+            is_generator = inspect.isgenerator(result) or isinstance(result,ReusableGenerator)
+            result = list(result) if is_generator else result
             log.debug(f"Caching result for {func.__name__}.")
             stash[key] = result
             return result
@@ -113,7 +119,7 @@ class DictContext(UserDict):
     def __exit__(self, exc_type, exc_value, traceback):
         pass  # Nothing happens on close
 
-
+@log.info
 def parallelized(
     _func=None,
     num_proc=None,
@@ -121,45 +127,62 @@ def parallelized(
     desc=None,
     ordered=True,
     stash=None,
+    stashed=False,
+    update_on_src_change=False,
     *pmap_args,
     **pmap_kwargs,
 ):
     from .pmap import pmap
 
     def decorator(func):
+        nonlocal stash
+        if stash is None and stashed:
+            from ..engines.base import HashStash
+            stash = HashStash()
+        
+        if stashed:
+            if get_obj_module(func) == "__main__":
+                update_on_src_change = True
+            func_stash = stash.sub_function_results(func, dbname='pmap_result', update_on_src_change=update_on_src_change)
+            func.stash = func_stash
+        else:
+            func_stash = None
+
         @wraps(func)
         def wrapper(*args, **kwargs):
+            nonlocal func_stash
+
             # Check if we're dealing with multiple sets of arguments
             if args and isinstance(args[0], (list, tuple)):
+                log.info('parallelizing')
                 objects = args[0]
                 if kwargs:
                     options = [kwargs] * len(objects)
                 else:
                     options = [{} for _ in objects]
-            else:
-                # Single function call, wrap arguments in a list
-                objects = [args]
-                options = [kwargs]
 
-            # Use pmap to execute the function(s)
-            results = pmap(
-                func,
-                objects=objects,
-                options=options,
-                num_proc=num_proc or os.cpu_count(),
-                progress=progress,
-                desc=desc or func.__name__,
-                ordered=ordered,
-                stash=stash,
-                *pmap_args,
-                **pmap_kwargs,
-            )
-
-            # Return results based on input
-            if len(objects) == 1:
-                return next(results)
+                # Use pmap to execute the function(s)
+                results = pmap(
+                    func,
+                    objects=objects,
+                    options=options,
+                    num_proc=num_proc or os.cpu_count(),
+                    progress=progress,
+                    desc=desc or func.__name__,
+                    ordered=ordered,
+                    stash=func_stash,
+                    *pmap_args,
+                    **pmap_kwargs,
+                )
+                return list(results)  # Convert generator to list
             else:
-                return list(results)
+                # Single function call
+                if func_stash is not None:
+                    log.info('getting from stash')
+                    res = func_stash.get(args, kwargs)  # Changed from func_stash.get(*args, **kwargs)
+                else:
+                    res = None
+                return func(*args, **kwargs) if res is None else res
 
         return wrapper
 

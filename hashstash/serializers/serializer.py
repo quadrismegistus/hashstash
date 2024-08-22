@@ -34,7 +34,7 @@ def get_deserializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]]
     return [deserializer_dict[s] for s in serializer if s in deserializer_dict]
 
 
-@log.debug
+# @log.debug
 def serialize(obj, serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = None, as_string=False):
     if serializer is None:
         serializer = config.serializer

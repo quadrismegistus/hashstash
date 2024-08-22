@@ -391,8 +391,8 @@ class TestHashStash:
 
         result = test_func(5)
         assert result == 10
-        # assert test_func.stash.keys_l()[0]['func'](5) == 10
-        assert test_func.stash[{"func": get_obj_addr(test_func), "args": (5,), "kwargs": {}}] == 10
+        assert test_func.stash[{"args": (5,), "kwargs": {}}] == 10
+        assert test_func.stash.get(5) == 10
 
     def test_sub_function_results(self, cache):
         def test_func(x):
@@ -495,7 +495,7 @@ def redis_client():
 def test_start_redis_server():
     # In GitHub Actions, Redis is already running, so this should just connect
     start_redis_server()
-    time.sleep(30)
+    time.sleep(10)
     start_redis_server()
     
     # Verify that we can connect to Redis

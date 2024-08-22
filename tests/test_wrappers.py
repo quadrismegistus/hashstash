@@ -28,7 +28,7 @@ def incrementing_function():
     global counter
     counter += 1
     return counter
-
+logger.setLevel(logging.DEBUG)
 def test_stashed_result_force():
     global counter
     counter = 0  # Reset counter at the start of the test
@@ -68,6 +68,63 @@ def test_retry_patiently_success():
     result = eventually_succeeding_function()
     assert result == "Success"
     assert counter == 3
+
+# Test parallelized decorator
+def test_parallelized():
+    @parallelized
+    def parallel_function(x):
+        return x * 2
+
+    result = parallel_function([1, 2, 3, 4])
+    assert result == [2, 4, 6, 8]
+
+def test_parallelized_single_input():
+    @parallelized
+    def parallel_function(x):
+        return x * 2
+
+    result = parallel_function(5)
+    assert result == 10
+
+def test_parallelized_with_stashed_result():
+    tmp = Stash().tmp()
+
+    @tmp.stashed_result
+    @parallelized
+    def parallel_stashed_function(x):
+        return x * 2
+
+    # First call
+    result1 = parallel_stashed_function([1, 2, 3, 4])
+    assert result1 == [2, 4, 6, 8]
+
+    # Second call (should be cached)
+    result2 = parallel_stashed_function([1, 2, 3, 4])
+    assert result2 == [2, 4, 6, 8]
+
+    # Different input
+    result3 = parallel_stashed_function([5, 6, 7, 8])
+    assert result3 == [10, 12, 14, 16]
+
+def test_parallelized_with_stashed_result_single_input():
+    tmp = Stash().tmp()
+
+    @tmp.stashed_result
+    @parallelized
+    def parallel_stashed_function(x):
+        return x * 2
+
+    # First call
+    result1 = parallel_stashed_function(5)
+    assert result1 == 10
+
+    # Second call (should be cached)
+    result2 = parallel_stashed_function(5)
+    assert result2 == 10
+
+    # Different input
+    result3 = parallel_stashed_function(7)
+    assert result3 == 14
 
 if __name__ == "__main__":
     pytest.main()
