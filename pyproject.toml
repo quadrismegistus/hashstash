@@ -38,7 +38,7 @@ diskcache = ["diskcache"]
 pandas = ["pandas", "numpy"]
 polars = ["pandas", "polars", "numpy"]
 filebased = [
-  "pandas", "polars", "numpy", "pyarrow","fastparquet", #"dataframe",
+  "pandas", "polars", "numpy", "pyarrow","fastparquet", 
   "sqlitedict", 
   "diskcache",
   "lmdb"
@@ -47,7 +47,7 @@ servers = [
   "redis", "redis_dict", "pymongo",
 ]
 engines = [
-    "pandas", "polars", "numpy", "pyarrow","fastparquet", #"dataframe",
+    "pandas", "polars", "numpy", "pyarrow","fastparquet",
     "lmdb",
     "sqlitedict",
     "diskcache", 
@@ -56,7 +56,7 @@ engines = [
 ]
 dev = [
   # engines
-  "pandas", "polars", "numpy", "pyarrow","fastparquet", #"dataframe",
+  "pandas", "polars", "numpy", "pyarrow","fastparquet",
   "lmdb",
   "sqlitedict",
   "diskcache", 
@@ -90,9 +90,6 @@ all = [
   # utils
   "tqdm", 
   "plotnine",
-
-  # dev tools
-  "pytest", "pytest-cov", "setuptools-scm", "ipython", 
 ]
 
 [tool.setuptools]
