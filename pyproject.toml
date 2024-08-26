@@ -27,35 +27,18 @@ version = {attr = "hashstash.__version__"}
 
 [project.optional-dependencies]
 dev = [
-  "sqlitedict", 
-  "redis", 
-  "redis_dict", 
-  "diskcache", 
-  "lmdb", 
-  "pickledb", 
-  "orjson",
-  "pandas", 
-  "numpy", 
-  "tqdm",
-  "plotnine",
-  "pytest", 
-  "pytest-cov", 
-  "setuptools-scm", 
-  "ipython", 
+  "sqlitedict", "redis", "redis_dict", "diskcache",  "lmdb", "pickledb", "pymongo",
+  "orjson", "pandas", "polars", "numpy", 
+  "tqdm", "plotnine",
+  "pytest", "pytest-cov", "setuptools-scm", "ipython", 
 ]
 all = [
-  "sqlitedict", 
-  "redis", 
-  "redis_dict", 
-  "diskcache", 
-  "lmdb", 
-  "pickledb", 
-  "orjson",
-  "pandas", 
-  "numpy", 
-  "tqdm"
+  "sqlitedict", "redis", "redis_dict", "diskcache",  "lmdb", "pickledb", "pymongo",
+  "orjson", "pandas", "polars", "numpy", 
+  "tqdm", "plotnine",
+  # "pytest", "pytest-cov", "setuptools-scm", "ipython", 
 ]
-engines = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
+engines = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb", "pymongo"]
 
 [tool.setuptools]
 packages = {find = {}}
