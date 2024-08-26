@@ -1,6 +1,6 @@
 from . import *
 
-@log.info
+@log.debug
 def attach_stash_to_function(func, stash = None, **stash_kwargs):
     from ..engines.base import HashStash
     if stash is None:

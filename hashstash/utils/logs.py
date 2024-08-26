@@ -115,14 +115,14 @@ def log_time_taken(reset=True):
 
 def log_time_taken_str(reset=True):
     timetaken = log_time_taken(reset=reset)
-    return f'[{timetaken:.2f}s]'
+    return f'[{timetaken:.2f}s] ' if timetaken > 0.1 else ''
 
 def log_indent_str():
     global current_depth
     return indenter * current_depth
 
 def log_prefix_str(message='', reset=True):
-    return  f'{log_time_taken_str(reset=reset)}{log_indent_str()}{" "+str(message) if message else ""}'
+    return  f'{log_time_taken_str(reset=reset)}{log_indent_str()}{message}'
 
 
 def log_func(message, level=logging.DEBUG, maxlen=None):

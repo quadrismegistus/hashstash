@@ -11,6 +11,7 @@ import pandas as pd
 # logger.setLevel(logging.DEBUG)
 
 start_redis_server() # run at beginning of tests
+start_mongo_server() # run at beginning of tests
 
 TEST_CLASSES = [
     DataFrameHashStash,
@@ -597,6 +598,16 @@ def test_start_redis_server():
     # Verify that we can connect to Redis
     client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
     assert client.ping()
+
+def test_start_mongo_server():
+    start_mongo_server()
+    time.sleep(5)
+    start_mongo_server()
+    
+    # Verify that we can connect to Redis
+    from pymongo import MongoClient
+    client = MongoClient(host=MONGO_HOST, port=MONGO_PORT)
+    assert client.admin.command('ping')['ok'] == 1
 
 def test_encode_path():
     cache = HashStash(engine='pairtree')

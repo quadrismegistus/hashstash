@@ -161,6 +161,7 @@ class BaseHashStash(MutableMapping):
     @retry_patiently()
     def get_connection(self):
         if self.path not in self._connection_pool:
+            log.info(f'Opening {self.engine} at {self.path}')
             self._connection_pool[self.path] = self.get_db()
             self._last_used[self.path] = time.time()
         try:
@@ -537,7 +538,7 @@ class BaseHashStash(MutableMapping):
 
         return HashStashProfiler(self)
 
-    @log.info
+    @log.debug
     def sub(self, **kwargs):
         kwargs = {**self.to_dict(), **kwargs, "parent": self}
         new_instance = self.__class__(**kwargs)
@@ -577,7 +578,7 @@ class BaseHashStash(MutableMapping):
         # Return a tuple of (callable, args) that allows recreation of this object
         return (self.__class__.from_dict, (self.to_dict(),))
 
-    @log.info
+    @log.debug
     def sub_function_results(
         self, func, dbname=None, update_on_src_change=False, **kwargs
     ):
@@ -682,44 +683,72 @@ def HashStash(
     """
     engine = engine if engine is not None else config.engine
 
+    working_engines = set(BUILTIN_ENGINES)
+
     if engine == "pairtree":
         from .pairtree import PairtreeHashStash
-
         cls = PairtreeHashStash
     elif engine == "sqlite":
-        from ..engines.sqlite import SqliteHashStash
-
-        cls = SqliteHashStash
+        try:
+            import sqlitedict
+            working_engines.add('sqlite')
+            from ..engines.sqlite import SqliteHashStash
+            cls = SqliteHashStash
+        except ImportError:
+            pass
     elif engine == "memory":
         from ..engines.memory import MemoryHashStash
-
         cls = MemoryHashStash
     elif engine == "shelve":
         from ..engines.shelve import ShelveHashStash
-
         cls = ShelveHashStash
     elif engine == "redis":
-        from ..engines.redis import RedisHashStash
-
-        cls = RedisHashStash
+        try:
+            import redis
+            import redis_dict
+            working_engines.add('redis')
+            from ..engines.redis import RedisHashStash
+            cls = RedisHashStash
+        except ImportError:
+            pass
     elif engine == "diskcache":
-        from ..engines.diskcache import DiskCacheHashStash
-
-        cls = DiskCacheHashStash
+        try:
+            import diskcache
+            working_engines.add('diskcache')
+            from ..engines.diskcache import DiskCacheHashStash
+            cls = DiskCacheHashStash
+        except ImportError:
+            pass
     elif engine == "lmdb":
-        from ..engines.lmdb import LMDBHashStash
-
-        cls = LMDBHashStash
+        try:
+            import lmdb
+            working_engines.add('lmdb')
+            from ..engines.lmdb import LMDBHashStash
+            cls = LMDBHashStash
+        except ImportError:
+            pass
     elif engine == "mongo":
-        from ..engines.mongo import MongoHashStash
-
-        cls = MongoHashStash
+        try:
+            import pymongo
+            working_engines.add('mongo')
+            from ..engines.mongo import MongoHashStash
+            cls = MongoHashStash
+        except ImportError:
+            pass
     elif engine == "dataframe":
-        from .dataframe import DataFrameHashStash
-
-        cls = DataFrameHashStash
+        try:
+            import pandas as pd
+            import numpy as np
+            working_engines.add('dataframe')
+            from .dataframe import DataFrameHashStash
+            cls = DataFrameHashStash
+        except ImportError:
+            pass
     else:
-        raise ValueError(f"Invalid engine: {engine}. Options: {', '.join(ENGINES)}.")
+        raise ValueError(f"\n\nInvalid HashStash engine: {engine}.\n\nOptions available given current install: {', '.join(working_engines)}\nAll options: {', '.join(ENGINES)}")
+
+    if engine in ENGINES and engine not in working_engines:
+        raise ValueError(f"\n\nEngine {engine} is available but not installed. Please run: pip install hashstash[{engine}]\n\nOptions available given current install: {', '.join(working_engines)}\nAll options: {', '.join(ENGINES)}")
 
     object = cls(
         name=name,
@@ -730,6 +759,5 @@ def HashStash(
         **kwargs,
     )
     return object
-
 
 Stash = HashStash

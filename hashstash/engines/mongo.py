@@ -33,7 +33,7 @@ class MongoHashStash(BaseHashStash):
         if host is not None: self.host = host
         if port is not None: self.port = port
         
-    @log.info
+    @log.debug
     def get_db(self):
         from pymongo import MongoClient
         client = MongoClient(host=self.host, port=self.port)

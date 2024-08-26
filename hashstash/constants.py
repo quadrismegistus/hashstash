@@ -44,6 +44,8 @@ ENGINE_TYPES = Literal[
     "mongo",
 ]
 ENGINES = ENGINE_TYPES.__args__
+BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve']
+EXT_ENGINES = [e for e in ENGINES if e not in BUILTIN_ENGINES]
 
 # Performance testing constants
 DEFAULT_NUM_PROC = 1# mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1
@@ -68,6 +70,11 @@ REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 # REDIS_PORT = 6739 # not 6379
 REDIS_DB = 0
+
+# MongoDB settings
+MONGO_HOST = "localhost"
+MONGO_PORT = 27017
+
 
 OBJ_ADDR_KEY = "__py__"
 OBJ_ARGS_KEY = "__py_args__"

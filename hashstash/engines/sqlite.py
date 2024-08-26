@@ -4,7 +4,7 @@ import sqlite3
 class SqliteHashStash(BaseHashStash):
     engine = "sqlite"
 
-    @log.info
+    @log.debug
     def get_db(self):
         log.debug(f'Path exists: {os.path.exists(self.path)}\nPath: {self.path}')
         log.debug(f'Directory exists: {os.path.exists(self.path_dirname)}\nDirectory: {self.path_dirname}')

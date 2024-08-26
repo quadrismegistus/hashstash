@@ -170,3 +170,5 @@ cache.sqlite
 .cache_profile*
 
 .vscode
+venv*
+.venv*

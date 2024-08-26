@@ -3,12 +3,8 @@ from ..utils.logs import *
 from pprint import pprint
 import json
 from typing import Any
-import numpy as np
-import pandas as pd
 from pathlib import Path
 from ..utils.misc import ReusableGenerator
-
-arr = np.array([[[1,2,3,4,5],[6,7,8,9,10]],[[11,12,13,14,15],[16,17,18,19,20]]])
 
 def dump_json(obj,as_string=False):
     try:
@@ -188,6 +184,10 @@ class PandasDataFrameSerializer(CustomSerializer):
 
     @staticmethod
     def deserialize(data):
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("Pandas is required for this deserializer.")
         values = NumpySerializer.deserialize(data['__data__']['values'])
         columns = NumpySerializer.deserialize(data['__data__']['columns'])
         index_columns = _deserialize_custom(data['__data__'].get('index_columns'))
@@ -221,6 +221,10 @@ class NumpySerializer(CustomSerializer):
 
     @staticmethod
     def deserialize(data):
+        try:
+            import numpy as np
+        except ImportError:
+            raise ImportError("NumPy is required for this deserializer.")
         dtype = data['__data__']['dtype']
         shape = data['__data__']['shape']
         if 'bytes' in data['__data__']:
@@ -242,6 +246,10 @@ class PandasSeriesSerializer(CustomSerializer):
 
     @staticmethod
     def deserialize(data):
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("Pandas is required for this deserializer.")
         return pd.Series(
             NumpySerializer.deserialize(data['__data__']['values']),
             index=NumpySerializer.deserialize(data['__data__']['index'])

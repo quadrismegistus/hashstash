@@ -126,7 +126,7 @@ class PairtreeHashStash(BaseHashStash):
         self._set_to_filepath(filepath_value, encoded_value)
         
 
-    @log.info
+    @log.debug
     def _set_key(self, encoded_key):
         filepath_key = self._get_path_key(encoded_key)
         if not os.path.exists(filepath_key):

@@ -1,7 +1,5 @@
 from . import *
 
-
-
 def generate_primitive():
     primitives = [
         lambda: random.randint(-1000000, 1000000),
@@ -17,24 +15,35 @@ def generate_primitive():
     return random.choice(primitives)()
 
 
-def generate_numpy_array(max_dim: int = 3, max_size: int = 100) -> np.ndarray:
+def generate_numpy_array(max_dim: int = 3, max_size: int = 100) -> 'ndarray':
+    try:
+        import numpy as np
+    except ImportError:
+        raise ImportError("NumPy is required for this function.")
     shape = tuple(
         random.randint(1, max_size) for _ in range(random.randint(1, max_dim))
     )
     return np.random.rand(*shape)
 
 
-def generate_pandas_dataframe(max_rows: int = 100, max_cols: int = 10) -> pd.DataFrame:
+def generate_pandas_dataframe(max_rows: int = 100, max_cols: int = 10) -> 'DataFrame':
+    try:
+        import pandas as pd
+    except ImportError:
+        raise ImportError("Pandas is required for this function.")
     rows = random.randint(1, max(2, max_rows))
     cols = random.randint(1, max(2, max_cols))
     data = {
         f"col_{i}": [generate_primitive() for _ in range(rows)] for i in range(cols)
     }
-    odf=pd.DataFrame(data)
-    return odf
+    return pd.DataFrame(data)
 
 
 def generate_pandas_series(max_length: int = 100) -> pd.Series:
+    try:
+        import pandas as pd
+    except ImportError:
+        raise ImportError("Pandas is required for this function.")
     length = random.randint(1, max(2, max_length))
     data = [generate_primitive() for _ in range(length)]
     return pd.Series(data)

@@ -9,7 +9,7 @@ class LMDBHashStash(BaseHashStash):
         self._env = None
         self.map_size = map_size
 
-    @log.info
+    @log.debug
     def get_db(self):
         import lmdb
         os.makedirs(self.path_dirname, exist_ok=True)

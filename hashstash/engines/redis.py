@@ -27,7 +27,7 @@ class RedisHashStash(BaseHashStash):
         if port is not None: self.port = port
         
 
-    @log.info
+    @log.debug
     def get_db(self):
         from redis_dict import RedisDict
         log.debug(f"Connecting to Redis at {self.host}:{self.port}")
