@@ -41,7 +41,7 @@ def generate_pandas_dataframe(max_rows: int = 100, max_cols: int = 10) -> 'DataF
     
 
 
-def generate_pandas_series(max_length: int = 100) -> pd.Series:
+def generate_pandas_series(max_length: int = 100) -> 'Series':
     try:
         import pandas as pd
         length = random.randint(1, max(2, max_length))
