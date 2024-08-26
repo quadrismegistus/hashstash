@@ -4,6 +4,7 @@ class ShelveHashStash(BaseHashStash):
     engine = 'shelve'
     string_keys = True
 
+    @log.info
     def get_db(self, writeback=True):
         import shelve
         os.makedirs(self.path_dirname, exist_ok=True)

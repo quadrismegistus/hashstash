@@ -16,8 +16,9 @@ class MemoryHashStash(BaseHashStash):
     engine = 'memory'
     ensure_dir = False
 
-    def get_db(self):
-        return MemoryDB(self.path)
+    @contextmanager
+    def get_connection(self):
+        yield MemoryDB(self.path)
     
     def clear(self):
         with self as cache, cache.db as db:

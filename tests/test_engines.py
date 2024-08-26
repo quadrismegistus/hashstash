@@ -17,7 +17,7 @@ TEST_CLASSES = [
     PairtreeHashStash,
     SqliteHashStash,
     MemoryHashStash,
-    # ShelveHashStash,
+    ShelveHashStash,
     RedisHashStash,
     DiskCacheHashStash,
     LMDBHashStash,
@@ -485,6 +485,7 @@ class TestHashStash:
         func_stash = cache.sub_function_results(test_func)
         assert func_stash.is_function_stash
         assert func_stash is not cache
+        assert func_stash.path != cache.path
 
         func_stash.set((1,2), 3)
         assert func_stash.get((1, 2), as_function=False) == 3

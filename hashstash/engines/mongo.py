@@ -24,64 +24,62 @@ class MongoHashStash(BaseHashStash):
     engine = 'mongo'
     host = 'localhost'
     port = 27017
-    dbname = DEFAULT_DBNAME
     ensure_dir = False
     string_keys = True
     string_values = True
 
-    def __init__(self, *args, host=None, port=None, dbname=None, **kwargs):
+    def __init__(self, *args, host=None, port=None, **kwargs):
         super().__init__(*args, **kwargs)
         if host is not None: self.host = host
         if port is not None: self.port = port
-        if dbname is not None: self.dbname = dbname
-        self._client = None
-        self._db = None
-        self._collection = None
-
-    @cached_property
-    def client(self):
+        
+    @log.info
+    def get_db(self):
         from pymongo import MongoClient
-        return MongoClient(host=self.host, port=self.port)
-
-    @cached_property
-    def db(self):
-        return self.client[get_db_name(self.dbname)]
-
-    @cached_property
-    def collection(self):
-        name = (self.name+'/'+self.dbname).replace('/','.')
-        coll =  self.db[name]
-        # coll.update_one({'_id': 'init'}, {'$set': {'initialized': True}}, upsert=True)
+        client = MongoClient(host=self.host, port=self.port)
+        db = client[get_db_name(self.dbname)]
+        coll_name = (self.name+'/'+self.dbname).replace('/','.')
+        coll = db[coll_name]
+        coll._client = client
+        coll._db = db
         return coll
-
+    
+    @staticmethod
+    def _close_connection(coll):
+        coll._client.close()
 
     def _set(self, encoded_key, encoded_value):
-        self.collection.update_one(
-            {"_id": encoded_key},
-            {"$set": {"value": encoded_value}},
-            upsert=True
-        )
+        with self.db as db:
+            db.update_one(
+                {"_id": encoded_key},
+                {"$set": {"value": encoded_value}},
+                upsert=True
+            )
 
     def _get(self, encoded_key):
-        result = self.collection.find_one({"_id": encoded_key})
+        with self.db as db:
+            result = db.find_one({"_id": encoded_key})
         return result["value"] if result else None
 
     def _has(self, encoded_key):
-        return self.collection.count_documents({"_id": encoded_key}, limit=1) > 0
+        with self.db as db:
+            return db.count_documents({"_id": encoded_key}, limit=1) > 0
 
     def _del(self, encoded_key: Union[str, bytes]) -> None:
-        self.collection.delete_one({"_id": encoded_key})
+        with self.db as db:
+            db.delete_one({"_id": encoded_key})
 
     def clear(self):
-        self.db.drop_collection(self.collection)
-        # self.client.drop_database(db_name)
-        # self.client.admin.command('compact', get_db_name(self.dbname))
+        with self.db as db:
+            db.drop()
 
     def __len__(self):
-        return self.collection.count_documents({})
+        with self.db as db:
+            return db.count_documents({})
 
     def _keys(self):
-        return (doc["_id"] for doc in self.collection.find({}, {"_id": 1}))
+        with self.db as db:
+            return (doc["_id"] for doc in db.find({}, {"_id": 1}))
 
 def start_mongo_server(host='localhost', port=27017, dbname=DEFAULT_DBNAME, data_dir=DEFAULT_MONGO_DIR):
     global _process_started, _container_id

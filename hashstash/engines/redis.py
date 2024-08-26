@@ -17,24 +17,30 @@ class RedisHashStash(BaseHashStash):
     engine = 'redis'
     host = REDIS_HOST
     port = REDIS_PORT
-    dbname = DEFAULT_DBNAME
     ensure_dir = False
     string_keys = True
     string_values = True
 
-    def __init__(self, *args, host=None, port=None, dbname=None, **kwargs):
+    def __init__(self, *args, host=None, port=None, **kwargs):
         super().__init__(*args, **kwargs)
         if host is not None: self.host = host
         if port is not None: self.port = port
-        if dbname is not None: self.dbname = dbname
+        
 
+    @log.info
     def get_db(self):
         from redis_dict import RedisDict
         log.debug(f"Connecting to Redis at {self.host}:{self.port}")
         name = (self.name+'/'+self.dbname).replace('/','.')
-        return DictContext(RedisDict(namespace=name, host=self.host, port=self.port, db=get_db_number(self.dbname)))
+        return RedisDict(namespace=name, host=self.host, port=self.port, db=get_db_number(self.dbname))
     
+    @staticmethod
+    def _close_connection(connection):
+        pass # how does one close a redis connection?
+
     def clear(self):
+        super().close()
+
         import redis
         log.debug(f"Dropping Redis database at {self.host}:{self.port}")
         client = redis.Redis(host=self.host, port=self.port, db=get_db_number(self.dbname))

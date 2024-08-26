@@ -1,6 +1,8 @@
 from . import *
 import time
-
+import threading
+from contextlib import contextmanager
+_connection_pool = {}
 
 class BaseHashStash(MutableMapping):
     engine = "base"
@@ -29,6 +31,12 @@ class BaseHashStash(MutableMapping):
         "append_mode",
     ]
     metadata_cols = ["_version"]
+    _connection_pool = _connection_pool
+    _connection_lock = threading.Lock()
+    _last_used = {}
+    CONNECTION_TIMEOUT = 60  # Close connections after 60 seconds of inactivity
+
+
 
     @log.debug
     def __init__(
@@ -81,29 +89,11 @@ class BaseHashStash(MutableMapping):
         self.path_dirname = (
             self.path if self.filename_is_dir else os.path.dirname(self.path)
         )
-        # if self.ensure_dir:
-        # os.makedirs(self.path_dirname, exist_ok=True)
-
-        # if self.is_tmp:
-        # self.register_cleanup()
-
-    # def register_cleanup(self):
-    # def cleanup():
-    # self._remove_dir(self.path)
-
-    # atexit.register(cleanup)
+        
 
     @staticmethod
     def _remove_dir(dir_path):
-        def remove():
-            rmtreefn(dir_path)
-
-        remove()
-        # import subprocess
-        # if os.path.isfile(dir_path):
-        #     subprocess.Popen(['python', '-c', f'import os; os.remove("{dir_path}")'])
-        # else:
-        #     subprocess.Popen(['python', '-c', f'import shutil; shutil.rmtree("{dir_path}")'])
+        rmtreefn(dir_path)
 
     @log.debug
     def encode(self, *args, **kwargs):
@@ -159,32 +149,72 @@ class BaseHashStash(MutableMapping):
     @property
     @retry_patiently()
     def db(self):
-        if self.ensure_dir:
-            os.makedirs(self.path_dirname, exist_ok=True)
-        return self.get_db()
+        return self.get_connection()
+
+    def get_db(self):
+        # This method should be implemented by subclasses
+        raise NotImplementedError("Subclasses must implement get_db method")
+    
+    @contextmanager
+    @retry_patiently()
+    def get_connection(self):
+        if self.path not in self._connection_pool:
+            self._connection_pool[self.path] = self.get_db()
+            self._last_used[self.path] = time.time()
+        try:
+            yield _connection_pool[self.path]
+        finally:
+            self._cleanup_connections()
+            pass
+
+    @classmethod
+    def _cleanup_connections(cls):
+        current_time = time.time()
+        with cls._connection_lock:
+            for path, last_used in list(cls._last_used.items()):
+                if current_time - last_used > cls.CONNECTION_TIMEOUT:
+                    cls._close_connection_path(path)
+
+    def close(self):
+        self._close_connection_path(self.path)
+
+    @classmethod
+    def _close_connection_path(cls, path):
+        conn = cls._connection_pool.get(path)
+        if conn is not None:
+            cls._close_connection(conn)
+            cls._connection_pool.pop(path,None)
+            cls._last_used.pop(path,None)
+
+    @staticmethod
+    def _close_connection(connection):
+        # Default implementation, can be overridden by subclasses
+        if hasattr(connection, 'close'):
+            connection.close()
+        else:
+            log.warn(f'how does one close connection of type {connection}?')
+        
 
     @property
     def data(self):
         return self.db
 
-    def get_db(self):
-        return {}
-
     def __eq__(self, other):
         if not isinstance(other, BaseHashStash):
-            return NotImplemented
+            return False
         return self.to_dict() == other.to_dict()
 
     @log.debug
     def __enter__(self):
-        if not self._lock.locked():
-            self._lock.acquire()
+        # if not self._lock.locked():
+        #     self._lock.acquire()
         return self
 
     @log.debug
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._lock.locked():
-            self._lock.release()
+        pass
+        # if self._lock.locked():
+            # self._lock.release()
         # if self.is_tmp:
         # self._remove_dir(self.path)
 
@@ -272,7 +302,7 @@ class BaseHashStash(MutableMapping):
         encoded_value = self.encode_value(new_unencoded_value)
         self._set(encoded_key, encoded_value)
 
-    @log.info
+    @log.debug
     def new_unencoded_key(self, unencoded_key: Any, *args, as_function=None, **kwargs):
         if self.is_function_stash and as_function is not False:
             if not (
@@ -300,7 +330,6 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def _get(self, encoded_key: str, default: Any = None) -> Any:
-        log.info(f'{self}: {hasattr(self,"__enter__")}')
         with self as cache, cache.db as db:
             res = db.get(encoded_key)
             return res if res is not None else default
@@ -364,6 +393,7 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def clear(self) -> None:
+        self.close()
         self._remove_dir(
             self.root_dir
             if str(self.root_dir).startswith("/var/")
@@ -505,10 +535,11 @@ class BaseHashStash(MutableMapping):
 
         return HashStashProfiler(self)
 
+    @log.info
     def sub(self, **kwargs):
         kwargs = {**self.to_dict(), **kwargs, "parent": self}
         new_instance = self.__class__(**kwargs)
-        new_instance._lock = threading.Lock()  # Create a new lock for the new instance
+        # new_instance._lock = threading.Lock()  # Create a new lock for the new instance
         self.children.append(new_instance)
         return new_instance
 
@@ -544,6 +575,7 @@ class BaseHashStash(MutableMapping):
         # Return a tuple of (callable, args) that allows recreation of this object
         return (self.__class__.from_dict, (self.to_dict(),))
 
+    @log.info
     def sub_function_results(
         self, func, dbname=None, update_on_src_change=False, **kwargs
     ):
@@ -551,12 +583,13 @@ class BaseHashStash(MutableMapping):
         func_name = get_obj_addr(func).replace('<','_').replace('>','_')
         if update_on_src_change or not can_import_object(func):
             func_name += "/" + encode_hash(get_function_src(func))[:10]
+        new_dbname = f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}'
+        log.info(f"Sub-function results stash: {new_dbname}")
         stash = self.sub(
-            dbname=f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}',
+            dbname=new_dbname,
             is_function_stash=True,
         )
         func.stash = stash
-        log.info(f'func.stash: {func.stash}')
 
         # Bind the new methods to the instance
         # stash.get = types.MethodType(get_func, stash)
@@ -636,7 +669,7 @@ def HashStash(
 
     Args:
         * args: Additional arguments to pass to the cache constructor.
-        engine: The type of cache to create ("pairtree", "sqlite", "memory", "shelve", "redis", "pickledb", or "diskcache")
+        engine: The type of cache to create ("pairtree", "sqlite", "memory", "shelve", "redis", or "diskcache")
         **kwargs: Additional keyword arguments to pass to the cache constructor.
 
     Returns:
@@ -667,10 +700,6 @@ def HashStash(
         from ..engines.redis import RedisHashStash
 
         cls = RedisHashStash
-    elif engine == "pickledb":
-        from ..engines.pickledb import PickleDBHashStash
-
-        cls = PickleDBHashStash
     elif engine == "diskcache":
         from ..engines.diskcache import DiskCacheHashStash
 

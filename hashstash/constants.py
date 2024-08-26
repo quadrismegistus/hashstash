@@ -30,25 +30,23 @@ DEFAULT_COMPRESS = True
 DEFAULT_B64 = True
 
 # Cache engines
-ENGINES = (
-    "pairtree",
-    "sqlite",
-    "diskcache",
-    "lmdb",
-    "shelve",
-    "memory",
-    "redis",
-    "mongo",
+ENGINE_TYPES = Literal[
+    "memory", 
+    "pairtree", 
     "dataframe",
-    # "pickledb"
-)
+    "shelve",
+    "lmdb",
+    "sqlite",
+    "diskcache", 
+    "redis", 
+    "mongo",
+]
+ENGINES = ENGINE_TYPES.__args__
 
 # Performance testing constants
 DEFAULT_NUM_PROC = 1# mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1
 DEFAULT_DATA_SIZE = 1_000
-ENGINE_TYPES = Literal[
-    "memory", "pairtree", "sqlite", "redis", "diskcache", "lmdb", "shelve", "pickledb"
-]
+
 DEFAULT_ENGINE_TYPE = "pairtree"
 INITIAL_SIZE = 1024
 DEFAULT_ITERATIONS = 1000
