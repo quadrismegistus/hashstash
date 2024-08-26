@@ -17,4 +17,8 @@ class MemoryHashStash(BaseHashStash):
     ensure_dir = False
 
     def get_db(self):
-        return MemoryDB(self.name)
+        return MemoryDB(self.path)
+    
+    def clear(self):
+        with self as cache, cache.db as db:
+            db.clear()

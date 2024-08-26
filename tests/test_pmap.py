@@ -131,19 +131,19 @@ def test_pmap_error_handling():
         list(pmap(lambda x: x, objects=[1, 2], options=[{}]))
 
 def test_pmap_with_stash():
-    stash = HashStash().tmp()
-    result = list(pmap(square, objects=[1, 2, 3], num_proc=1, stash=stash, progress=False))
-    func_stash = square.stash
-    assert result == [1, 4, 9]
-    assert len(func_stash) == 3  # Check if 3 items were stored in the function's stash
-    assert len(stash) == 0  # The main stash should remain empty
-    
-    # Check if the function's stash is a sub-stash of the main stash
-    assert func_stash.parent == stash
-    
-    # Verify that the results are in the function's stash
-    print(func_stash.keys_l())
-    assert all(func_stash.get(i) == (i**2) for i in [1, 2, 3])
+    with HashStash().tmp() as stash:
+        result = list(pmap(square, objects=[1, 2, 3], num_proc=1, stash=stash, progress=False))
+        func_stash = square.stash
+        assert result == [1, 4, 9]
+        assert len(func_stash) == 3  # Check if 3 items were stored in the function's stash
+        assert len(stash) == 0  # The main stash should remain empty
+        
+        # Check if the function's stash is a sub-stash of the main stash
+        assert func_stash.parent == stash
+        
+        # Verify that the results are in the function's stash
+        print(func_stash.keys_l())
+        assert all(func_stash.get(i) == (i**2) for i in [1, 2, 3])
 
 
 def test_pmap_item_without_stash():
@@ -152,13 +152,13 @@ def test_pmap_item_without_stash():
     assert result == 9
 
 def test_pmap_item_with_stash():
-    stash = HashStash().tmp()
-    
-    func = serialize(square)
-    result = _pmap_item((func, [3], {}), stash=stash)
-    
-    assert result == 9
-    assert len(stash) == 1  # Check if one item was stored in the stash
+    with HashStash().tmp() as stash:
+        
+        func = serialize(square)
+        result = _pmap_item((func, [3], {}), stash=stash)
+        
+        assert result == 9
+        assert len(stash) == 1  # Check if one item was stored in the stash
 
 def test_pmap_with_total():
     result = list(pmap(square, objects=[1, 2, 3, 4], num_proc=2, total=3, progress=False))

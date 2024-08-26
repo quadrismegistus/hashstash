@@ -4,18 +4,21 @@ class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
     filename_is_dir = True
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, map_size=10 * 1024**3, **kwargs):  # Default to 10GB
         super().__init__(*args, **kwargs)
         self._env = None
+        self.map_size = map_size
 
     @property
     def db(self):
         if self._env is None:
             import lmdb
-            self._env = lmdb.open(self.path, map_size=1024**3)  # GB max size
+            os.makedirs(self.path_dirname, exist_ok=True)
+            self._env = lmdb.open(self.path, map_size=self.map_size)
         return self._env
 
     def get_db(self):
+        os.makedirs(self.path, exist_ok=True)
         return self.db
 
     def _set(self, encoded_key, encoded_value):
@@ -36,10 +39,11 @@ class LMDBHashStash(BaseHashStash):
 
     def _has(self, encoded_key):
         return self._get(encoded_key) is not None
-
+    
     def clear(self):
-        with self.db.begin(write=True) as txn:
-            txn.drop(self.db.open_db())
+        self.db.close()
+        self._env = None
+        super().clear()
 
     def _keys(self):
         with self.db.begin() as txn:

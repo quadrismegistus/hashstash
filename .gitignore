@@ -168,3 +168,5 @@ cache.sqlite
 .cache.sqlite
 .cache_profile
 .cache_profile*
+
+.vscode

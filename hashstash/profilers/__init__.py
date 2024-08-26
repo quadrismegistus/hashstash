@@ -6,5 +6,4 @@ from tqdm import tqdm
 
 
 from .profiler import *
-from .serialize_profiler import *
 from .engine_profiler import *

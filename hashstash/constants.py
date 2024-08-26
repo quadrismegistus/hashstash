@@ -12,7 +12,14 @@ import random
 DEFAULT_ROOT_DIR = os.path.expanduser("~/.cache/hashstash")
 DEFAULT_NAME = "default_cache"
 DEFAULT_PATH = os.path.join(DEFAULT_ROOT_DIR, DEFAULT_NAME)
-DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, "_redis", "data", "db")
+DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, ".redis")
+DEFAULT_MONGO_DIR = os.path.join(DEFAULT_ROOT_DIR, ".mongo")
+
+OPTIMAL_DATAFRAME_IO_ENGINE = 'feather'
+DEFAULT_DATAFRAME_IO_ENGINE = 'csv'
+OPTIMAL_DATAFRAME_DF_ENGINE = 'pandas'
+DEFAULT_DATAFRAME_DF_ENGINE = 'pandas'
+
 DEFAULT_DBNAME = "main"
 DEFAULT_FILENAME = "db"
 
@@ -24,19 +31,21 @@ DEFAULT_B64 = True
 
 # Cache engines
 ENGINES = (
-    "memory",
     "pairtree",
     "sqlite",
-    "redis",
     "diskcache",
     "lmdb",
     "shelve",
+    "memory",
+    "redis",
+    "mongo",
+    "dataframe",
     # "pickledb"
 )
 
 # Performance testing constants
-DEFAULT_NUM_PROC = mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1
-DEFAULT_DATA_SIZE = 1_000_000
+DEFAULT_NUM_PROC = 1# mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1
+DEFAULT_DATA_SIZE = 1_000
 ENGINE_TYPES = Literal[
     "memory", "pairtree", "sqlite", "redis", "diskcache", "lmdb", "shelve", "pickledb"
 ]
@@ -57,6 +66,7 @@ PROFILE_SIZES = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000]
 # Redis settings
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
+# REDIS_PORT = 6739 # not 6379
 REDIS_DB = 0
 
 OBJ_ADDR_KEY = "__py__"
@@ -64,17 +74,16 @@ OBJ_ARGS_KEY = "__py_args__"
 OBJ_KWARGS_KEY = "__py_kwargs__"
 OBJ_SRC_KEY = "__py_src__"
 
-# DEFAULT_SERIALIZER = "custom"
 SERIALIZER_TYPES = Literal[
-    "custom",          # flexible, but not as fast as jsonpickle
+    "hashstash",          # flexible, but not as fast as jsonpickle
     "jsonpickle_ext",  # if fails to decode a value, so will jsonpickle
     "jsonpickle",      # will work as backup if numpy and pandas are not installed
     "pickle",          # fastest but not platform independent
     "orjson",          # cannot handle pandas etc
     "json",            # cannot handle pandas and numpy etc
 ]
-DEFAULT_SERIALIZER = list(SERIALIZER_TYPES.__args__)
-
+DEFAULT_SERIALIZER = "hashstash"
+SERIALIZERS = list(SERIALIZER_TYPES.__args__)
 
 class Dog:
     goestoheaven = True

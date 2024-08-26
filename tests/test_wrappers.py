@@ -21,7 +21,7 @@ def test_stashed_result():
     assert result3 == 7
 
 counter = 0
-tmp = Stash().tmp()
+tmp = Stash(engine='memory')
 
 @tmp.stashed_result
 def incrementing_function():
@@ -87,44 +87,44 @@ def test_parallelized_single_input():
     assert result == 10
 
 def test_parallelized_with_stashed_result():
-    tmp = Stash().tmp()
+    with Stash().tmp() as tmp:
 
-    @tmp.stashed_result
-    @parallelized
-    def parallel_stashed_function(x):
-        return x * 2
+        @tmp.stashed_result
+        @parallelized
+        def parallel_stashed_function(x):
+            return x * 2
 
-    # First call
-    result1 = parallel_stashed_function([1, 2, 3, 4])
-    assert result1 == [2, 4, 6, 8]
+        # First call
+        result1 = parallel_stashed_function([1, 2, 3, 4])
+        assert result1 == [2, 4, 6, 8]
 
-    # Second call (should be cached)
-    result2 = parallel_stashed_function([1, 2, 3, 4])
-    assert result2 == [2, 4, 6, 8]
+        # Second call (should be cached)
+        result2 = parallel_stashed_function([1, 2, 3, 4])
+        assert result2 == [2, 4, 6, 8]
 
-    # Different input
-    result3 = parallel_stashed_function([5, 6, 7, 8])
-    assert result3 == [10, 12, 14, 16]
+        # Different input
+        result3 = parallel_stashed_function([5, 6, 7, 8])
+        assert result3 == [10, 12, 14, 16]
 
 def test_parallelized_with_stashed_result_single_input():
-    tmp = Stash().tmp()
+    with Stash().tmp() as tmp:
 
-    @tmp.stashed_result
-    @parallelized
-    def parallel_stashed_function(x):
-        return x * 2
+        @tmp.stashed_result
+        @parallelized
+        def parallel_stashed_function(x):
+            return x * 2
 
-    # First call
-    result1 = parallel_stashed_function(5)
-    assert result1 == 10
+        # First call
+        result1 = parallel_stashed_function(5)
+        assert result1 == 10
 
-    # Second call (should be cached)
-    result2 = parallel_stashed_function(5)
-    assert result2 == 10
+        # Second call (should be cached)
+        result2 = parallel_stashed_function(5)
+        assert result2 == 10
 
-    # Different input
-    result3 = parallel_stashed_function(7)
-    assert result3 == 14
+        # Different input
+        result3 = parallel_stashed_function(7)
+        assert result3 == 14
 
 if __name__ == "__main__":
     pytest.main()

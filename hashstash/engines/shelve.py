@@ -6,5 +6,6 @@ class ShelveHashStash(BaseHashStash):
 
     def get_db(self, writeback=True):
         import shelve
+        os.makedirs(self.path_dirname, exist_ok=True)
         return shelve.open(self.path, writeback=writeback)
     

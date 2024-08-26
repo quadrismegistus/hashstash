@@ -52,14 +52,15 @@ def pmap(
         if total is None:
             total = len(objects)
 
+    # Multi-process: continue with the existing logic
     # Check if func is a method and get the instance (self)
     if isinstance(func, MethodType):
         instance = func.__self__
         func = func.__func__
         objects = [(instance,) + tuple(obj) for obj in objects]
 
+
     # Serialize the function
-    serialized_func = serialize(func)
 
     # Create a HashStash instance for caching
     if stash is not None:
@@ -68,7 +69,7 @@ def pmap(
     else:
         func_stash = None
 
-    items = [(serialized_func, obj, opt) for obj, opt in zip(objects, options)]
+    items = [(serialize(func) if num_proc>1 else func, obj, opt) for obj, opt in zip(objects, options)]
 
     desc = "" if not desc else desc + " "
     desc += f"[{num_proc}x]"
@@ -76,16 +77,15 @@ def pmap(
     iterator = range(len(items)) if total is None else range(total)
 
     def yield_results():
-        with ProcessPoolExecutor(max_workers=num_proc, initializer=init_worker) as executor:
-            futures = [executor.submit(_pmap_item, item, func_stash) for item in items]
-
-            try:
-                for _ in progress_bar(iterator, desc=desc, progress=progress):
-                    if num_proc == 1:
-                        # Single-process: use a simple map
-                        yield _pmap_item(items[_], func_stash)
-                    else:
-                        # Multi-process: use ProcessPoolExecutor
+        if num_proc == 1:
+            for _ in progress_bar(iterator, desc=desc, progress=progress):
+                yield _pmap_item(items[_], func_stash)
+            return
+        else:
+            with ProcessPoolExecutor(max_workers=num_proc, initializer=init_worker) as executor:
+                futures = [executor.submit(_pmap_item, item, func_stash) for item in items]
+                try:
+                    for _ in progress_bar(iterator, desc=desc, progress=progress):
                         if ordered:
                             yield futures[_].result()
                         else:
@@ -93,17 +93,17 @@ def pmap(
                             for future in done:
                                 yield future.result()
                                 futures.remove(future)
-            except KeyboardInterrupt as e:
-                log.error(f"Caught {e}, terminating workers")
-                executor.shutdown(wait=False, cancel_futures=True)
-                raise
-            except Exception as e:
-                log.error(f"Caught {e}, terminating workers")
-                executor.shutdown(wait=False, cancel_futures=True)
-                raise
-            finally:
-                for future in futures:
-                    future.cancel()
+                except KeyboardInterrupt as e:
+                    log.error(f"Caught {e}, terminating workers")
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
+                except Exception as e:
+                    log.error(f"Caught {e}, terminating workers")
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
+                finally:
+                    for future in futures:
+                        future.cancel()
     
     return iter(yield_results())
 
@@ -112,7 +112,7 @@ def _pmap_item(item, stash=None):
     from ..serializers.serializer import serialize, deserialize
 
     serialized_func, args, kwargs = item
-    func = deserialize(serialized_func)
+    func = deserialize(serialized_func) if isinstance(serialized_func, (str, bytes)) else serialized_func
 
     if stash is not None:
         # Create a unique key for the function call
@@ -124,7 +124,11 @@ def _pmap_item(item, stash=None):
         print('got cached result',cached_result)
 
     # If not cached or no cache is used, execute the function
-    result = func(*args, **kwargs)
+    try:
+        result = func(*args, **kwargs)
+    except Exception as e:
+        log.error(f"Caught {e}!")
+        raise e
 
     if stash is not None:
         # Cache the result
@@ -151,7 +155,7 @@ def progress_bar(iterr, progress=True, **kwargs):
                     desc = f"{self.green}{log_prefix_str(desc,reset=True)}{self.reset}"
                     super().__init__(*args, desc=desc, **kwargs)
 
-            yield from ColoredTqdm(iterr, position=0, leave=False, **kwargs)
+            yield from ColoredTqdm(iterr, leave=True, **kwargs)
         except ImportError:
             yield from progress_bar(iterr, progress=False, **kwargs)
         finally:
@@ -161,4 +165,3 @@ def progress_bar(iterr, progress=True, **kwargs):
 
 
 pmap.progress_bar = progress_bar
-

@@ -88,7 +88,7 @@ def flexible_import(obj_or_path):
                     obj = importlib.import_module(f"{module}.{part}")
                     module = f"{module}.{part}"
                 except ImportError:
-                    log.warning(f"Error importing {obj_or_path}: {part} not found in {module}")
+                    log.debug(f"Error importing {obj_or_path}: {part} not found in {module}")
                     return None
         return obj
     else:

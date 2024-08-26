@@ -56,19 +56,19 @@ def generate_complex_data(size: int) -> Dict[str, Any]:
 
 @log.debug
 def generate_data(
-    target_size: int,
+    target_size: Union[int, List[int]],
     data_types: List[str] = [
-        "primitive",
         "list",
         "dict",
         "numpy",
         "pandas_df",
         "pandas_series",
-        "prosodic_text",
-        "prosodic_line",
     ],
     depth: int = 1,
 ) -> Any:
+    if isinstance(target_size, list):
+        target_size = target_size[0]  # Take the first element if it's a list
+
     if depth <= 0:
         return generate_primitive()
 

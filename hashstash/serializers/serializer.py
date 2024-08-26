@@ -1,11 +1,9 @@
 from . import *
 import functools
 
-
-
-def get_serializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = DEFAULT_SERIALIZER):
+def get_serializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
     serializer_dict = {
-        "custom": serialize_custom,
+        "hashstash": serialize_custom,
         "jsonpickle": serialize_jsonpickle,
         "jsonpickle_ext": serialize_jsonpickle_ext,
         "orjson": serialize_orjson,
@@ -13,14 +11,11 @@ def get_serializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] =
         "json": serialize_json,
     }
     
-    if isinstance(serializer, str):
-        serializer = [serializer]
-    
-    return [serializer_dict[s] for s in serializer if s in serializer_dict]
+    return serializer_dict.get(serializer)
 
-def get_deserializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = SERIALIZER_TYPES.__args__):
+def get_deserializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
     deserializer_dict = {
-        "custom": deserialize_custom,
+        "hashstash": deserialize_custom,
         "jsonpickle": deserialize_jsonpickle,
         "jsonpickle_ext": deserialize_jsonpickle_ext,
         "orjson": deserialize_orjson,
@@ -28,70 +23,56 @@ def get_deserializer(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]]
         "json": deserialize_json,
     }
     
-    if isinstance(serializer, str):
-        serializer = [serializer]
-    
-    return [deserializer_dict[s] for s in serializer if s in deserializer_dict]
-
+    return deserializer_dict.get(serializer)
 
 # @log.debug
-def serialize(obj, serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = None, as_string=False):
+def serialize(obj, serializer: SERIALIZER_TYPES = None, as_string=False):
     if serializer is None:
         serializer = config.serializer
-    serializer_funcs = get_serializer(serializer)
-    for serializer_func in serializer_funcs:
-        log.debug(f"Attempting to serialize with {serializer_func.__name__}")
-        try:
-            data = serializer_func(obj)
-            assert isinstance(data, (bytes, str)), "data should be bytes or string"
-            log.debug(f"Serialized with {serializer_func.__name__}")
-            return (
-                data.decode() if isinstance(data, bytes) and as_string else data
-            )
-        except Exception as e:
-            log.warning(f"Serialization failed with {serializer_func.__name__}: {str(e)}")
-            raise e
+    serializer_func = get_serializer(serializer)
+    if serializer_func is None:
+        raise ValueError(f"Invalid serializer: {serializer}")
     
-    raise ValueError("All serialization attempts failed")
+    # log.debug(f"Attempting to serialize with {serializer_func.__name__}")
+    try:
+        data = serializer_func(obj)
+        assert isinstance(data, (bytes, str)), "data should be bytes or string"
+        # log.debug(f"Serialized with {serializer_func.__name__}")
+        return data.decode() if isinstance(data, bytes) and as_string else data
+    except Exception as e:
+        log.warning(f"Serialization failed with {serializer_func.__name__}: {str(e)}")
+        raise e
 
-
-@log.debug
-def deserialize(data, serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = None):
+# @log.debug
+def deserialize(data, serializer: SERIALIZER_TYPES = None):
     if serializer is None:
         serializer = config.serializer
-    deserializer_funcs = get_deserializer(serializer)
-    for deserializer_func in deserializer_funcs:
-        log.debug(f"Attempting to deserialize with {deserializer_func.__name__}")
-        try:
-            odata = deserializer_func(data)
-            if type(odata) is dict and '__py__' in odata and deserializer_func.__name__ != 'serialize_custom':
-                continue
-            log.debug(f"Deserialized with {deserializer_func.__name__}")
-            return odata
-        except Exception as e:
-            log.warning(f"Deserialization failed with {deserializer_func.__name__}: {str(e)}")
-            raise e
+    deserializer_func = get_deserializer(serializer)
+    if deserializer_func is None:
+        raise ValueError(f"Invalid deserializer: {serializer}")
     
-    raise ValueError("All deserialization attempts failed")
+    log.debug(f"Attempting to deserialize with {deserializer_func.__name__}")
+    try:
+        odata = deserializer_func(data)
+        log.debug(f"Deserialized with {deserializer_func.__name__}")
+        return odata
+    except Exception as e:
+        log.warning(f"Deserialization failed with {deserializer_func.__name__}: {str(e)}")
+        raise e
 
 @fcache
-def get_working_serializers_set():
+def get_working_serializers():
     working_serializers = []
-    serializer_funcs = get_serializer(list(SERIALIZER_TYPES.__args__))
-    
-    for serializer_func in serializer_funcs:
+    for serializer in SERIALIZER_TYPES.__args__:
         try:
+            serializer_func = get_serializer(serializer)
             data = serializer_func('test')
             assert isinstance(data, (bytes, str)), "data should be bytes or string"
-            working_serializers.append(serializer_func.__name__.replace('serialize_', ''))
+            working_serializers.append(serializer)
         except Exception as e:
-            log.warning(f"Serialization failed with {serializer_func.__name__}: {str(e)}")
-            pass
+            log.warning(f"Serialization failed with {serializer}: {str(e)}")
     
-    return set(working_serializers)
-
-def get_working_serializers(serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]] = SERIALIZER_TYPES.__args__):
-    return [x for x in ([serializer] if isinstance(serializer,str) else serializer) if x in get_working_serializers_set()]
+    return working_serializers
 
 def serialize_pickle(obj):
     return pickle.dumps(obj)

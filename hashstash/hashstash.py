@@ -2,6 +2,7 @@
 from .constants import *
 
 ## standard library
+import atexit
 import uuid
 import tempfile
 import importlib

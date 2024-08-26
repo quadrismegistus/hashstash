@@ -76,7 +76,7 @@ def log_wrapper(_func=None, level=logging.INFO):
             params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
             params_str = params_str.replace("\n", " ")
             if level>=logger.level:
-                log_func(f'{get_obj_nice_name(func)}  <<<  {params_str}', level=level)
+                log_func(f'{get_obj_nice_name(func)}(){"  <<<  "+params_str if params_str else ""}', level=level)
                 current_depth += 1
             
             try:
@@ -89,8 +89,9 @@ def log_wrapper(_func=None, level=logging.INFO):
             if level>=logger.level:
                 current_depth -= 1
                 # if result is not None: 
-                resx=repr(result).replace("\n", " ")
-                log_func(f'{get_obj_nice_name(func)}  >>>  {resx}', level=level)
+                if result is not None:
+                    resx=repr(result).replace("\n", " ")
+                    log_func(f'{get_obj_nice_name(func)}()  >>>  {resx}', level=level)
                     # log_func(f'>>> {str(result)[:100]}', level=level)
 
                 if not current_depth:
@@ -121,7 +122,7 @@ def log_indent_str():
     return indenter * current_depth
 
 def log_prefix_str(message='', reset=True):
-    return  f'{log_time_taken_str(reset=reset)}{log_indent_str()}{" "+message if message else ""}'
+    return  f'{log_time_taken_str(reset=reset)}{log_indent_str()}{" "+str(message) if message else ""}'
 
 
 def log_func(message, level=logging.DEBUG, maxlen=None):
@@ -135,14 +136,29 @@ class log:
         if callable(_func):
             return log_wrapper(_func, level=level)
         else:
-            log_func(_func)
+            log_func(_func, level=level)
 
-    debug = partial(log, level=logging.DEBUG)
-    info = partial(log, level=logging.INFO)
-    warn = partial(log, level=logging.WARNING)
-    warning = partial(log, level=logging.WARNING)
-    error = partial(log, level=logging.ERROR)
-
+    @classmethod
+    def debug(cls, _func=None):
+        return cls.log(_func, level=logging.DEBUG)
+    
+    @classmethod
+    def info(cls, _func=None):
+        return cls.log(_func, level=logging.INFO)
+    
+    @classmethod
+    def warning(cls, _func=None):
+        return cls.log(_func, level=logging.WARNING)
+    warn = warning
+    
+    @classmethod
+    def error(cls, _func=None):
+        return cls.log(_func, level=logging.ERROR)
+    
+    @classmethod
+    def critical(cls, _func=None):
+        return cls.log(_func, level=logging.CRITICAL)
+    
 # if logger.level <= logging.DEBUG:
 #     debug = debug
 # else:

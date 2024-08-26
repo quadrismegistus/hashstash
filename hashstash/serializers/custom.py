@@ -10,6 +10,18 @@ from ..utils.misc import ReusableGenerator
 
 arr = np.array([[[1,2,3,4,5],[6,7,8,9,10]],[[11,12,13,14,15],[16,17,18,19,20]]])
 
+def dump_json(obj,as_string=False):
+    try:
+        # res = serialize_orjson(obj)
+        res = serialize_json(obj)
+        log.info('serialized via orjson')
+        if as_string: res = res.decode('utf-8')
+    except ImportError:
+        res = serialize_json(obj)
+        if not as_string: res = res.encode('utf-8')
+    return res
+    
+
 # @log.debug
 def serialize_custom(obj: Any) -> str:
     serialized = _serialize_custom(obj)
@@ -98,7 +110,14 @@ def _deserialize_custom(data: Any) -> Any:
         if obj_data:
             obj = flexible_import(addr)
             if hasattr(obj, 'from_dict') and callable(obj.from_dict):
-                return obj.from_dict(_deserialize_custom(obj_data))
+                # print(f'obj_data: {obj_data}')
+                try:
+                    obj_data = _deserialize_custom(obj_data)
+                    # print(f'obj_data 2: {obj_data}')
+                    return obj.from_dict(obj_data)
+                except Exception as e:
+                    log.warning(f"Error using from_dict for {obj}: {e}")
+                    
             
         if '__py__' in data:
             return flexible_import(data['__py__'])
@@ -138,7 +157,7 @@ class IterableSerializer(CustomSerializer):
 class PandasDataFrameSerializer(CustomSerializer):
     @staticmethod
     def serialize(obj):
-        df, index = reset_index(obj)
+        df, index = reset_index_misc(obj, _index=True)
         return {
             '__py__': get_obj_addr(obj),
             '__data__': {
@@ -357,7 +376,7 @@ class ClassSerializer(CustomSerializer):
             '__bases__': [get_obj_addr(base) for base in obj.__bases__],
             '__dict__': {
                 k: _serialize_custom(v) for k, v in obj.__dict__.items()
-                if not k.startswith('__') or k == '__init__'
+                if not k.startswith('__') or k in {'__init__'}
             },
             '__methods__': {
                 name: get_obj_addr(method) if can_import_object(method) else FunctionSerializer.serialize(method)

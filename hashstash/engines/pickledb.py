@@ -10,10 +10,5 @@ class PickleDBHashStash(BaseHashStash):
 
     def get_db(self):
         import pickledb
+        os.makedirs(self.path_dirname, exist_ok=True)
         return DictContext(pickledb.load(self.path, True))
-
-    def clear(self) -> None:
-        if os.path.exists(self.path):
-            os.remove(self.path)
-
-

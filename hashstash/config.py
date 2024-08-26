@@ -21,10 +21,9 @@ class Config:
     @classmethod
     def set_serializer(cls, serializer: Union[SERIALIZER_TYPES, List[SERIALIZER_TYPES]]):
         # check if serializer is allowable
-        serializer = [serializer] if isinstance(serializer,str) else serializer
-        if not set(serializer) & set(SERIALIZER_TYPES.__args__):
+        if not serializer in set(SERIALIZER_TYPES.__args__):
             raise ValueError(f"Invalid serializer: {serializer}. Options: {', '.join(SERIALIZER_TYPES.__args__)}.")
-        cls.serializer = [x for x in serializer if x in set(SERIALIZER_TYPES.__args__)]
+        cls.serializer = serializer
 
     @classmethod
     def set_engine(cls, engine: ENGINE_TYPES):

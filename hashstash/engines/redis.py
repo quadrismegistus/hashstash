@@ -1,11 +1,17 @@
 from . import *
 
-
+import hashlib
 
 # Global variables
 _process_started = False
 _container_id = None
 
+MAX_REDIS_DB = 16  # Default max Redis databases, adjust if your Redis config is different
+
+def get_db_number(dbname: str) -> int:
+    """Convert a string dbname to a unique integer within Redis db range."""
+    hash_value = hashlib.md5(dbname.encode()).hexdigest()
+    return int(hash_value, 16) % MAX_REDIS_DB
 
 class RedisHashStash(BaseHashStash):
     engine = 'redis'
@@ -16,23 +22,28 @@ class RedisHashStash(BaseHashStash):
     string_keys = True
     string_values = True
 
-    def __init__(self, *args, host=None,port=None,**kwargs):
+    def __init__(self, *args, host=None, port=None, dbname=None, **kwargs):
         super().__init__(*args, **kwargs)
         if host is not None: self.host = host
         if port is not None: self.port = port
+        if dbname is not None: self.dbname = dbname
 
-        
-    
     def get_db(self):
         from redis_dict import RedisDict
         log.debug(f"Connecting to Redis at {self.host}:{self.port}")
         name = (self.name+'/'+self.dbname).replace('/','.')
-        return DictContext(RedisDict(namespace=name, host=self.host, port=self.port))
+        return DictContext(RedisDict(namespace=name, host=self.host, port=self.port, db=get_db_number(self.dbname)))
+    
+    def clear(self):
+        import redis
+        log.debug(f"Dropping Redis database at {self.host}:{self.port}")
+        client = redis.Redis(host=self.host, port=self.port, db=get_db_number(self.dbname))
+        client.flushdb()
+        # Free up disk space immediately
+        client.save()
+        
 
-
-
-
-def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=DEFAULT_REDIS_DIR):
+def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, dbname=DEFAULT_DBNAME, data_dir=DEFAULT_REDIS_DIR):
     global _process_started, _container_id
 
     if _process_started:
@@ -45,7 +56,8 @@ def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=D
     try:
         # First, try to connect to Redis
         import redis
-        redis_client = redis.Redis(host=host, port=port, db=db)
+        db_number = get_db_number(dbname)
+        redis_client = redis.Redis(host=host, port=port, db=db_number)
         redis_client.ping()
         _process_started = True
         logger.info("Redis server is already running and accessible")
@@ -105,7 +117,8 @@ def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=D
         for _ in range(max_retries):
             try:
                 import redis
-                redis_client = redis.Redis(host=host, port=port, db=db)
+                db_number = get_db_number(dbname)
+                redis_client = redis.Redis(host=host, port=port, db=db_number)
                 redis_client.ping()
                 _process_started = True
                 logger.info("Redis server is ready to accept connections")
@@ -120,4 +133,3 @@ def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, data_dir=D
     except Exception as e:
         logger.error(f"Unexpected error while starting Redis Docker container: {str(e)}", exc_info=True)
         raise
-

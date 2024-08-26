@@ -1,62 +1,57 @@
 from . import *
 
+@log.info
+def attach_stash_to_function(func, stash = None, **stash_kwargs):
+    from ..engines.base import HashStash
+    if stash is None:
+        stash = HashStash(**stash_kwargs)
+    local_stash = stash.sub_function_results(func)
+    func.stash = local_stash
 
 @log.debug
 def stashed_result(
     _func=None,
     stash: Optional["BaseHashStash"] = None,
-    name: str = None,
-    dbname: str = None,
     force=False,
-    update_on_src_change=False,
     store_args=True,
     **stash_kwargs,
 ):
-    @log.info
-    def decorator(func: Callable) -> Callable:
-        nonlocal stash, update_on_src_change, force
-        if stash is None:
-            from ..engines.base import HashStash
-            from ..utils.encodings import encode_hash
-            from ..serializers import encode_hash
+    @log.debug
+    def decorator(func: Callable, *args, **kwargs) -> Callable:
+        nonlocal stash, stash_kwargs
+        attach_stash_to_function(func, stash, **stash_kwargs)
 
-            stash = HashStash(name=name, dbname=dbname, **stash_kwargs)
-
-        if get_obj_module(func) == "__main__":
-            update_on_src_change = True
-
-        stash = stash.sub_function_results(
-            func,
-            dbname=dbname,
-            update_on_src_change=update_on_src_change,
-            # *stash_args,
-            **stash_kwargs,
-        )
-
-        func.stash = stash
-
-        @log.info
+        @log.debug
         @wraps(func)
         def wrapper(*args, **kwargs):
             from ..serializers import serialize
-            from .misc import ReusableGenerator
+            from .misc import ReusableGenerator, is_method
 
-            nonlocal force, stash, store_args
-            wrapper.stash = stash
-
+            nonlocal force, stash, store_args, func
+            passed_stash = kwargs.pop("_stash", None)
+            if passed_stash is not None:
+                attach_stash_to_function(func, passed_stash)
+            
+            assert hasattr(func,'stash')
+            local_stash = wrapper.stash = func.stash
             local_force = kwargs.pop("_force", force)
+            args = list(args)
+            if is_method(func):
+                args_key = tuple(args[1:])
+            else:
+                args_key = tuple(args)
             key = {
                 # "func": get_obj_addr(func),
-                "args": tuple(args),
+                "args": args_key,
                 "kwargs": kwargs,
             }
             if not store_args:
-                key = encode_hash(stash.serialize(key))
+                key = encode_hash(local_stash.serialize(key))
 
 
             # find it?
             if not local_force:
-                res = stash.get(key,as_function=False)
+                res = local_stash.get(key,as_function=False)
                 if res is not None:
                     log.debug(f"Stash hit for {func.__name__}. Returning stashed result.")
                     return res
@@ -70,7 +65,7 @@ def stashed_result(
             is_generator = inspect.isgenerator(result) or isinstance(result,ReusableGenerator)
             result = list(result) if is_generator else result
             log.debug(f"Caching result for {func.__name__}.")
-            stash[key] = result
+            local_stash.set(key, result)
             return result
 
         return wrapper
@@ -90,6 +85,7 @@ def retry_patiently(max_retries=10, base_delay=0.1, max_delay=10):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
+                    log.debug(f"Caught {e}!!")
                     retries += 1
                     if retries > max_retries:
                         raise  # Re-raise the exception if max retries reached
@@ -119,7 +115,7 @@ class DictContext(UserDict):
     def __exit__(self, exc_type, exc_value, traceback):
         pass  # Nothing happens on close
 
-@log.info
+@log.debug
 def parallelized(
     _func=None,
     num_proc=None,

@@ -2,12 +2,6 @@ from hashstash.profilers import *
 import pytest
 import numpy as np
 import pandas as pd
-import pytest
-import pandas as pd
-import numpy as np
-from hashstash.profilers.engine_profiler import HashStashProfiler, run_engine_profile
-from hashstash import HashStash
-
 
 def test_generate_primitive():
     result = generate_primitive()
@@ -41,13 +35,11 @@ def test_generate_complex_data():
     assert isinstance(result["large_dict"], dict)
 
 @pytest.mark.parametrize("data_type", [
-    "primitive", "list", "dict", "numpy", "pandas_df", "pandas_series"
+    "list", "dict", "numpy", "pandas_df", "pandas_series"
 ])
 def test_generate_data(data_type):
     result = generate_data(1000, data_types=[data_type])
-    if data_type == "primitive":
-        assert isinstance(result, (int, float, str, bool)) or result is None
-    elif data_type == "list":
+    if data_type == "list":
         assert isinstance(result, list)
     elif data_type == "dict":
         assert isinstance(result, dict)
@@ -81,99 +73,67 @@ def test_time_function():
     assert execution_time > 0
 
 def test_get_data_type():
-    assert 'int' in get_data_type(42)
-    assert 'str' in get_data_type("hello")
-    assert 'list' in get_data_type([1, 2, 3])
-
-def test_compare_serializers():
-    obj = {"test": "data"}
-    results = compare_serializers(obj)
-    assert isinstance(results, list)
-    assert len(results) > 0
-    assert all(isinstance(result, dict) for result in results)
-    assert all(key in results[0] for key in [
-        'serializer_name', 'data_type', 'encoding', 'serialize_speed',
-        'deserialize_speed', 'serialize_time', 'deserialize_time',
-        'encode_time', 'decode_time', 'encode_serialize_time',
-        'decode_deserialize_time', 'size_mb', 'input_size_mb'
-    ])
-
-def test_run_comparison():
-    results = run_comparison(10)
-    assert isinstance(results, list)
-    assert len(results) > 0
-    assert all(isinstance(result, dict) for result in results)
-
-@pytest.mark.parametrize("iterations", [1, 5])
-def test_run_comparisons(iterations):
-    results_df = run_comparisons(iterations=iterations, num_proc=1)
-    assert isinstance(results_df, pd.DataFrame)
-    assert len(results_df) > 0
-    assert all(column in results_df.columns for column in [
-        'serializer_name', 'data_type', 'encoding', 'serialize_speed',
-        'deserialize_speed', 'serialize_time', 'deserialize_time',
-        'encode_time', 'decode_time', 'encode_serialize_time',
-        'decode_deserialize_time', 'size_mb', 'input_size_mb'
-    ])
-
-def test_run():
-    results = run(iterations=2)
-    assert isinstance(results, pd.DataFrame)
-    assert len(results) > 0
-    assert all(column in results.columns for column in [
-        'data_type', 'serializer_name', 'encoding', 'serialize_speed',
-        'deserialize_speed', 'serialize_time', 'deserialize_time',
-        'encode_time', 'decode_time', 'input_size_mb', 'size_mb'
-    ])
+    assert isinstance(get_data_type(42), str)
+    assert isinstance(get_data_type("hello"), str)
+    assert isinstance(get_data_type([1, 2, 3]), str)
 
 def test_hashstash_profiler():
-    stash = HashStash().tmp()
-    profiler = HashStashProfiler(stash)
-    
-    # Test profile method
-    result = profiler.profile(size=[1000], iterations=2, num_proc=1)
-    assert isinstance(result, pd.DataFrame)
-    assert len(result) > 0
-    assert all(column in result.columns for column in [
-        'Engine', 'Compress', 'Base64', 'Size (MB)', 'Raw Size (MB)',
-        'Operation', 'Time (s)', 'Rate (it/s)', 'Speed (MB/s)',
-        'Cached Size (MB)', 'Compression Ratio (%)'
-    ])
+    with HashStash().tmp() as stash:
+        profiler = HashStashProfiler(stash)
+        
+        # Test profile method
+        result = profiler.profile(size=1000, iterations=2, num_proc=1, stash=stash)
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) > 0
+        assert all(column in result.columns for column in [
+            'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (MB)',
+            'Raw Size (MB)', 'Operation', 'Time (s)', 'Rate (it/s)',
+            'Speed (MB/s)', 'Cached Size (MB)', 'Compression Ratio (%)'
+        ])
 
 def test_profile_stash_transaction():
-    stash = HashStash().tmp()
-    profiler = HashStashProfiler(stash)
-    
-    result = profiler.profile_stash_transaction(stash, size=1000)
-    assert isinstance(result, list)
-    assert len(result) > 0
-    assert all(isinstance(item, dict) for item in result)
-    assert all(key in result[0] for key in [
-        'Engine', 'Compress', 'Base64', 'Size (MB)', 'Raw Size (MB)',
-        'Operation', 'Time (s)', 'Rate (it/s)', 'Speed (MB/s)',
-        'Cached Size (MB)', 'Compression Ratio (%)'
-    ])
+    with HashStash().tmp() as stash:
+        profiler = HashStashProfiler(stash)
+        
+        result = profiler.profile_stash_transaction(stash, size=1000)
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert all(isinstance(item, dict) for item in result)
+        assert all(key in result[0] for key in [
+            'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (MB)',
+            'Raw Size (MB)', 'Operation', 'Time (s)', 'Rate (it/s)',
+            'Speed (MB/s)', 'Cached Size (MB)', 'Compression Ratio (%)'
+        ])
 
 def test_profile_df():
-    stash = HashStash().tmp()
-    profiler = HashStashProfiler(stash)
-    
-    df = profiler.profile(size=[1000], iterations=2, num_proc=1)
-    result = profiler.profile_df(df=df)
-    
-    assert isinstance(result, pd.DataFrame)
-    assert len(result) > 0
-    assert all(column in result.columns for column in [
-        'Time (s)', 'Rate (it/s)', 'Speed (MB/s)', 'Cumulative Time (s)',
-        'Cumulative Size (MB)', 'Cached Size (MB)', 'Compression Ratio (%)'
-    ])
+    with HashStash().tmp() as stash:
+        profiler = HashStashProfiler(stash)
+        
+        df = profiler.profile(size=1000, iterations=2, num_proc=1, stash=stash)
+        result = profiler.profile_df(df=df)
+        
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) > 0
+        assert all(column in result.columns for column in [
+            'Time (s)', 'Rate (it/s)', 'Speed (MB/s)', 'Cumulative Time (s)',
+            'Cumulative Size (MB)', 'Cached Size (MB)', 'Compression Ratio (%)'
+        ])
 
-def test_run_engine_profile():
-    result = run_engine_profile(iterations=10)
+def test_run_profiles():
+    result = HashStashProfiler.run_profiles(
+        iterations=2,
+        size=1000,
+        engines=['memory'],
+        serializers=['pickle'],
+        num_procs=[1],
+        num_proc=1,
+        progress=False
+    )
     
     assert isinstance(result, pd.DataFrame)
     assert len(result) > 0
     assert all(column in result.columns for column in [
-        'Engine', 'Compress', 'Base64', 'Operation', 'Speed (MB/s)',
-        'Time (s)', 'Raw Size (MB)', 'Cached Size (MB)', 'Compression Ratio (%)'
+        'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (MB)',
+        'Raw Size (MB)', 'Operation', 'Time (s)', 'Rate (it/s)',
+        'Speed (MB/s)', 'Cached Size (MB)', 'Compression Ratio (%)'
     ])

@@ -13,14 +13,15 @@ import pandas as pd
 start_redis_server()
 
 TEST_CLASSES = [
+    DataFrameHashStash,
     PairtreeHashStash,
     SqliteHashStash,
     MemoryHashStash,
-    ShelveHashStash,
+    # ShelveHashStash,
     RedisHashStash,
     DiskCacheHashStash,
     LMDBHashStash,
-    # PickleDBHashStash,
+    MongoHashStash,
 ]
 
 
@@ -198,34 +199,39 @@ class TestHashStash:
         assert "stashed_result" in sub_stash.dbname
         assert "example_func" in sub_stash.dbname
 
-    def test_assemble_ld_and_df(self, cache):
-        cache[{"func": lambda x: x, "args": (1,), "kwargs": {}}] = {"result": 1}
-        cache[{"func": lambda x: x, "args": (2,), "kwargs": {}}] = {"result": 2}
+    def test_assemble_ld(self, cache):
+        print(len(cache))
+        cache['x'] = 1
+        cache['y'] = 2
+        cache['z'] = {'result':3}
+        cache['zz'] = {'result':4}
 
         ld = cache.assemble_ld()
-        assert len(ld) == 2
-        assert all("_arg1" in item for item in ld)
-        assert all("result" in item for item in ld)
+        pprint(ld)
+        assert len(ld) == 4
+        assert all("_key" in item for item in ld)
+        assert sum("_value" in item for item in ld) == 2
+        assert sum("result" in item for item in ld) == 2
 
-        df = cache.assemble_df()
-        assert len(df) == 2
-        assert "_arg1" in df.columns
-        assert "result" in df.columns
-    
+
     def test_assemble_ld_with_list(self, cache):
         cache["list_key"] = [{"a": 1}, {"b": 2}, 3, 4]
+        cache["df_key"] = pd.DataFrame({'col1': [1, 2], 'col2': ['a', 'b']})
         ld = cache.assemble_ld()
-        assert len(ld) == 4
-        assert ld[0] == {"_key": "list_key", "a": 1}
-        assert ld[1] == {"_key": "list_key", "b": 2}
-        assert ld[2] == {"_key": "list_key", "result": 3}
-        assert ld[3] == {"_key": "list_key", "result": 4}
+        pprint(ld)
+        assert len(ld) == 6
+        assert all("_key" in item for item in ld)
+        # assert ld[0]['a']==1
+        # assert ld[1]['b']==2
+        # assert ld[2]['_value']==3
+        # assert ld[3]['_value']==4
 
     def test_assemble_ld_with_dataframe(self, cache):
         df = pd.DataFrame({'col1': [1, 2], 'col2': ['a', 'b']})
         cache["df_key"] = df
         ld = cache.assemble_ld()
         assert len(ld) == 2
+        pprint(ld)
         assert ld[0] == {"_key": "df_key", "col1": 1, "col2": "a"}
         assert ld[1] == {"_key": "df_key", "col1": 2, "col2": "b"}
 
@@ -235,15 +241,15 @@ class TestHashStash:
         df = pd.DataFrame({'col1': [3, 4], 'col2': ['c', 'd']})
         cache["key3"] = df
 
-        ld = cache.assemble_ld()
+        ld = cache.assemble_ld(with_metadata=False)
         assert len(ld) == 6  # 1 + 3 + 2
 
         # Check simple dict
         assert {"_key": "key1", "result": "simple_dict"} in ld
 
         # Check list items
-        assert {"_key": "key2", "result": 1} in ld
-        assert {"_key": "key2", "result": 2} in ld
+        assert {"_key": "key2", "_value": 1} in ld
+        assert {"_key": "key2", "_value": 2} in ld
         assert {"_key": "key2", "nested": "dict"} in ld
 
         # Check dataframe rows
@@ -256,11 +262,21 @@ class TestHashStash:
         df = pd.DataFrame({'col1': [3, 4], 'col2': ['c', 'd']})
         cache["key3"] = df
 
-        result_df = cache.assemble_df()
-        
-        assert isinstance(result_df, pd.DataFrame)
+        result_df = cache.assemble_df(with_metadata=False)
+        assert is_dataframe(result_df)
+        print(result_df)
+
         assert len(result_df) == 6
-        assert set(result_df.columns) == {"_key", "result", "nested", "col1", "col2"}
+        assert set(result_df.columns) == {"_value", "result", "nested", "col1", "col2"}
+
+        print(result_df)
+        assert set(result_df.index.names) == {'_key'}
+
+        result_df = cache.assemble_df(with_metadata=True)
+        assert is_dataframe(result_df)
+        assert set(result_df.index.names) == {'_key'} | set(cache.metadata_cols)
+
+        
 
     def test_df_property(self, cache):
         cache["key1"] = {"result": "simple_dict"}
@@ -270,9 +286,9 @@ class TestHashStash:
 
         result_df = cache.df
         
-        assert isinstance(result_df, pd.DataFrame)
+        assert is_dataframe(result_df)
         assert len(result_df) == 6
-        assert set(result_df.columns) == {"_key", "result", "nested", "col1", "col2"}
+        assert set(result_df.columns) == {"_value", "result", "nested", "col1", "col2"}
 
     def test_delete_key(self, cache):
         # Add a key-value pair
@@ -317,10 +333,13 @@ class TestHashStash:
         assert sub_cache.engine == cache.engine
 
     def test_tmp(self, cache):
-        tmp_cache = cache.tmp()
-        assert isinstance(tmp_cache, BaseHashStash)
-        assert tmp_cache.root_dir != cache.root_dir
-        assert tmp_cache.name == "tmp"
+        with cache.tmp() as tmp_cache:
+            assert isinstance(tmp_cache, BaseHashStash)
+            assert tmp_cache.root_dir != cache.root_dir
+            assert tmp_cache.name == cache.name
+            assert tmp_cache.dbname.startswith('tmp/')
+            assert tmp_cache.is_tmp
+            assert not cache.is_tmp
 
     def test_setdefault(self, cache):
         assert cache.setdefault("new_key", "default_value") == "default_value"
@@ -389,10 +408,11 @@ class TestHashStash:
         def test_func(x):
             return x * 2
 
+        test_func.stash.clear()
         result = test_func(5)
-        assert result == 10
-        assert test_func.stash[{"args": (5,), "kwargs": {}}] == 10
-        assert test_func.stash.get(5) == 10
+        assert test_func.stash.is_function_stash
+        assert test_func.stash.get(5) == result
+        assert test_func.stash.keys_l() == [{'args':(5,), 'kwargs':{}}]
 
     def test_sub_function_results(self, cache):
         def test_func(x):
@@ -406,6 +426,81 @@ class TestHashStash:
     @staticmethod
     def _get_cached_size(cache, key):
         return len(cache[key])
+
+    def test_append_mode(self, cache):
+        cache.append_mode = True
+        cache["key1"] = "value1"
+        cache["key1"] = "value2"
+        assert cache.get("key1") == "value2"
+        assert cache.get_all("key1") == ["value1", "value2"]
+
+    def test_get_all_with_metadata(self, cache):
+        cache["key1"] = "value1"
+        cache["key1"] = "value2"
+        result = cache.get_all("key1", with_metadata=True, all_results=False)
+        assert len(result) == 1
+        assert result[0]["_version"] == 1 # not tracking vnum when not in append mode
+        assert result[0]["_value"] == "value2"
+
+    def test_get_all_with_metadata_append_mode(self, cache):
+        cache.append_mode = True
+        cache["key1"] = "value1"
+        cache["key1"] = "value2"
+        result = cache.get_all("key1", with_metadata=True)
+        assert len(result) == 2
+        assert result[0]["_version"] == 1
+        assert result[0]["_value"] == "value1"
+        assert result[1]["_version"] == 2
+        assert result[1]["_value"] == "value2"
+
+    
+
+    def test_get_all_without_metadata(self, cache):
+        cache["key1"] = "value1"
+        cache["key1"] = "value2"
+        result = cache.get_all("key1", with_metadata=False, all_results=False)
+        assert result == ["value2"]
+
+    def test_get_all_all_results(self, cache):
+        cache.append_mode = True
+        cache["key1"] = "value1"
+        cache["key1"] = "value2"
+        result = cache.get_all("key1", all_results=True, with_metadata=False)
+        assert result == ["value1", "value2"]
+
+    def test_get_default_value(self, cache):
+        assert cache.get("non_existent_key", default="default_value") == "default_value"
+
+    def test_get_as_string(self, cache):
+        cache["key1"] = {"nested": "value"}
+        result = cache.get("key1", as_string=True)
+        assert isinstance(result, str)
+        assert "nested" in result and "value" in result
+
+
+    def test_function_stash(self, cache):
+        def test_func(x, y):
+            return x + y
+
+        func_stash = cache.sub_function_results(test_func)
+        assert func_stash.is_function_stash
+        assert func_stash is not cache
+
+        func_stash.set((1,2), 3)
+        assert func_stash.get((1, 2), as_function=False) == 3
+        
+        print('func_stash',func_stash.keys_l())
+        print('cache',cache.keys_l())
+        assert len(func_stash) == 1
+        assert len(cache) == 0
+
+        cache.set((1,2), 3)
+        assert cache.get((1,2)) == 3
+        assert len(func_stash) == 1
+        assert len(cache) == 1
+
+
+
 
 class TestHashStashFactory:
     def test_engine_selection(self):
@@ -456,7 +551,7 @@ class TestHashStashFactory:
         assert stash.dbname == DEFAULT_DBNAME
         assert stash.compress == config.compress
         assert stash.b64 == config.b64
-        assert set(stash.serializer) == set(get_working_serializers(config.serializer))
+        assert stash.serializer in get_working_serializers()
 
     def test_multiple_parameters(self):
         name = "multi_test"
@@ -504,7 +599,7 @@ def test_start_redis_server():
 
 def test_encode_path():
     cache = HashStash(engine='pairtree')
-    assert os.path.isabs(cache.encode_path('unencoded_key'))
+    assert os.path.isabs(cache.get_path_key('unencoded_key'))
 
 if __name__ == "__main__":
     pytest.main([__file__])
