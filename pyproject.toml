@@ -11,7 +11,7 @@ authors = [
 description = "A simple file-based caching system using hash-based file names"
 readme = "README.md"
 requires-python = ">=3.7"
-dependencies = ["jsonpickle"]
+dependencies = []
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -26,36 +26,71 @@ version = {attr = "hashstash.__version__"}
 "Bug Tracker" = "https://github.com/quadrismegistus/hashstash/issues"
 
 [project.optional-dependencies]
-dev = [
+jsonpickle = ["jsonpickle", "numpy", "pandas"]
+
+dataframe = ["pandas", "polars", "numpy", "pyarrow","fastparquet"]
+sqlite = ["sqlitedict"]
+redis = ["redis", "redis_dict"]
+mongo = ["pymongo"]
+lmdb = ["lmdb"]
+diskcache = ["diskcache"]
+
+pandas = ["pandas", "numpy"]
+polars = ["pandas", "polars", "numpy"]
+filebased = [
+  "pandas", "polars", "numpy", "pyarrow","fastparquet", 
   "sqlitedict", 
-  "redis", 
-  "redis_dict", 
+  "diskcache",
+  "lmdb"
+]
+servers = [
+  "redis", "redis_dict", "pymongo",
+]
+engines = [
+    "pandas", "polars", "numpy", "pyarrow","fastparquet",
+    "lmdb",
+    "sqlitedict",
+    "diskcache", 
+    "redis", "redis_dict",
+    "mongo",
+]
+dev = [
+  # engines
+  "pandas", "polars", "numpy", "pyarrow","fastparquet",
+  "lmdb",
+  "sqlitedict",
   "diskcache", 
-  "lmdb", 
-  "pickledb", 
+  "redis", "redis_dict",
+  "mongo",
+
+  # serializers
+  "jsonpickle",# "numpy", "pandas"
   "orjson",
-  "pandas", 
-  "numpy", 
-  "tqdm",
+  
+  # utils
+  "tqdm", 
   "plotnine",
-  "pytest", 
-  "pytest-cov", 
-  "setuptools-scm", 
-  "ipython", 
+
+  # dev tools
+  "pytest", "pytest-cov", "setuptools-scm", "ipython", 
 ]
 all = [
-  "sqlitedict", 
-  "redis", 
-  "redis_dict", 
+  # engines
+  "pandas", "polars", "numpy", "pyarrow","fastparquet", #"dataframe",
+  "lmdb",
+  "sqlitedict",
   "diskcache", 
-  "lmdb", 
-  "pickledb", 
+  "redis", "redis_dict",
+  "mongo",
+
+  # serializers
+  "jsonpickle",# "numpy", "pandas"
   "orjson",
-  "pandas", 
-  "numpy", 
-  "tqdm"
+  
+  # utils
+  "tqdm", 
+  "plotnine",
 ]
-engines = ["sqlitedict", "redis", "redis_dict", "diskcache", "lmdb", "pickledb"]
 
 [tool.setuptools]
 packages = {find = {}}

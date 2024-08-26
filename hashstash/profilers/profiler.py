@@ -1,7 +1,5 @@
 from . import *
 
-
-
 def generate_primitive():
     primitives = [
         lambda: random.randint(-1000000, 1000000),
@@ -17,27 +15,41 @@ def generate_primitive():
     return random.choice(primitives)()
 
 
-def generate_numpy_array(max_dim: int = 3, max_size: int = 100) -> np.ndarray:
-    shape = tuple(
-        random.randint(1, max_size) for _ in range(random.randint(1, max_dim))
-    )
-    return np.random.rand(*shape)
+def generate_numpy_array(max_dim: int = 3, max_size: int = 100) -> 'ndarray':
+    try:
+        import numpy as np
+        shape = tuple(
+            random.randint(1, max_size) for _ in range(random.randint(1, max_dim))
+        )
+        return np.random.rand(*shape)
+    except ImportError:
+        raise ImportError("NumPy is required for this function.")
+    
 
 
-def generate_pandas_dataframe(max_rows: int = 100, max_cols: int = 10) -> pd.DataFrame:
-    rows = random.randint(1, max(2, max_rows))
-    cols = random.randint(1, max(2, max_cols))
-    data = {
-        f"col_{i}": [generate_primitive() for _ in range(rows)] for i in range(cols)
-    }
-    odf=pd.DataFrame(data)
-    return odf
+def generate_pandas_dataframe(max_rows: int = 100, max_cols: int = 10) -> 'DataFrame':
+    try:
+        import pandas as pd
+        rows = random.randint(1, max(2, max_rows))
+        cols = random.randint(1, max(2, max_cols))
+        data = {
+            f"col_{i}": [generate_primitive() for _ in range(rows)] for i in range(cols)
+        }
+        return pd.DataFrame(data)
+    except ImportError:
+        raise ImportError("Pandas is required for this function.")
+    
 
 
-def generate_pandas_series(max_length: int = 100) -> pd.Series:
-    length = random.randint(1, max(2, max_length))
-    data = [generate_primitive() for _ in range(length)]
-    return pd.Series(data)
+def generate_pandas_series(max_length: int = 100) -> 'Series':
+    try:
+        import pandas as pd
+        length = random.randint(1, max(2, max_length))
+        data = [generate_primitive() for _ in range(length)]
+        return pd.Series(data)
+    except ImportError:
+        raise ImportError("Pandas is required for this function.")
+
 
 
 def generate_complex_data(size: int) -> Dict[str, Any]:
@@ -56,19 +68,19 @@ def generate_complex_data(size: int) -> Dict[str, Any]:
 
 @log.debug
 def generate_data(
-    target_size: int,
+    target_size: Union[int, List[int]],
     data_types: List[str] = [
-        "primitive",
         "list",
         "dict",
         "numpy",
         "pandas_df",
         "pandas_series",
-        "prosodic_text",
-        "prosodic_line",
     ],
     depth: int = 1,
 ) -> Any:
+    if isinstance(target_size, list):
+        target_size = target_size[0]  # Take the first element if it's a list
+
     if depth <= 0:
         return generate_primitive()
 

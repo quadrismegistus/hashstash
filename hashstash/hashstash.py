@@ -2,6 +2,7 @@
 from .constants import *
 
 ## standard library
+import atexit
 import uuid
 import tempfile
 import importlib
@@ -39,6 +40,7 @@ import functools
 import logging
 import time
 import random
+import re
 import string
 from contextlib import contextmanager
 from functools import lru_cache, wraps, partial

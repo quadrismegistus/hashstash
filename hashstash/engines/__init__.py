@@ -4,7 +4,8 @@ from .memory import *
 from .pairtree import *
 from .shelve import *
 from .diskcache import *
-from .pickledb import *
 from .redis import *
+from .mongo import *
 from .sqlite import *
 from .lmdb import *
+from .dataframe import *
