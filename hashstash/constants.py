@@ -10,7 +10,7 @@ import time
 import random
 
 DEFAULT_ROOT_DIR = os.path.expanduser("~/.cache/hashstash")
-DEFAULT_NAME = "default_cache"
+DEFAULT_NAME = "default_stash"
 DEFAULT_PATH = os.path.join(DEFAULT_ROOT_DIR, DEFAULT_NAME)
 DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, ".redis")
 DEFAULT_MONGO_DIR = os.path.join(DEFAULT_ROOT_DIR, ".mongo")

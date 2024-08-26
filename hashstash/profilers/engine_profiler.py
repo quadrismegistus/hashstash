@@ -30,6 +30,7 @@ class HashStashProfiler:
         progress: bool = True,
         **kwargs,
     ):
+        import pandas as pd
         tasks = [{"size": size} for _ in range(iterations)]
         with self.stash.tmp() as tmp_stash:
             results = pmap(
@@ -131,6 +132,7 @@ class HashStashProfiler:
         df=None,
         **kwargs,
     ):
+        import pandas as pd
         df = self.profile(*args, **kwargs) if df is None else df
         if operations:
             df = df[df.Operation.isin(operations)]
@@ -165,6 +167,7 @@ class HashStashProfiler:
         progress_inner=False,
         **kwargs,
     ):
+        import pandas as pd
         opts = []
         for engine in engines:
             for serializer in serializers:

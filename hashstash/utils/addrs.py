@@ -1,5 +1,4 @@
 from . import *
-import re
 
 def get_obj_module(obj):
     if hasattr(obj, "__module__"): return obj.__module__
@@ -165,3 +164,29 @@ def can_import_object(obj):
         return flexible_import(obj) is not None
     except ImportError:
         return False
+
+def get_file_addr():
+    """
+    Get the address of the current file module.
+    
+    Returns:
+        str: The full address of the current file module.
+    """
+    frame = inspect.currentframe()
+    try:
+        # Get the frame of the caller (one level up)
+        caller_frame = frame.f_back
+        if caller_frame:
+            # Get the filename of the caller
+            filename = caller_frame.f_code.co_filename
+            # Get the module name
+            module = inspect.getmodulename(filename)
+            if module:
+                # Get the full module path
+                module_path = inspect.getmodule(caller_frame).__name__
+                return module_path
+            else:
+                # If we can't get the module name, return the filename
+                return filename
+    finally:
+        del frame  # Avoid reference cycles
