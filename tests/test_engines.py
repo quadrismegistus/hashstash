@@ -10,7 +10,7 @@ import pytest
 import pandas as pd
 # logger.setLevel(logging.DEBUG)
 
-start_redis_server()
+start_redis_server() # run at beginning of tests
 
 TEST_CLASSES = [
     DataFrameHashStash,
@@ -435,6 +435,7 @@ class TestHashStash:
         assert cache.get_all("key1") == ["value1", "value2"]
 
     def test_get_all_with_metadata(self, cache):
+        cache.append_mode = False
         cache["key1"] = "value1"
         cache["key1"] = "value2"
         result = cache.get_all("key1", with_metadata=True, all_results=False)
@@ -589,9 +590,8 @@ def redis_client():
     return redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 
 def test_start_redis_server():
-    # In GitHub Actions, Redis is already running, so this should just connect
     start_redis_server()
-    time.sleep(10)
+    time.sleep(5)
     start_redis_server()
     
     # Verify that we can connect to Redis

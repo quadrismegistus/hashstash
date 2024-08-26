@@ -20,6 +20,8 @@ DEFAULT_DATAFRAME_IO_ENGINE = 'csv'
 OPTIMAL_DATAFRAME_DF_ENGINE = 'pandas'
 DEFAULT_DATAFRAME_DF_ENGINE = 'pandas'
 
+DEFAULT_APPEND_MODE = True
+
 DEFAULT_DBNAME = "main"
 DEFAULT_FILENAME = "db"
 
@@ -74,11 +76,8 @@ OBJ_SRC_KEY = "__py_src__"
 
 SERIALIZER_TYPES = Literal[
     "hashstash",          # flexible, but not as fast as jsonpickle
-    "jsonpickle_ext",  # if fails to decode a value, so will jsonpickle
-    "jsonpickle",      # will work as backup if numpy and pandas are not installed
+    "jsonpickle",      # pretty flexible json replacement for pickle
     "pickle",          # fastest but not platform independent
-    "orjson",          # cannot handle pandas etc
-    "json",            # cannot handle pandas and numpy etc
 ]
 DEFAULT_SERIALIZER = "hashstash"
 SERIALIZERS = list(SERIALIZER_TYPES.__args__)

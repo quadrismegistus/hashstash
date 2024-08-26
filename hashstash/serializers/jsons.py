@@ -25,21 +25,10 @@ def deserialize_orjson(obj):
 
 def serialize_jsonpickle(obj):
     import jsonpickle
-    _unregister_jsonpickle_handlers()
-    return jsonpickle.dumps(obj)
-
-
-def serialize_jsonpickle_ext(obj):
-    import jsonpickle
     _register_jsonpickle_handlers()
     return jsonpickle.dumps(obj)
 
 def deserialize_jsonpickle(obj):
-    import jsonpickle
-    _unregister_jsonpickle_handlers()
-    return jsonpickle.loads(obj)
-
-def deserialize_jsonpickle_ext(obj):
     import jsonpickle
     _register_jsonpickle_handlers()
     return jsonpickle.loads(obj)

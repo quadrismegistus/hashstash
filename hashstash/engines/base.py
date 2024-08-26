@@ -35,7 +35,9 @@ class BaseHashStash(MutableMapping):
     _connection_lock = threading.Lock()
     _last_used = {}
     CONNECTION_TIMEOUT = 60  # Close connections after 60 seconds of inactivity
-
+    append_mode = DEFAULT_APPEND_MODE
+    is_tmp = False
+    is_function_stash = False
 
 
     @log.debug
@@ -51,7 +53,7 @@ class BaseHashStash(MutableMapping):
         children: List["BaseHashStash"] = None,
         is_function_stash=None,
         is_tmp=None,
-        append_mode: bool = False,
+        append_mode: bool = None,
         **kwargs,
     ) -> None:
         self.name = name if name is not None else self.name
@@ -62,9 +64,9 @@ class BaseHashStash(MutableMapping):
         self.dbname = dbname if dbname is not None else self.dbname
         self.parent = parent
         self.children = [] if not children else children
-        self.is_function_stash = is_function_stash
-        self.is_tmp = is_tmp
-        self.append_mode = append_mode
+        self.is_function_stash = is_function_stash if is_function_stash is not None else self.is_function_stash
+        self.is_tmp = is_tmp if is_tmp is not None else self.is_tmp
+        self.append_mode = append_mode if append_mode is not None else self.append_mode
         encstr = "+".join(
             filter(
                 None, ["zlib" if self.compress else None, "b64" if self.b64 else None]

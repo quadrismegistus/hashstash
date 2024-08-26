@@ -13,6 +13,7 @@ class MetaDataFrame:
             self.df_engine = get_dataframe_engine(data)
         else:
             self.df_engine = get_df_engine(df_engine)
+
         self.prefix_index_cols = prefix_index_cols
         self.reset_prefix = reset_prefix
 
@@ -21,6 +22,7 @@ class MetaDataFrame:
                 data = data.data
         
         self.data = data
+        
         
 
     @cached_property
@@ -138,7 +140,15 @@ class MetaDataFrame:
         return self.df.max()
 
     def __eq__(self, other):
-        return self.df == other
+        from ..serializers import serialize_custom
+        other = MetaDataFrame(other) if not isinstance(other, MetaDataFrame) else other
+        return serialize_custom(self) == serialize_custom(other)
+
+    def to_dict(self):
+        return {
+            'data': self.reset_index().to_pandas().df,
+            'df_engine': self.df_engine,
+        }
 
     def to_csv(self, path: str, index: bool = False, **kwargs):
         if self.is_pandas:
@@ -201,6 +211,14 @@ class MetaDataFrame:
                 ),
                 self.df_engine,
             )
+        
+    def __reduce__(self):
+        # Return a tuple of (callable, args) that allows recreation of this object
+        return (self.__class__.from_dict, (self.to_dict(),))
+    
+    @classmethod
+    def from_dict(cls, data):
+        return cls(**data)
 
     def concat(self, *others):
         others = [
@@ -258,7 +276,6 @@ class MetaDataFrame:
         if io_engine is None:
             io_engine = path.split(".")[-1].lower()
             log.info(f"inferring io_engine from file extension: {io_engine}")
-
         io_engine = get_io_engine(io_engine)
         # Write the io_engine to a separate file
         if path.split(".")[-1].lower() != io_engine:
@@ -526,7 +543,7 @@ def set_index(
 
 def has_index(df):
     if not is_dataframe(df):
-        return
+        raise ValueError('not a dataframe')
     if get_dataframe_engine(df) == "pandas":
         return len([x for x in df.index.names if x is not None]) > 0
     elif get_dataframe_engine(df) == "polars":

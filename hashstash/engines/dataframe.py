@@ -1,15 +1,6 @@
 from . import *
 from .pairtree import PairtreeHashStash
-import pandas as pd
-import time
-import pyarrow as pa
-import pyarrow.parquet as pq
-import pyarrow.feather as feather
-import os
 from ..utils.dataframes import MetaDataFrame
-
-INDICATOR_BYTES = "bytes"
-
 
 class DataFrameHashStash(PairtreeHashStash):
     engine = "dataframe"
@@ -164,10 +155,10 @@ class DataFrameHashStash(PairtreeHashStash):
         with_metadata=False,
         **kwargs,
     ):
-        df = self.assemble_df(
+        mdf = self.assemble_df(
             all_results=all_results,
             with_metadata=with_metadata,
             **kwargs,
         )
-        ld = df.reset_index().to_dict(orient="records")
+        ld = mdf.reset_index().to_pandas().df.to_dict(orient="records")
         return filter_ld(ld, no_nan=True)

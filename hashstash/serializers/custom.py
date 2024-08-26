@@ -154,6 +154,24 @@ class IterableSerializer(CustomSerializer):
         obj = flexible_import(data['__py__'])
         return obj(_deserialize_custom(data['__data__']))
 
+class MetaDataFrameSerializer(CustomSerializer):
+    @staticmethod
+    def serialize(obj):
+        data = obj.to_dict()
+        data['data'] = PandasDataFrameSerializer.serialize(data['data'])
+        return {
+            '__py__': get_obj_addr(obj),
+            '__data__': data
+        }
+
+    
+    @staticmethod
+    def deserialize(data):
+        data = data['__data__']
+        data['data'] = PandasDataFrameSerializer.deserialize(data['data'])
+        return MetaDataFrame(**data)
+
+
 class PandasDataFrameSerializer(CustomSerializer):
     @staticmethod
     def serialize(obj):
@@ -506,6 +524,7 @@ CUSTOM_SERIALIZERS = {
     'pathlib.PosixPath': PathSerializer.serialize,
     'pathlib.WindowsPath': PathSerializer.serialize,
     'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.serialize,
+    'hashstash.utils.dataframes.MetaDataFrame': MetaDataFrameSerializer.serialize,
 }
 
 CUSTOM_DESERIALIZERS = {
@@ -523,4 +542,5 @@ CUSTOM_DESERIALIZERS = {
     'pathlib.PosixPath': PathSerializer.deserialize,
     'pathlib.WindowsPath': PathSerializer.deserialize,
     'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.deserialize,
+    'hashstash.utils.dataframes.MetaDataFrame': MetaDataFrameSerializer.deserialize,
 }
