@@ -51,7 +51,7 @@ engines = [
     "lmdb",
     "sqlitedict",
     "diskcache", 
-    "redis", 
+    "redis", "redis_dict",
     "mongo",
 ]
 dev = [
@@ -60,7 +60,7 @@ dev = [
   "lmdb",
   "sqlitedict",
   "diskcache", 
-  "redis", 
+  "redis", "redis_dict",
   "mongo",
 
   # serializers
@@ -80,7 +80,7 @@ all = [
   "lmdb",
   "sqlitedict",
   "diskcache", 
-  "redis", 
+  "redis", "redis_dict",
   "mongo",
 
   # serializers
