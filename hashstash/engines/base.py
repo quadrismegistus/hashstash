@@ -2,7 +2,9 @@ from . import *
 import time
 import threading
 from contextlib import contextmanager
+
 _connection_pool = {}
+
 
 class BaseHashStash(MutableMapping):
     engine = "base"
@@ -19,16 +21,16 @@ class BaseHashStash(MutableMapping):
     filename_ext = ".db"
     filename_is_dir = False
     to_dict_attrs = [
-        "engine",
+        "root_dir",
         "name",
+        "dbname",
+        "engine",
+        "serializer",
         "compress",
         "b64",
-        "serializer",
-        "root_dir",
-        "dbname",
+        "append_mode",
         "is_function_stash",
         "is_tmp",
-        "append_mode",
     ]
     metadata_cols = ["_version"]
     _connection_pool = _connection_pool
@@ -39,8 +41,7 @@ class BaseHashStash(MutableMapping):
     is_tmp = False
     is_function_stash = False
 
-
-    @log.debug
+    @log.trace
     def __init__(
         self,
         name: str = None,
@@ -60,11 +61,17 @@ class BaseHashStash(MutableMapping):
         self.compress = compress if compress is not None else config.compress
         self.b64 = b64 if b64 is not None else config.b64
         self.serializer = serializer if serializer is not None else config.serializer
-        self.root_dir = root_dir if root_dir is not None else self.root_dir
+        self.root_dir = os.path.expanduser(
+            root_dir if root_dir is not None else self.root_dir
+        )
         self.dbname = dbname if dbname is not None else self.dbname
         self.parent = parent
         self.children = [] if not children else children
-        self.is_function_stash = is_function_stash if is_function_stash is not None else self.is_function_stash
+        self.is_function_stash = (
+            is_function_stash
+            if is_function_stash is not None
+            else self.is_function_stash
+        )
         self.is_tmp = is_tmp if is_tmp is not None else self.is_tmp
         self.append_mode = append_mode if append_mode is not None else self.append_mode
         encstr = "+".join(
@@ -78,6 +85,7 @@ class BaseHashStash(MutableMapping):
         if self.filename_ext:
             subnames.append(get_fn_ext(self.filename_ext))
         # print('subnames',subnames)
+        self.filename = ".".join(subnames)
         self.path = os.path.join(
             (
                 self.name
@@ -86,34 +94,33 @@ class BaseHashStash(MutableMapping):
             ),
             self.dbname,
             "dbs",
-            ".".join(subnames),
+            self.filename,
         )
         self.path_dirname = (
             self.path if self.filename_is_dir else os.path.dirname(self.path)
         )
-        
 
     @staticmethod
     def _remove_dir(dir_path):
         rmtreefn(dir_path)
 
-    @log.debug
+    @log.trace
     def encode(self, *args, **kwargs):
         return encode(*args, b64=self.b64, compress=self.compress, **kwargs)
 
-    @log.debug
+    @log.trace
     def decode(self, *args, **kwargs):
         return decode(*args, b64=self.b64, compress=self.compress, **kwargs)
 
-    @log.debug
+    @log.trace
     def serialize(self, *args, **kwargs):
         return serialize(*args, serializer=self.serializer, **kwargs)
 
-    @log.debug
+    @log.trace
     def deserialize(self, *args, **kwargs):
         return deserialize(*args, serializer=self.serializer, **kwargs)
 
-    @log.debug
+    @log.trace
     def to_dict(self):
         """
 
@@ -135,6 +142,7 @@ class BaseHashStash(MutableMapping):
         d = {}
         for attr in self.to_dict_attrs:
             d[attr] = getattr(self, attr)
+        d["filename"] = self.filename
         return d
 
     @staticmethod
@@ -156,12 +164,12 @@ class BaseHashStash(MutableMapping):
     def get_db(self):
         # This method should be implemented by subclasses
         raise NotImplementedError("Subclasses must implement get_db method")
-    
+
     @contextmanager
     @retry_patiently()
     def get_connection(self):
         if self.path not in self._connection_pool:
-            log.info(f'Opening {self.engine} at {self.path}')
+            log.debug(f"Opening {self.engine} at {self.path}")
             self._connection_pool[self.path] = self.get_db()
             self._last_used[self.path] = time.time()
         try:
@@ -186,17 +194,19 @@ class BaseHashStash(MutableMapping):
         conn = cls._connection_pool.get(path)
         if conn is not None:
             cls._close_connection(conn)
-            cls._connection_pool.pop(path,None)
-            cls._last_used.pop(path,None)
+            cls._connection_pool.pop(path, None)
+            cls._last_used.pop(path, None)
 
     @staticmethod
     def _close_connection(connection):
         # Default implementation, can be overridden by subclasses
-        if hasattr(connection, 'close'):
-            connection.close()
+        if hasattr(connection, "close"):
+            try:
+                connection.close()
+            except Exception as e:
+                log.warn(f"error closing connection: {e}")
         else:
-            log.warn(f'how does one close connection of type {connection}?')
-        
+            log.warn(f"how does one close connection of type {connection}?")
 
     @property
     def data(self):
@@ -207,32 +217,32 @@ class BaseHashStash(MutableMapping):
             return False
         return self.to_dict() == other.to_dict()
 
-    @log.debug
+    @log.trace
     def __enter__(self):
         # if not self._lock.locked():
         #     self._lock.acquire()
         return self
 
-    @log.debug
+    @log.trace
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
         # if self._lock.locked():
-            # self._lock.release()
+        # self._lock.release()
         # if self.is_tmp:
         # self._remove_dir(self.path)
 
-    @log.debug
+    @log.trace
     def __getitem__(self, unencoded_key: str) -> Any:
         obj = self.get(unencoded_key)
         if obj is None:
             raise KeyError(unencoded_key)
         return obj
 
-    @log.debug
+    @log.trace
     def __setitem__(self, unencoded_key: str, unencoded_value: Any) -> None:
         self.set(unencoded_key, unencoded_value)
 
-    @log.debug
+    @log.trace
     def get(
         self,
         unencoded_key: Any = None,
@@ -256,7 +266,7 @@ class BaseHashStash(MutableMapping):
         value = values[-1] if values else default
         return self.serialize(value) if as_string else value
 
-    @log.debug
+    @log.trace
     def get_all(
         self,
         unencoded_key: Any = None,
@@ -281,20 +291,24 @@ class BaseHashStash(MutableMapping):
         values = self.decode_value(encoded_value)
         if with_metadata:
             values = [
-                {"_version": vi + 1, "_value": value}
-                for vi, value in enumerate(values)
+                {"_version": vi + 1, "_value": value} for vi, value in enumerate(values)
             ]
         if not self._all_results(all_results):
             values = values[-1:]
         return values
 
     @staticmethod
-    def get_func_key(*args, **kwargs):
-        if args and args[0] == None:
-            args = args[1:]
-        return {"args": tuple(args), "kwargs": kwargs}
+    @log.info
+    def new_function_key(*args, store_args=True, **kwargs):
+        # if args and args[0] == None:
+            # args = args[1:]
+        kwargs = {k: v for k, v in kwargs.items() if k and k[0] != "_"}
+        key = {"args": tuple(args), "kwargs": kwargs}
+        if not store_args:
+            key = encode_hash(serialize(key))
+        return key
 
-    @log.debug
+    @log.trace
     def set(self, unencoded_key: Any, unencoded_value: Any, append=None) -> None:
         encoded_key = self.encode_key(unencoded_key)
         new_unencoded_value = self.new_unencoded_value(
@@ -305,17 +319,66 @@ class BaseHashStash(MutableMapping):
         encoded_value = self.encode_value(new_unencoded_value)
         self._set(encoded_key, encoded_value)
 
-    @log.debug
+    @log.trace
+    def run(
+        self,
+        func,
+        *args,
+        _store_args=True,
+        _force=False,
+        **kwargs,
+    ):
+        stash = self.attach_func(func)# if getattr(func,'stash',None) is None else func.stash
+        unencoded_key = stash.new_function_key(
+            *args, 
+            store_args=_store_args, 
+            **kwargs
+        )
+        log.debug(f'key = {unencoded_key}')
+        log.debug(f'key = {serialize(unencoded_key)}')
+        log.debug(f'key = {stash.encode_key(unencoded_key)}')
+        if not _force:
+            res = stash.get(
+                unencoded_key,
+                as_function=False,
+                **kwargs,
+            )
+            if res is not None:
+                log.debug(f"Stash hit for {func.__name__}. Returning stashed result.")
+                return res
+
+        # didn't find
+        note = "Forced execution" if _force else "Stash miss"
+        log.debug(f"{note} for {func.__name__}. Executing function.")
+
+        # call func
+        result = func(*args, **kwargs)
+        result = list(result) if is_generator(result) else result
+        log.info(f"Caching result for {func.__name__}")
+        stash.set(unencoded_key, result)
+        return result
+    
+    def attach_func(self, func):
+        local_stash = self.sub_function_results(func)
+        func.stash = local_stash
+        funcx=func
+        while getattr(funcx,'__wrapped__',None):
+            funcx=funcx.__wrapped__
+            funcx.stash = self
+        return local_stash
+        
+
+    @log.info
     def new_unencoded_key(self, unencoded_key: Any, *args, as_function=None, **kwargs):
         if self.is_function_stash and as_function is not False:
             if not (
                 isinstance(unencoded_key, dict)
                 and set(unencoded_key.keys()) == {"args", "kwargs"}
             ):
-                unencoded_key = self.get_func_key(unencoded_key, *args, **kwargs)
+                unencoded_key = self.new_function_key(unencoded_key, *args, **kwargs)
         return unencoded_key
 
-    @log.debug
+    @log.trace
     def new_unencoded_value(
         self,
         unencoded_value: Any,
@@ -331,13 +394,13 @@ class BaseHashStash(MutableMapping):
             new_unencoded_value = [unencoded_value]
         return new_unencoded_value
 
-    @log.debug
+    @log.trace
     def _get(self, encoded_key: str, default: Any = None) -> Any:
         with self as cache, cache.db as db:
             res = db.get(encoded_key)
             return res if res is not None else default
 
-    @log.debug
+    @log.trace
     def _set(self, encoded_key: str, encoded_value: Any) -> None:
         try:
             with self as cache, cache.db as db:
@@ -345,29 +408,29 @@ class BaseHashStash(MutableMapping):
         except Exception as e:
             log.error(f"Failed to set key {encoded_key}: {e}")
 
-    @log.debug
+    @log.trace
     def __contains__(self, unencoded_key: Any) -> bool:
         return self.has(unencoded_key)
 
-    @log.debug
+    @log.trace
     def has(self, unencoded_key: Any) -> bool:
         return self._has(self.encode_key(unencoded_key))
 
-    @log.debug
+    @log.trace
     def encode_key(self, unencoded_key: Any) -> Union[str, bytes]:
         return self.encode(
             self.serialize(unencoded_key),
             as_string=self.string_keys,
         )
 
-    @log.debug
+    @log.trace
     def encode_value(self, unencoded_value: Any) -> Union[str, bytes]:
         return self.encode(
             self.serialize(unencoded_value),
             as_string=self.string_values,
         )
 
-    @log.debug
+    @log.trace
     def decode_key(self, encoded_key: Any, as_string=False) -> Union[str, bytes]:
         decoded_key = self.decode(encoded_key)
         return (
@@ -376,26 +439,28 @@ class BaseHashStash(MutableMapping):
             else decoded_key.decode("utf-8")
         )
 
-    @log.debug
+    @log.trace
     def decode_value(
         self,
         encoded_value: Any,
         as_string=False,
     ) -> Union[str, bytes, dict, list]:
+        log.debug('Decoding value')
         decoded_value = self.decode(encoded_value)
+        log.debug(f'Decoded value of {len(decoded_value):,}B')
         return (
             self.deserialize(decoded_value)
             if not as_string
             else decoded_value.decode("utf-8")
         )
 
-    @log.debug
+    @log.trace
     def _has(self, encoded_key: Union[str, bytes]):
         with self as cache, cache.db as db:
             return encoded_key in db
 
-    @log.debug
-    def clear(self) -> None:
+    @log.trace
+    def clear(self) -> "BaseHashStash":
         self.close()
         self._remove_dir(
             self.root_dir
@@ -403,36 +468,37 @@ class BaseHashStash(MutableMapping):
             or str(self.root_dir).startswith("/private/var/")
             else self.path
         )
+        return self
 
-    @log.debug
+    @log.trace
     def __len__(self) -> int:
         with self as cache, cache.db as db:
             return len(db)
 
-    @log.debug
+    @log.trace
     def __delitem__(self, unencoded_key: str) -> None:
         if not self.has(unencoded_key):
             raise KeyError(unencoded_key)
         self._del(self.encode_key(unencoded_key))
 
-    @log.debug
+    @log.trace
     def _del(self, encoded_key: Union[str, bytes]) -> None:
         with self as cache, cache.db as db:
             del db[encoded_key]
 
-    @log.debug
+    @log.trace
     def _keys(self):
         with self as cache, cache.db as db:
             for k in db:
                 yield k
 
-    @log.debug
+    @log.trace
     def _values(self):
         with self as cache, cache.db as db:
             for k in db:
                 yield db[k]
 
-    @log.debug
+    @log.trace
     def _items(self):
         with self as cache, cache.db as db:
             for k in db:
@@ -441,7 +507,7 @@ class BaseHashStash(MutableMapping):
     def _all_results(self, all_results=None):
         return all_results if all_results is not None else self.append_mode
 
-    @log.debug
+    @log.trace
     def keys(self, as_string=False):
         for x in self._keys():
             try:
@@ -450,12 +516,12 @@ class BaseHashStash(MutableMapping):
                 log.error(f"Error decoding key: {e}")
                 raise e
 
-    @log.debug
+    @log.trace
     def values(self, all_results=None, with_metadata=False, **kwargs):
         for k, v in self.items(all_results=all_results, with_metadata=with_metadata):
             yield v
 
-    @log.debug
+    @log.trace
     def items(self, all_results=None, with_metadata=False, **kwargs):
         for key in self.keys():
             vals = self.get_all(
@@ -467,27 +533,27 @@ class BaseHashStash(MutableMapping):
             for val in vals:
                 yield key, val
 
-    @log.debug
+    @log.trace
     def keys_l(self, **kwargs):
         return list(self.keys(**kwargs))
 
-    @log.debug
+    @log.trace
     def values_l(self, **kwargs):
         return list(self.values(**kwargs))
 
-    @log.debug
+    @log.trace
     def items_l(self, **kwargs):
         return list(self.items(**kwargs))
 
-    @log.debug
+    @log.trace
     def __iter__(self):
         return self.keys()
 
-    @log.debug
+    @log.trace
     def copy(self):
         return dict(self.items())
 
-    @log.debug
+    @log.trace
     def update(self, other=None, **kwargs):
         if other is not None:
             if hasattr(other, "keys"):
@@ -499,7 +565,7 @@ class BaseHashStash(MutableMapping):
         for key, value in kwargs.items():
             self[key] = value
 
-    @log.debug
+    @log.trace
     def setdefault(self, key, default=None):
         try:
             return self[key]
@@ -507,7 +573,7 @@ class BaseHashStash(MutableMapping):
             self[key] = default
             return default
 
-    @log.debug
+    @log.trace
     def pop(self, unencoded_key, default=object):
         try:
             value = self[unencoded_key]
@@ -518,13 +584,13 @@ class BaseHashStash(MutableMapping):
                 raise
             return default
 
-    @log.debug
+    @log.trace
     def popitem(self):
         key, value = next(iter(self.items()))
         del self[key]
         return value
 
-    @log.debug
+    @log.trace
     def hash(self, data: bytes) -> str:
         return encode_hash(data)
 
@@ -538,7 +604,11 @@ class BaseHashStash(MutableMapping):
 
         return HashStashProfiler(self)
 
-    @log.debug
+    @cached_property
+    def profile(self):
+        return self.profiler.profile
+
+    @log.trace
     def sub(self, **kwargs):
         kwargs = {**self.to_dict(), **kwargs, "parent": self}
         new_instance = self.__class__(**kwargs)
@@ -572,22 +642,65 @@ class BaseHashStash(MutableMapping):
         path = self.path.replace(os.path.expanduser("~"), "~")
         # path = os.path.dirname(path)
         # path = f'{self.name}{"/" + self.dbname if self.dbname != DEFAULT_DBNAME else ""}'
-        return f"""{self.__class__.__name__}({path})"""
+        # return f"""{self.__class__.__name__}({path})"""
+        pathstr = os.path.join(self.name, self.dbname)
+        pathstr = pathstr.replace(os.path.sep, " " + os.path.sep + " ")
+        return f"""{self.__class__.__name__}({pathstr})"""
+
+    def _repr_html_(self):
+        selfstr = repr(self)
+        dict_items = self.to_dict()
+        dict_items["len"] = len(self)
+        attr_groups = {
+            "path": ["root_dir", "name", "dbname", "filename"],
+            "engine": [
+                "engine",
+                "serializer",
+                "compress",
+                "b64",
+                "df_engine",
+                "io_engine",
+            ],
+            "misc": ["append_mode", "is_function_stash", "is_tmp", "is_sub"],
+            "stats": ["len"],
+        }
+
+        html = [
+            '<table border="1" class="dataframe">',
+            "<thead><tr><th>Config</th><th>Param</th><th>Value</th></tr></thead>",
+            "<tbody>",
+        ]
+
+        for group, attrs in attr_groups.items():
+            group_seen = False
+            for attr in attrs:
+                if attr in dict_items and dict_items[attr]:
+                    html.append(
+                        f'<tr><td><b>{group.title() if not group_seen else ""}</b></td>'
+                        f'<td>{attr.replace("_", " ").title()}</td>'
+                        f"<td><i>{dict_items[attr]}</i></td></tr>"
+                    )
+                    group_seen = True
+
+        html.append("</tbody></table>")
+        return f'<pre>{self.__class__.__name__}</pre>{"".join(html)}'
 
     def __reduce__(self):
         # Return a tuple of (callable, args) that allows recreation of this object
         return (self.__class__.from_dict, (self.to_dict(),))
 
-    @log.debug
+    @log.trace
     def sub_function_results(
         self, func, dbname=None, update_on_src_change=False, **kwargs
     ):
         # import types
-        func_name = get_obj_addr(func).replace('<','_').replace('>','_')
-        if update_on_src_change or not can_import_object(func):
+        func_name = get_obj_addr(func).replace("<", "_").replace(">", "_")
+        if update_on_src_change:  # or not can_import_object(func):
+            # logger.info(f'updating on src change because can import object? {can_import_object(func)} --> {func}')
             func_name += "/" + encode_hash(get_function_src(func))[:10]
-        new_dbname = f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}'
-        log.info(f"Sub-function results stash: {new_dbname}")
+        # new_dbname = f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}'
+        new_dbname = f'{"stashed_result" if not dbname else dbname}/{func_name}'
+        log.debug(f"Sub-function results stash: {new_dbname}")
         stash = self.sub(
             dbname=new_dbname,
             is_function_stash=True,
@@ -687,51 +800,64 @@ def HashStash(
 
     if engine == "pairtree":
         from .pairtree import PairtreeHashStash
+
         cls = PairtreeHashStash
-    elif engine == "sqlite":
+    elif engine in {"sqlite", "sqlitedict"}:
         try:
             import sqlitedict
-            working_engines.add('sqlite')
+
+            working_engines.add("sqlite")
             from ..engines.sqlite import SqliteHashStash
+
             cls = SqliteHashStash
         except ImportError:
             pass
     elif engine == "memory":
         from ..engines.memory import MemoryHashStash
+
         cls = MemoryHashStash
     elif engine == "shelve":
         from ..engines.shelve import ShelveHashStash
+
         cls = ShelveHashStash
     elif engine == "redis":
         try:
             import redis
             import redis_dict
-            working_engines.add('redis')
+
+            working_engines.add("redis")
             from ..engines.redis import RedisHashStash
+
             cls = RedisHashStash
         except ImportError:
             pass
     elif engine == "diskcache":
         try:
             import diskcache
-            working_engines.add('diskcache')
+
+            working_engines.add("diskcache")
             from ..engines.diskcache import DiskCacheHashStash
+
             cls = DiskCacheHashStash
         except ImportError:
             pass
     elif engine == "lmdb":
         try:
             import lmdb
-            working_engines.add('lmdb')
+
+            working_engines.add("lmdb")
             from ..engines.lmdb import LMDBHashStash
+
             cls = LMDBHashStash
         except ImportError:
             pass
     elif engine == "mongo":
         try:
             import pymongo
-            working_engines.add('mongo')
+
+            working_engines.add("mongo")
             from ..engines.mongo import MongoHashStash
+
             cls = MongoHashStash
         except ImportError:
             pass
@@ -739,16 +865,22 @@ def HashStash(
         try:
             import pandas as pd
             import numpy as np
-            working_engines.add('dataframe')
+
+            working_engines.add("dataframe")
             from .dataframe import DataFrameHashStash
+
             cls = DataFrameHashStash
         except ImportError:
             pass
     else:
-        raise ValueError(f"\n\nInvalid HashStash engine: {engine}.\n\nOptions available given current install: {', '.join(working_engines)}\nAll options: {', '.join(ENGINES)}")
+        raise ValueError(
+            f"\n\nInvalid HashStash engine: {engine}.\n\nOptions available given current install: {', '.join(working_engines)}\nAll options: {', '.join(ENGINES)}"
+        )
 
     if engine in ENGINES and engine not in working_engines:
-        raise ValueError(f"\n\nEngine {engine} is available but not installed. Please run: pip install hashstash[{engine}]\n\nOptions available given current install: {', '.join(working_engines)}\nAll options: {', '.join(ENGINES)}")
+        raise ValueError(
+            f"\n\nEngine {engine} is available but not installed. Please run: pip install hashstash[{engine}]\n\nOptions available given current install: {', '.join(working_engines)}\nAll options: {', '.join(ENGINES)}"
+        )
 
     object = cls(
         name=name,
@@ -759,5 +891,14 @@ def HashStash(
         **kwargs,
     )
     return object
+
+def attach_stash_to_function(func, stash = None, **stash_kwargs):
+    if stash is None:
+        stash = HashStash(**stash_kwargs)
+    local_stash = stash.sub_function_results(func)
+    func.stash = local_stash
+    return stash
+
+
 
 Stash = HashStash

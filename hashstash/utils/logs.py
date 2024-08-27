@@ -143,6 +143,10 @@ class log:
         return cls.log(_func, level=logging.DEBUG)
     
     @classmethod
+    def trace(cls, _func=None):
+        return cls.log(_func, level=logging.DEBUG-1)
+    
+    @classmethod
     def info(cls, _func=None):
         return cls.log(_func, level=logging.INFO)
     

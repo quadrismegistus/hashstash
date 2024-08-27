@@ -34,6 +34,9 @@ def get_fn_ext(fn):
     # without period
     return fn.split('.')[-1]
 
+def is_generator(obj):
+    return inspect.isgenerator(obj) or isinstance(obj,ReusableGenerator)
+
 class ReusableGenerator:
     def __init__(self, func, *args, **kwargs):
         self.func = func

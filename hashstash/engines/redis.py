@@ -47,6 +47,7 @@ class RedisHashStash(BaseHashStash):
         client.flushdb()
         # Free up disk space immediately
         client.save()
+        return self
         
 
 def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, dbname=DEFAULT_DBNAME, data_dir=DEFAULT_REDIS_DIR):

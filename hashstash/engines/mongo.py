@@ -72,6 +72,7 @@ class MongoHashStash(BaseHashStash):
     def clear(self):
         with self.db as db:
             db.drop()
+        return self
 
     def __len__(self):
         with self.db as db:

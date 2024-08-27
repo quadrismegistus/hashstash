@@ -10,7 +10,7 @@ def dump_json(obj,as_string=False):
     try:
         # res = serialize_orjson(obj)
         res = serialize_json(obj)
-        log.info('serialized via orjson')
+        log.debug('serialized via orjson')
         if as_string: res = res.decode('utf-8')
     except ImportError:
         res = serialize_json(obj)
@@ -326,9 +326,9 @@ class BytesSerializer(CustomSerializer):
 class FunctionSerializer(CustomSerializer):
     @staticmethod
     def serialize(obj):
-        log.debug(f"Serializing function: {obj.__name__}")
-        log.debug(f"Function closure: {obj.__closure__}")
-        log.debug(f"Function free variables: {obj.__code__.co_freevars}")
+        log.trace(f"Serializing function: {obj.__name__}")
+        log.trace(f"Function closure: {obj.__closure__}")
+        log.trace(f"Function free variables: {obj.__code__.co_freevars}")
 
         if can_import_object(obj) and obj.__module__!='__main__':
             return {'__py__': get_obj_addr(obj)}

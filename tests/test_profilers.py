@@ -91,11 +91,11 @@ def test_hashstash_profiler():
             'Speed (MB/s)', 'Cached Size (MB)', 'Compression Ratio (%)'
         ])
 
-def test_profile_stash_transaction():
+def test_profile_one():
     with HashStash().tmp() as stash:
         profiler = HashStashProfiler(stash)
         
-        result = profiler.profile_stash_transaction(stash, size=1000)
+        result = profiler.profile_one(stash, size=1000)
         assert isinstance(result, list)
         assert len(result) > 0
         assert all(isinstance(item, dict) for item in result)

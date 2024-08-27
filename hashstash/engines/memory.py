@@ -23,3 +23,4 @@ class MemoryHashStash(BaseHashStash):
     def clear(self):
         with self as cache, cache.db as db:
             db.clear()
+        return self

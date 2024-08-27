@@ -19,8 +19,26 @@ def get_data_type(obj):
 class HashStashProfiler:
     def __init__(self, stash):
         self.stash = stash
+
+    def to_dict(self):
+        return {'stash':self.stash.to_dict()}
     
-    @stashed_result(name="new_profile_cache", append_mode=True)
+    @classmethod
+    def from_dict(cls, d):
+        from hashstash import HashStash
+        stash = HashStash(**d['stash'])
+        return cls(stash)
+    
+    def __eq__(self, other):
+        if not isinstance(other, HashStashProfiler):
+            return False
+        return self.to_dict() == other.to_dict()
+    
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.stash})'
+
+    
+    # @stashed_dataframe
     def profile(
         self,
         size: list = DEFAULT_DATA_SIZE,
@@ -34,7 +52,7 @@ class HashStashProfiler:
         tasks = [{"size": size} for _ in range(iterations)]
         with self.stash.tmp() as tmp_stash:
             results = pmap(
-                self.profile_stash_transaction,
+                self.profile_one,
                 objects=tmp_stash,
                 options=tasks,
                 num_proc=num_proc,
@@ -62,10 +80,9 @@ class HashStashProfiler:
             # odf = odf.groupby(gby).mean(numeric_only=True)  # .reset_index()
             return odf
 
-    def profile_stash_transaction(self, stash=None, size: int = DEFAULT_DATA_SIZE):
-        if stash is None:
-            stash = self.stash
-        data = generate_data(size)
+    def profile_one(self, stash=None, size: int = DEFAULT_DATA_SIZE, data=None):
+        stash = self.stash if stash is None else stash
+        data = generate_data(size) if data is None else data
         raw_size = bytesize(data)
 
         def cache_key():
@@ -168,6 +185,10 @@ class HashStashProfiler:
         **kwargs,
     ):
         import pandas as pd
+        if 'redis' in engines:
+            start_redis_server()
+        if 'mongo' in engines:
+            start_mongo_server()
         opts = []
         for engine in engines:
             for serializer in serializers:

@@ -31,7 +31,7 @@ def serialize(obj, serializer: SERIALIZER_TYPES = None, as_string=False):
     try:
         data = serializer_func(obj)
         assert isinstance(data, (bytes, str)), "data should be bytes or string"
-        log.debug(f"Serialized with {serializer_func.__name__}")
+        log.trace(f"Serialized with {serializer_func.__name__}")
         return data.decode() if isinstance(data, bytes) and as_string else data
     except Exception as e:
         log.error(f"Serialization failed with serializer {serializer}:\n{e}")
@@ -48,7 +48,7 @@ def deserialize(data, serializer: SERIALIZER_TYPES = None):
     log.debug(f"Attempting to deserialize with {deserializer_func.__name__}")
     try:
         odata = deserializer_func(data)
-        log.debug(f"Deserialized with {deserializer_func.__name__}")
+        log.trace(f"Deserialized with {deserializer_func.__name__}")
         return odata
     except Exception as e:
         log.warning(f"Deserialization failed with {deserializer_func.__name__}: {str(e)}")

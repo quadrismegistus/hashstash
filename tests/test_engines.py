@@ -75,6 +75,18 @@ class TestHashStash:
         retrieved_data = cache["large_data"]
         assert retrieved_data == large_data
 
+    # dataframes serialized special
+    def test_df_keys(self, cache):
+        import pandas as pd
+        df = pd.DataFrame({
+            "name":["cica","kutya"],
+            "goodness":["nagyon jó","nagyon rossz"]
+        })
+        key = "cica-kutya"
+        cache[key] = df
+        cache[df] = key
+        assert cache[df] == key
+
     def test_multiple_data_types(self, cache):
         test_data = {
             "string": "Hello, world!" * 1000,

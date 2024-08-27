@@ -16,22 +16,22 @@ class DataFrameHashStash(PairtreeHashStash):
         return {**super().to_dict(), 'io_engine': self.io_engine, 'df_engine': self.df_engine}
 
     def set(self, unencoded_key: bytes, unencoded_value: bytes) -> None:
-        log.info(f"Setting value for key: {unencoded_key}")
+        log.debug(f"Setting value for key: {unencoded_key}")
         # set value as pairtree does if not a dataframe
         if not is_dataframe(unencoded_value):
-            log.info(f"Input is not a DataFrame")
+            log.debug(f"Input is not a DataFrame")
             return super().set(unencoded_key, unencoded_value)
 
         # Handle DataFrame values
         mdf = MetaDataFrame(unencoded_value)
-        log.info(f"Input is a {mdf.df_engine} DataFrame with shape: {mdf.shape}")
+        log.debug(f"Input is a {mdf.df_engine} DataFrame with shape: {mdf.shape}")
 
         encoded_key = self.encode_key(unencoded_key)
         self._set_key(encoded_key)
         filepath_value = self._get_path_new_value(encoded_key)
         return mdf.write(filepath_value, io_engine=self.io_engine)
 
-    @log.debug
+    @log.trace
     def get_all(
         self,
         unencoded_key: Any = None,
@@ -83,7 +83,7 @@ class DataFrameHashStash(PairtreeHashStash):
         else:
             return out_l
 
-    @log.debug
+    @log.trace
     def get(
         self,
         unencoded_key: Any = None,
@@ -91,7 +91,9 @@ class DataFrameHashStash(PairtreeHashStash):
         *args,
         as_function=None,
         with_metadata=False,
+        all_results=None,
         as_string=False,
+        as_dataframe=None,
         **kwargs,
     ) -> Any:
         values = self.get_all(

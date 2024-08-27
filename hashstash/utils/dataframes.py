@@ -261,7 +261,7 @@ class MetaDataFrame:
             self.df_engine,
         )
 
-    def write(self, path: str, io_engine: str = None, **kwargs):
+    def write(self, path: str, io_engine: str = None, string_values=True, **kwargs):
         """
         Write the DataFrame to a file using the specified I/O engine.
 
@@ -275,12 +275,15 @@ class MetaDataFrame:
         """
         if io_engine is None:
             io_engine = path.split(".")[-1].lower()
-            log.info(f"inferring io_engine from file extension: {io_engine}")
+            log.debug(f"inferring io_engine from file extension: {io_engine}")
         io_engine = get_io_engine(io_engine)
         # Write the io_engine to a separate file
         if path.split(".")[-1].lower() != io_engine:
             path = path + "." + io_engine
-        log.info(f"writing to {path} with {io_engine}")
+        log.debug(f"writing to {path} with {io_engine}")
+
+        if string_values:
+            self = self.applymap(str)
 
         if io_engine == "csv":
             return self.to_csv(path, **kwargs)
@@ -291,12 +294,7 @@ class MetaDataFrame:
         elif io_engine == "feather":
             return self.to_feather(path, **kwargs)
         elif io_engine == "pickle":
-            if self.is_pandas:
-                return self.df.to_pickle(path, **kwargs)
-            else:
-                import pandas as pd
-
-                return pd.DataFrame(self.df).to_pickle(path, **kwargs)
+            return self.to_pandas().df.to_pickle(path, **kwargs)
         else:
             raise ValueError(f"Unsupported I/O engine: {io_engine}")
 
@@ -320,10 +318,14 @@ class MetaDataFrame:
         # Try to read the io_engine from the .type file
         if io_engine is None:
             io_engine = path.split(".")[-1].lower()
-            log.info(f"inferring io_engine from file extension: {io_engine}")
+            log.debug(f"inferring io_engine from file extension: {io_engine}")
 
         io_engine = get_io_engine(io_engine)
         df_engine = get_df_engine(df_engine)
+
+        log.debug(f'reading {os.path.basename(path)} with {df_engine} and {io_engine}')
+        file_size = os.path.getsize(path)
+        log.debug(f"Size of the file {os.path.basename(path)}: {file_size:,} bytes")
 
         if df_engine == "pandas":
             import pandas as pd
@@ -340,23 +342,26 @@ class MetaDataFrame:
                 df = pd.read_pickle(path, **kwargs)
             else:
                 raise ValueError(f"Unsupported I/O engine: {io_engine}")
+
+            reinfer_types(df)
         else:  # polars
             import polars as pl
 
             if io_engine == "csv":
-                df = pl.read_csv(path, **kwargs)
+                df = pl.read_csv(path, infer_schema_length=10000, **kwargs)
             elif io_engine == "parquet":
                 df = pl.read_parquet(path, **kwargs)
             elif io_engine == "json":
-                df = pl.read_json(path, **kwargs)
+                df = pl.read_json(path, infer_schema_length=10000, **kwargs)
             elif io_engine == "feather":
                 df = pl.read_ipc(path, **kwargs)
             elif io_engine == "pickle":
-                import pandas as pd
-
-                df = pl.DataFrame(pd.read_pickle(path, **kwargs))
+                df = cls.read(path, io_engine=io_engine, df_engine='pandas')
+                df = pl.DataFrame(df)
             else:
                 raise ValueError(f"Unsupported I/O engine: {io_engine}")
+            
+        log.debug(f'done reading {os.path.basename(path)} with {df_engine} and {io_engine}')
 
         return cls(df, df_engine)
 
@@ -552,3 +557,11 @@ def has_index(df):
         raise ValueError(
             "Unsupported DataFrame type. Use either pandas or polars DataFrame."
         )
+
+def reinfer_types(df):
+    import pandas as pd
+    # Infer types for pandas DataFrame
+    for column in df.columns:
+        df[column] = pd.to_numeric(df[column], errors='ignore')
+        if df[column].dtype == 'object':
+            df[column] = pd.to_datetime(df[column], errors='ignore')

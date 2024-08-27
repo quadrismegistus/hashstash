@@ -21,7 +21,7 @@ def test_stashed_result():
     assert result3 == 7
 
 counter = 0
-tmp = Stash(engine='memory')
+tmp = Stash(engine='memory').clear()
 
 @tmp.stashed_result
 def incrementing_function():

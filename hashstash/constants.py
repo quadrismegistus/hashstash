@@ -88,18 +88,3 @@ SERIALIZER_TYPES = Literal[
 ]
 DEFAULT_SERIALIZER = "hashstash"
 SERIALIZERS = list(SERIALIZER_TYPES.__args__)
-
-class Dog:
-    goestoheaven = True
-
-    def __init__(self, name):
-        self.name = name
-        self.good = True
-
-    def bark(self):
-        print("woof ", end="", flush=True)
-        time.sleep(random.random() / 2)
-        print("woof")
-
-
-dog = Dog("rex")

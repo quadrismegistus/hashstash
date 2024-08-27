@@ -121,7 +121,7 @@ def _pmap_item(item, stash=None):
 
         # Check if the result is already stashed
         cached_result = stash.get(key)
-        print('got cached result',cached_result)
+        log.debug(f'got cached result: {cached_result}')
 
     # If not cached or no cache is used, execute the function
     try:
