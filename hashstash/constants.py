@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings('ignore')
 import sys
 
 sys.path.insert(0, "/Users/ryan/github/prosodic")
@@ -22,14 +24,19 @@ DEFAULT_DATAFRAME_DF_ENGINE = 'pandas'
 
 DEFAULT_APPEND_MODE = True
 
+RAW_NO_COMPRESS= 'raw'
+
 DEFAULT_DBNAME = "main"
 DEFAULT_FILENAME = "db"
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
 # Default settings
-DEFAULT_COMPRESS = True
-DEFAULT_B64 = True
+OPTIMAL_COMPRESS = 'lz4'
+DEFAULT_COMPRESS = RAW_NO_COMPRESS
+DEFAULT_B64 = False
+
+COMPRESSERS = ['zlib','lz4','blosc','gzip','bz2']
 
 # Cache engines
 ENGINE_TYPES = Literal[
@@ -49,9 +56,10 @@ EXT_ENGINES = [e for e in ENGINES if e not in BUILTIN_ENGINES]
 
 # Performance testing constants
 DEFAULT_NUM_PROC = 1# mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1
-DEFAULT_DATA_SIZE = 1_000
+DEFAULT_DATA_SIZE = 1_000_00
 
 DEFAULT_ENGINE_TYPE = "pairtree"
+OPTIMAL_ENGINE_TYPE = "pairtree"
 INITIAL_SIZE = 1024
 DEFAULT_ITERATIONS = 1000
 GROUPBY = ["Engine", "Encoding", "Operation", "write_num"]
@@ -87,4 +95,14 @@ SERIALIZER_TYPES = Literal[
     "pickle",          # fastest but not platform independent
 ]
 DEFAULT_SERIALIZER = "hashstash"
+OPTIMAL_SERIALIZER = "hashstash"
 SERIALIZERS = list(SERIALIZER_TYPES.__args__)
+
+DATA_TYPES = ('pandas_df', 'dict')
+DEFAULT_DATA_TYPE = 'pandas_df'
+
+
+## objects
+from functools import lru_cache
+fcache = lru_cache(maxsize=None)
+

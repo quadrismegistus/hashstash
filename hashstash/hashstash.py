@@ -2,9 +2,13 @@
 from .constants import *
 
 ## standard library
+import multiprocessing as mp
+mp.set_start_method('fork')
+from multiprocessing import freeze_support, Manager
 import atexit
 import uuid
 import tempfile
+import io
 import importlib
 import inspect
 import json
@@ -50,8 +54,3 @@ import inspect
 from collections.abc import MutableMapping
 from functools import partial
 import threading
-
-## objects
-filterwarnings('ignore')
-fcache = lru_cache(maxsize=None)
-

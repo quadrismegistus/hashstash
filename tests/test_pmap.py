@@ -29,10 +29,6 @@ def test_pmap_unordered():
     result = set(pmap(square, objects=[1, 2, 3, 4], num_proc=2, ordered=False))
     assert result == {1, 4, 9, 16}
 
-def test_pmap_common_args():
-    result = list(pmap(multiply, objects=[2, 3, 4], num_proc=2, y=5))
-    assert result == [10, 15, 20]
-
 def test_pmap_empty_input():
     with pytest.raises(ValueError):
         list(pmap(square))

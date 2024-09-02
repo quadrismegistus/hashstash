@@ -1,6 +1,6 @@
 from . import *
+from .misc import is_method
 
-@log.debug
 def attach_stash_to_function(func, stash = None, **stash_kwargs):
     from ..engines.base import HashStash
     if stash is None:
@@ -8,71 +8,9 @@ def attach_stash_to_function(func, stash = None, **stash_kwargs):
     local_stash = stash.sub_function_results(func)
     func.stash = local_stash
 
-@log.debug
-def stashed_result(
-    _func=None,
-    stash: Optional["BaseHashStash"] = None,
-    force=False,
-    store_args=True,
-    **stash_kwargs,
-):
-    @log.debug
-    def decorator(func: Callable, *args, **kwargs) -> Callable:
-        from ..engines.base import HashStash
-        from .misc import ReusableGenerator
-        nonlocal stash, stash_kwargs
-        
-        if stash is None:
-            stash = HashStash(**stash_kwargs)
-        stash.attach_func(func)
-
-        @log.debug
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            from .misc import ReusableGenerator
-            nonlocal force, stash, store_args, func
-
-            passed_stash = kwargs.pop("_stash", None)
-            local_stash = passed_stash if passed_stash is not None else stash
-            return local_stash.run(func, *args, **kwargs)
-            
-            # if passed_stash is not None:
-            #     passed_stash.attach_func(func)
-            
-            # assert hasattr(func,'stash')
-
-            # local_stash = wrapper.stash = func.stash
-            # key = local_stash.new_function_key(*args, store_args=store_args, **kwargs)
-
-            # # find it?
-            # local_force = kwargs.pop("_force", force)
-            # if not local_force:
-            #     res = local_stash.get(key,as_function=False)
-            #     if res is not None:
-            #         log.debug(f"Stash hit for {func.__name__}. Returning stashed result.")
-            #         return res
-                    
-            # # didn't find
-            # note = "Forced execution" if local_force else "Stash miss"
-            # log.debug(f"{note} for {func.__name__}. Executing function.")
-
-            # # call func
-            # result = func(*args, **kwargs)
-            # is_generator = inspect.isgenerator(result) or isinstance(result,ReusableGenerator)
-            # result = list(result) if is_generator else result
-            # log.debug(f"Caching result for {func.__name__}.")
-            # local_stash.set(key, result)
-            # return result
-
-        return wrapper
-
-    if _func is None:
-        return decorator
-    else:
-        return decorator(_func)
 
 
-def retry_patiently(max_retries=10, base_delay=0.1, max_delay=10):
+def retry_patiently(max_retries=10, base_delay=0.01, max_delay=1):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -111,6 +49,57 @@ class DictContext(UserDict):
     def __exit__(self, exc_type, exc_value, traceback):
         pass  # Nothing happens on close
 
+def get_dict(obj):
+    return {
+        k:getattr(obj,k)
+        for k in dir(obj)
+        if k and k[0]=='_'
+        and not isinstance(getattr(obj,k), dict)
+    }
+
+@log.debug
+def stashed_result(
+    _func=None,
+    stash: Optional["BaseHashStash"] = None,
+    force=False,
+    store_args=True,
+    **stash_kwargs,
+):
+    @log.debug
+    def decorator(func: Callable, *decorator_args, **decorator_kwargs) -> Callable:
+        from ..engines.base import HashStash
+        from .misc import ReusableGenerator
+        from .addrs import is_method, get_object_from_method
+        nonlocal stash, stash_kwargs
+
+        if stash is None:
+            stash = HashStash(**stash_kwargs)
+
+        stash.attach_func(func)
+
+        @log.debug
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            from .misc import ReusableGenerator 
+            nonlocal force, stash, store_args, func, stash_kwargs, decorator_kwargs
+            if args and get_pytype(args[0]) in {'class','instance'}:
+                self_obj = args[0]
+                func = getattr(self_obj, func.__name__)
+                args = args[1:]
+
+            return stash.run(func, *args, **kwargs)
+            
+        return wrapper
+
+    if _func is None:
+        return decorator
+    else:
+        return decorator(_func)
+
+
+
+
+
 @log.debug
 def parallelized(
     _func=None,
@@ -131,11 +120,13 @@ def parallelized(
         if stash is None and stashed:
             from ..engines.base import HashStash
             stash = HashStash()
-        
+
         if stashed:
             if get_obj_module(func) == "__main__":
                 update_on_src_change = True
-            func_stash = stash.sub_function_results(func, dbname='pmap_result', update_on_src_change=update_on_src_change)
+            func_stash = stash.sub_function_results(
+                func, dbname="pmap_result", update_on_src_change=update_on_src_change
+            )
             func.stash = func_stash
         else:
             func_stash = None
@@ -146,7 +137,6 @@ def parallelized(
 
             # Check if we're dealing with multiple sets of arguments
             if args and isinstance(args[0], (list, tuple)):
-                log.info('parallelizing')
                 objects = args[0]
                 if kwargs:
                     options = [kwargs] * len(objects)
@@ -170,8 +160,9 @@ def parallelized(
             else:
                 # Single function call
                 if func_stash is not None:
-                    log.info('getting from stash')
-                    res = func_stash.get(args, kwargs)  # Changed from func_stash.get(*args, **kwargs)
+                    res = func_stash.get(
+                        args, kwargs
+                    )  # Changed from func_stash.get(*args, **kwargs)
                 else:
                     res = None
                 return func(*args, **kwargs) if res is None else res
@@ -184,64 +175,6 @@ def parallelized(
         return decorator(_func)
 
 
-# @log.debug
-# def stashed_dataframe(
-#     _func=None,
-#     stash: Optional["BaseHashStash"] = None,
-#     force=False,
-#     store_args=True,
-#     **stash_kwargs,
-# ):
-#     @log.debug
-#     def decorator(func: Callable, *args, **kwargs) -> Callable:
-#         nonlocal stash, stash_kwargs
-#         if stash is not None and stash.engine != 'dataframe':
-#             raise TypeError('Any passed stash must be using "dataframe" engine')
-#         elif stash is None:
-#             stash_kwargs['engine'] = 'dataframe'
-#         attach_stash_to_function(func, stash, **stash_kwargs)
 
-#         @log.debug
-#         @wraps(func)
-#         def wrapper(*args, **kwargs):
-#             from .misc import ReusableGenerator
-#             nonlocal force, stash, store_args, func
 
-#             passed_stash = kwargs.pop("_stash", None)
-#             if passed_stash is not None:
-#                 if passed_stash.engine != 'dataframe':
-#                     raise TypeError('Any passed stash must be using "dataframe" engine')
-#                 attach_stash_to_function(func, passed_stash)
-            
-#             assert hasattr(func,'stash')
-#             local_stash = wrapper.stash = func.stash
-#             key = local_stash.new_unencoded_key(*args, **kwargs)
-#             if not store_args:
-#                 key = encode_hash(local_stash.serialize(key))
-
-#             # find it?
-#             local_force = kwargs.pop("_force", force)
-#             if not local_force:
-#                 if key in local_stash:
-#                     res_df = local_stash.get_all(key,as_function=False,as_dataframe=True)
-#                     log.debug(f"Stash hit for {func.__name__}. Returning stashed result.")
-#                     return res_df
-                    
-#             # didn't find
-#             note = "Forced execution" if local_force else "Stash miss"
-#             log.debug(f"{note} for {func.__name__}. Executing function.")
-
-#             # call func
-#             result = func(*args, **kwargs)
-#             is_generator = inspect.isgenerator(result) or isinstance(result,ReusableGenerator)
-#             result = list(result) if is_generator else result
-#             log.debug(f"Caching result for {func.__name__}.")
-#             local_stash.set(key, result)
-#             return result
-
-#         return wrapper
-
-#     if _func is None:
-#         return decorator
-#     else:
-#         return decorator(_func)
+stashed_dataframe = partial(stashed_result, engine='dataframe', _as_dataframe=True, _with_metadata=True, _all_results=True)

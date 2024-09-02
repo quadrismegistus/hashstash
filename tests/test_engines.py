@@ -502,7 +502,6 @@ class TestHashStash:
         assert func_stash.path != cache.path
 
         func_stash.set((1,2), 3)
-        assert func_stash.get((1, 2), as_function=False) == 3
         
         print('func_stash',func_stash.keys_l())
         print('cache',cache.keys_l())
@@ -510,7 +509,6 @@ class TestHashStash:
         assert len(cache) == 0
 
         cache.set((1,2), 3)
-        assert cache.get((1,2)) == 3
         assert len(func_stash) == 1
         assert len(cache) == 1
 

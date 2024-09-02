@@ -12,12 +12,12 @@ def prune_none_values(data, badkeys=None):
     else:
         return data
 
-# @log.debug
+@log.debug
 def is_dir(path):
     fn, ext = os.path.splitext(path)
     return not bool(ext)
 
-# @log.debug
+@log.debug
 def ensure_dir(path):
     if not is_dir(path): 
         path=os.path.dirname(path)
@@ -62,19 +62,10 @@ def rmtreefn(dir_path):
 
 def get_encoding_str(compress,b64):
     return "+".join(filter(None, [
-        "zlib" if compress else None,
+        compress if compress else RAW_NO_COMPRESS,
         "b64" if b64 else None
     ]))
 
-def is_method(func):
-    """
-    Check if a function object is a method by inspecting its first parameter.
-    
-    :param func: The function object to check
-    :return: True if the function is likely a method, False otherwise
-    """
-    params = inspect.signature(func).parameters
-    return len(params) > 0 and list(params.keys())[0] == 'self'
 def fast_concat(*dfs):
     import pandas as pd
     
@@ -171,3 +162,65 @@ def separate_index(df, _index=None):
 def is_dataframe(df):
     return get_obj_addr(df).endswith("DataFrame")
 
+
+def flatten_args_kwargs(args_kwargs, prefix_args='_arg', prefix_kwargs='_'):
+    if not isinstance(args_kwargs,dict) or 'args' not in args_kwargs or 'kwargs' not in args_kwargs:
+        return {'_key':args_kwargs}
+    
+    result = {}
+        
+    # Handle args
+    for i, arg in enumerate(args_kwargs.get('args',[]), start=1):
+        if is_jsonable(arg):
+            result[f'{prefix_args}{i}'] = arg
+        
+    # Handle kwargs
+    result.update({f'{prefix_kwargs}{k}': v for k, v in args_kwargs.get('kwargs',{}).items()})
+    return result
+
+
+def progress_bar(iterr=None, total=None, progress=True, leave=True, **kwargs):
+    global current_depth
+
+    class DummyProgressBar:
+        def __init__(self, iterable=None, total=None):
+            self.iterable = iterable
+            self.total = total
+            self.n = 0
+
+        def __iter__(self):
+            return iter(self.iterable) if self.iterable else iter(range(self.total))
+
+        def update(self, n=1):
+            self.n += n
+
+        def close(self):
+            pass
+
+    if not progress:
+        return DummyProgressBar(iterr, total)
+    else:
+        try:
+            from tqdm import tqdm
+
+            current_depth += 1
+
+            class ColoredTqdm(tqdm):
+                def __init__(self, *args, desc=None, **kwargs):
+                    self.green = "\033[32m"
+                    self.reset = "\033[0m"
+                    desc = f"{self.green}{log_prefix_str(desc,reset=True)}{self.reset}"
+                    super().__init__(*args, desc=desc, **kwargs)
+
+            if iterr is not None:
+                return ColoredTqdm(iterr, leave=leave, **kwargs)
+            else:
+                return ColoredTqdm(total=total, leave=leave, **kwargs)
+        except ImportError:
+            return DummyProgressBar(iterr, total)
+        finally:
+            current_depth -= 1
+
+def is_stash(x):
+    from ..engines.base import BaseHashStash
+    return isinstance(x,BaseHashStash)

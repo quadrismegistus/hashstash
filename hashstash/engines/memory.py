@@ -1,16 +1,21 @@
 from . import *
+from .base import get_manager
 
-IN_MEMORY_CACHE = defaultdict(dict)
+# Use the existing get_manager function
+manager = get_manager()
+
+# Create a shared dictionary
+SHARED_MEMORY_CACHE = manager.dict()
 
 class MemoryDB(DictContext):
     def __init__(self, name):
-        global IN_MEMORY_CACHE
         self.name = name
-        self.data = IN_MEMORY_CACHE[name]
+        if self.name not in SHARED_MEMORY_CACHE:
+            SHARED_MEMORY_CACHE[self.name] = manager.dict()
+        self.data = SHARED_MEMORY_CACHE[self.name]
 
     def clear(self):
-        global IN_MEMORY_CACHE
-        IN_MEMORY_CACHE[self.name].clear()
+        self.data.clear()
 
 class MemoryHashStash(BaseHashStash):
     engine = 'memory'
