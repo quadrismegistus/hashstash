@@ -76,7 +76,7 @@ dev = [
 ]
 all = [
   # engines
-  "pandas", "polars", "numpy", "pyarrow","fastparquet", #"dataframe",
+  "pandas", "polars", "numpy", "pyarrow","fastparquet",
   "lmdb",
   "sqlitedict",
   "diskcache", 
@@ -84,8 +84,12 @@ all = [
   "mongo",
 
   # serializers
-  "jsonpickle",# "numpy", "pandas"
+  "jsonpickle",
   "orjson",
+
+  # Compressers
+  "lz4",
+  "blosc",
   
   # utils
   "tqdm", 

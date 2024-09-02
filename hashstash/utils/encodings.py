@@ -79,6 +79,7 @@ def decode_compressed(data, compress_type=DEFAULT_COMPRESS):
             raise ValueError(f"Unsupported compression type: {compress_type}")
     except Exception as e:
         log.error(f"Decompression error: {e}")
+        raise e
         return data
 
 def encode_b64(data):

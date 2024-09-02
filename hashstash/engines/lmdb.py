@@ -25,39 +25,51 @@ class LMDBHashStash(BaseHashStash):
         with self.db as db:
             return db.begin(write=False)
 
+    def _encode_key_key(self, encoded_key):
+        return encode_hash(encoded_key).encode() + b'.key'
+    
+    def _encode_key_value(self, encoded_key):
+        return encode_hash(encoded_key).encode() + b'.value'
+
     def _set(self, encoded_key, encoded_value):
         with self.txn_w as txn:
-            txn.put(encoded_key, encoded_value)
+            txn.put(self._encode_key_key(encoded_key), encoded_key)
+            txn.put(self._encode_key_value(encoded_key), encoded_value)
 
     def _get(self, encoded_key):
         with self.txn_r as txn:
-            return txn.get(encoded_key)
+            return txn.get(self._encode_key_value(encoded_key))
 
     def _del(self, encoded_key):
         with self.txn_w as txn:
-            txn.delete(encoded_key)
+            txn.delete(self._encode_key_key(encoded_key))
+            txn.delete(self._encode_key_value(encoded_key))
 
     def __len__(self):
         with self.txn_r as txn:
-            return txn.stat()['entries']
+            return txn.stat()['entries'] // 2
 
     def _has(self, encoded_key):
-        return self._get(encoded_key) is not None
+        with self.txn_r as txn:
+            return txn.get(self._encode_key_key(encoded_key)) is not None
     
     def _keys(self):
         with self.txn_r as txn:
             cursor = txn.cursor()
-            for key, _ in cursor:
-                yield key
+            for key, value in cursor:
+                if key.endswith(b'.key'):
+                    yield value
 
     def _values(self):
         with self.txn_r as txn:
             cursor = txn.cursor()
-            for _, value in cursor:
-                yield value
+            for key, value in cursor:
+                if key.endswith(b'.value'):
+                    yield value
 
     def _items(self):
         with self.txn_r as txn:
             cursor = txn.cursor()
             for key, value in cursor:
-                yield key, value
+                if key.endswith(b'.key'):
+                    yield value, txn.get(key[:-4]+b'.value')
