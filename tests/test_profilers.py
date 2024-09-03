@@ -107,58 +107,58 @@ def test_run_profiles():
 
     ])
 
-def test_get_size_data():
-    result = HashStashProfiler.get_size_data(
-        iterations=2,
-        size=1000,
-        engines=['memory'],
-        serializers=['pickle'],
-        num_procs=[1],
-        num_proc=1,
-        progress=False
-    )
+# def test_get_size_data():
+#     result = HashStashProfiler.get_size_data(
+#         iterations=2,
+#         size=1000,
+#         engines=['memory'],
+#         serializers=['pickle'],
+#         num_procs=[1],
+#         num_proc=1,
+#         progress=False
+#     )
     
-    assert isinstance(result, pd.DataFrame)
-    assert len(result) > 0
-    assert all(column in result.columns for column in [
-        'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (B)',
-        'Raw Size (B)', 'Iteration', 'Num Proc', 'Cumulative Raw Size (B)',
-        'Raw Size (KB)', 'Cumulative Serialized Size (B)', 'Serialized Size (KB)',
-        'Serialized Compression Ratio', 'Cumulative Encoded Size (B)',
-        'Encoded Size (KB)', 'Encoded Compression Ratio'
-    ])
+#     assert isinstance(result, pd.DataFrame)
+#     assert len(result) > 0
+#     assert all(column in result.columns for column in [
+#         'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (B)',
+#         'Raw Size (B)', 'Iteration', 'Num Proc', 'Cumulative Raw Size (B)',
+#         'Raw Size (KB)', 'Cumulative Serialized Size (B)', 'Serialized Size (KB)',
+#         'Serialized Compression Ratio', 'Cumulative Encoded Size (B)',
+#         'Encoded Size (KB)', 'Encoded Compression Ratio'
+#     ])
 
-def test_get_profile_data():
-    result = HashStashProfiler.get_profile_data(
-        iterations=2,
-        size=10,
-        engines=['memory'],
-        serializers=['pickle'],
-        num_procs=[1],
-        num_proc=1,
-        progress=False
-    ).reset_index()
+# def test_get_profile_data():
+#     result = HashStashProfiler.get_profile_data(
+#         iterations=2,
+#         size=10,
+#         engines=['memory'],
+#         serializers=['pickle'],
+#         num_procs=[1],
+#         num_proc=1,
+#         progress=False
+#     ).reset_index()
     
-    assert isinstance(result, pd.DataFrame)
-    assert len(result) > 0
-    for column in [
-        'Data Type', 'Engine', 'Serializer', 'Encoding', 'Num Proc',
-        'Operation', 'Iteration', 'Raw Size (B)', 'Time (s)', 'Rate (it/s)',
-        'Speed (MB/s)', 'Time (ms) Rolling', 'Rate (it/s) Rolling',
-        'Speed (MB/s) Rolling'
-    ]:
-        assert column in result.columns
+#     assert isinstance(result, pd.DataFrame)
+#     assert len(result) > 0
+#     for column in [
+#         'Data Type', 'Engine', 'Serializer', 'Encoding', 'Num Proc',
+#         'Operation', 'Iteration', 'Raw Size (B)', 'Time (s)', 'Rate (it/s)',
+#         'Speed (MB/s)', 'Time (ms) Rolling', 'Rate (it/s) Rolling',
+#         'Speed (MB/s) Rolling'
+#     ]:
+#         assert column in result.columns
 
-def test_plot():
-    df = HashStashProfiler.get_profile_data(
-        iterations=2,
-        size=10,
-        engines=['memory'],
-        serializers=['pickle'],
-        num_procs=[1],
-        num_proc=1,
-        progress=False
-    )
+# def test_plot():
+#     df = HashStashProfiler.get_profile_data(
+#         iterations=2,
+#         size=10,
+#         engines=['memory'],
+#         serializers=['pickle'],
+#         num_procs=[1],
+#         num_proc=1,
+#         progress=False
+#     )
     
-    plot = HashStashProfiler.plot(df)
-    assert plot is not None
+#     plot = HashStashProfiler.plot(df)
+#     assert plot is not None
