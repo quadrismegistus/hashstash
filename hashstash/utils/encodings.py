@@ -32,9 +32,9 @@ def _decode(data_b, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS):
     return data_b
 
 def encode_compressed(data, compress_type=DEFAULT_COMPRESS):
+    compress_type = get_compresser(compress_type)
     if compress_type == RAW_NO_COMPRESS:
         return data
-    compress_type = get_compresser(compress_type)
     try:
         if compress_type == 'zlib':
             return zlib.compress(data)
@@ -57,9 +57,9 @@ def encode_compressed(data, compress_type=DEFAULT_COMPRESS):
         return data
 
 def decode_compressed(data, compress_type=DEFAULT_COMPRESS):
+    compress_type = get_compresser(compress_type)
     if compress_type == RAW_NO_COMPRESS:
         return data
-    compress_type = get_compresser(compress_type)
     try:
         if compress_type == 'zlib':
             return zlib.decompress(data)

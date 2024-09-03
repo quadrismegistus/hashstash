@@ -143,7 +143,6 @@ def log_prefix_str(message='', reset=True):
 
 
 def log_func(message, level=logging.DEBUG, maxlen=None):
-    return
     logger.log(level,log_prefix_str(message)[:maxlen])
 
 
