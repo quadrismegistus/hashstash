@@ -16,37 +16,35 @@ class DataFrameHashStash(PairtreeHashStash):
         return {**super().to_dict(), 'io_engine': self.io_engine, 'df_engine': self.df_engine}
 
     def set(self, unencoded_key: bytes, unencoded_value: bytes) -> None:
-        log.info(f"Setting value for key: {unencoded_key}")
+        log.debug(f"Setting value for key: {unencoded_key}")
         # set value as pairtree does if not a dataframe
         if not is_dataframe(unencoded_value):
-            log.info(f"Input is not a DataFrame")
+            log.debug(f"Input is not a DataFrame")
             return super().set(unencoded_key, unencoded_value)
 
         # Handle DataFrame values
         mdf = MetaDataFrame(unencoded_value)
-        log.info(f"Input is a {mdf.df_engine} DataFrame with shape: {mdf.shape}")
+        log.debug(f"Input is a {mdf.df_engine} DataFrame with shape: {mdf.shape}")
 
         encoded_key = self.encode_key(unencoded_key)
         self._set_key(encoded_key)
         filepath_value = self._get_path_new_value(encoded_key)
-        return mdf.write(filepath_value, io_engine=self.io_engine)
+        return mdf.write(filepath_value, io_engine=self.io_engine, compression=self.compress)
 
     @log.debug
     def get_all(
         self,
         unencoded_key: Any = None,
-        *args,
         default: Any = None,
-        as_function=None,
         with_metadata=None,
-        all_results=True,
+        all_results=None,
         as_dataframe=None,
         as_list=None,
         **kwargs,
     ) -> Any:
-        unencoded_key = self.new_unencoded_key(
-            unencoded_key, *args, as_function=as_function, **kwargs
-        )
+        all_results = self._all_results(all_results)
+        if all_results and as_dataframe is None:
+            as_dataframe = True
         paths_ld = self.get_path_values(
             unencoded_key,
             all_results=self._all_results(all_results),
@@ -88,30 +86,42 @@ class DataFrameHashStash(PairtreeHashStash):
         self,
         unencoded_key: Any = None,
         default: Any = None,
-        *args,
-        as_function=None,
         with_metadata=False,
+        all_results=None,
         as_string=False,
+        as_dataframe=None,
         **kwargs,
     ) -> Any:
+        
         values = self.get_all(
             unencoded_key,
-            *args,
             default=None,
             with_metadata=with_metadata,
-            as_function=as_function,
-            all_results=False,
-            as_dataframe=False,
+            all_results=all_results,
+            as_dataframe=as_dataframe,
             **kwargs,
         )
+        if values is None: return default
+        if is_dataframe(values): return values
         value = values[-1] if values else default
         return self.serialize(value) if as_string else value
+        # if values is None:
+        #     return default
+        
+        # if not self._all_results(all_results) and isinstance(values, list):
+        #     values = values[-1]
+        
+        # return self.serialize(values) if as_string else values
 
     def _decode_value_from_filepath(self, filepath):
-        ext = os.path.splitext(filepath)[1]
-        if not ext:
-            return super().decode_value_from_filepath(filepath)
-        return MetaDataFrame.read(filepath, df_engine=self.df_engine)
+        try:
+            ext = os.path.splitext(filepath)[1]
+            if not ext:
+                return super().decode_value_from_filepath(filepath)
+            return MetaDataFrame.read(filepath, df_engine=self.df_engine, compression=self.compress)
+        except Exception as e:
+            log.warning(f'error reading dataframe from {filepath}: {e}')
+            return None
 
     @log.debug
     def items(
@@ -125,11 +135,14 @@ class DataFrameHashStash(PairtreeHashStash):
                 as_dataframe=as_dataframe,
                 **kwargs,
             )
-            if as_dataframe:
-                yield key, vals
+            if vals is None:
+                log.warning(f'empty values returned for {key}')
             else:
-                for val in vals:
-                    yield key, val
+                if as_dataframe:
+                    yield key, vals
+                else:
+                    for val in vals:
+                        yield key, val
 
     def assemble_df(
         self,
@@ -138,11 +151,11 @@ class DataFrameHashStash(PairtreeHashStash):
         **kwargs,
     ):
         dfs = []
-        for key, df in self.items(
+        for key, df in progress_bar(self.items(
             all_results=all_results, with_metadata=with_metadata, as_dataframe=True
-        ):
+        ), total=len(self), desc='concatenating dataframes across values'):
             dfs.append(
-                df.assign(_key=key) if not isinstance(key, dict) else df.assign(**key)
+                df.assign(**{k:serialize(v) for k,v in flatten_args_kwargs(key).items()})
             )
         if not dfs:
             return MetaDataFrame([], self.df_engine)

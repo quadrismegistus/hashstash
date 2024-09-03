@@ -4,6 +4,7 @@ import polars as pl
 import tempfile
 import os
 from hashstash.utils.dataframes import *
+logger.setLevel(logging.CRITICAL+1)
 
 @pytest.fixture
 def sample_data():
@@ -127,8 +128,8 @@ def test_metadataframe_concat():
 def test_metadataframe_write_read(sample_data, io_engine):
     mdf = MetaDataFrame(sample_data)
     with tempfile.NamedTemporaryFile(suffix=f".{io_engine}") as tmp:
-        mdf.write(tmp.name, io_engine=io_engine)
-        read_mdf = MetaDataFrame.read(tmp.name, io_engine=io_engine)
+        mdf.write(tmp.name, io_engine=io_engine, compression=RAW_NO_COMPRESS)
+        read_mdf = MetaDataFrame.read(tmp.name, io_engine=io_engine, compression=RAW_NO_COMPRESS)
         assert list(read_mdf.columns) == list(mdf.columns)
         assert read_mdf.shape == mdf.shape
 

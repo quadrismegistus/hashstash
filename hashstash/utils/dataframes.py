@@ -1,7 +1,10 @@
 from . import *
 
+DEFAULT_COMPRESS = 'gzip'  # Define your default compression method here
 
 class MetaDataFrame:
+    to_dict_keys = ["data", "df_engine", "prefix_index_cols", "reset_prefix"]
+
     def __init__(
         self,
         data: Union[Dict, List[Dict]],
@@ -13,6 +16,7 @@ class MetaDataFrame:
             self.df_engine = get_dataframe_engine(data)
         else:
             self.df_engine = get_df_engine(df_engine)
+        self.is_pandas = self.df_engine == "pandas"
 
         self.prefix_index_cols = prefix_index_cols
         self.reset_prefix = reset_prefix
@@ -20,18 +24,29 @@ class MetaDataFrame:
         if isinstance(data, MetaDataFrame):
             if data.is_pandas != self.is_pandas:
                 data = data.data
-        
-        self.data = data
-        
-        
 
-    @cached_property
+        self.data = data
+        self._df = None
+
+    def to_dict(self):
+        return {k: getattr(self, k, None) for k in self.to_dict_keys}
+
+    @classmethod
+    def from_dict(cls, data):
+        opts = {k:data.get(k) for k in cls.to_dict_keys}
+        return cls(**opts)
+
+    @property
     def df(self):
-        return (
-            self.get_pandas_df(self.data, prefix_index_cols=self.prefix_index_cols)
-            if self.is_pandas
-            else self.get_polars_df(self.data, prefix_index_cols=self.prefix_index_cols)
-        )
+        if self._df is None:
+            self._df = (
+                self.get_pandas_df(self.data, prefix_index_cols=self.prefix_index_cols)
+                if self.is_pandas
+                else self.get_polars_df(
+                    self.data, prefix_index_cols=self.prefix_index_cols
+                )
+            )
+        return self._df
 
     @staticmethod
     def get_polars_df(data, prefix_index_cols=None):
@@ -57,11 +72,9 @@ class MetaDataFrame:
 
         return pd.DataFrame(data)
 
-    @property
-    def is_pandas(self):
-        return self.df_engine == "pandas"
-
     def __getattr__(self, name):
+        if name in self.__dict__:
+            return self.__dict__[name]
         if hasattr(self.df, name):
             attr = getattr(self.df, name)
             if callable(attr):
@@ -141,14 +154,9 @@ class MetaDataFrame:
 
     def __eq__(self, other):
         from ..serializers import serialize_custom
+
         other = MetaDataFrame(other) if not isinstance(other, MetaDataFrame) else other
         return serialize_custom(self) == serialize_custom(other)
-
-    def to_dict(self):
-        return {
-            'data': self.reset_index().to_pandas().df,
-            'df_engine': self.df_engine,
-        }
 
     def to_csv(self, path: str, index: bool = False, **kwargs):
         if self.is_pandas:
@@ -182,7 +190,8 @@ class MetaDataFrame:
         if self.is_pandas:
             return self.df.to_feather(path, **kwargs)
         else:
-            return self.df.write_ipc(path, **kwargs)
+            return self.to_pandas().to_feather(path, **kwargs)
+            # return self.df.write_ipc(path, **kwargs)
 
     def to_sql(self, name: str, con, **kwargs):
         if self.is_pandas:
@@ -211,23 +220,17 @@ class MetaDataFrame:
                 ),
                 self.df_engine,
             )
-        
+
     def __reduce__(self):
         # Return a tuple of (callable, args) that allows recreation of this object
-        return (self.__class__.from_dict, (self.to_dict(),))
-    
-    @classmethod
-    def from_dict(cls, data):
-        return cls(**data)
+        return (MetaDataFrame.from_dict, (self.to_dict(),))
 
     def concat(self, *others):
-        others = [
-            MetaDataFrame(other, 'pandas').reset_index()
-            for other in others
-        ]
+        others = [MetaDataFrame(other, "pandas").reset_index() for other in others]
         self_ri = self.to_pandas().reset_index()
         dfs = [self_ri.df] + [x.df for x in others]
         import pandas as pd
+
         df = pd.concat(dfs)
         return MetaDataFrame(df, self.df_engine)
 
@@ -235,13 +238,13 @@ class MetaDataFrame:
         if self.is_pandas:
             return self
         else:
-            return MetaDataFrame(self.df, "pandas")
+            return MetaDataFrame(self.data, "pandas")
 
     def to_polars(self):
         if not self.is_pandas:
             return self
         else:
-            return MetaDataFrame(self.df, "polars")
+            return MetaDataFrame(self.data, "polars")
 
     def reset_index(self):
         if has_index(self.df):
@@ -261,54 +264,129 @@ class MetaDataFrame:
             self.df_engine,
         )
 
-    def write(self, path: str, io_engine: str = None, **kwargs):
+    # Serialize DataFrame to bytes
+    def encode(self, io_engine: str = None, string_values: bool = None, **kwargs):
+        return encode(self.serialize(io_engine, string_values, **kwargs))
+
+    def serialize(self, io_engine: str = None, string_values: bool = None, **kwargs):
+        from ..serializers import serialize
+
+        return serialize(self.stuff(io_engine, string_values, **kwargs))
+
+    def stuff(self, io_engine: str = None, string_values: bool = None, **kwargs):
+        from ..serializers import stuff
+
+        buffer = io.BytesIO()
+        io_engine = get_io_engine(io_engine)
+        self.write(
+            buffer,
+            io_engine=io_engine,
+            string_values=string_values,
+            **kwargs,
+        )
+        serialized_df = buffer.getvalue()
+        return stuff(
+            {
+                "data": b64encode(serialized_df).decode(),
+                "df_engine": self.df_engine,
+                "io_engine": io_engine,
+            }
+        )
+
+    @classmethod
+    def decode(cls, encoded_df):
+        return cls.deserialize(decode(encoded_df))
+
+    @classmethod
+    def deserialize(cls, serialized_data):
+        from ..serializers import deserialize
+
+        stuffed_data = deserialize(serialized_data)
+        return cls.unstuff(stuffed_data)
+
+    @classmethod
+    def unstuff(cls, stuffed_data):
+        from ..serializers import unstuff
+
+        unstuffed_data = unstuff(stuffed_data)
+        serialized_df_b = b64decode(unstuffed_data["data"].encode())
+        io_engine = unstuffed_data["io_engine"]
+        df_engine = unstuffed_data["df_engine"]
+        buffer = io.BytesIO(serialized_df_b)
+        return cls.read(buffer, io_engine=io_engine, df_engine=df_engine)
+
+    def write(
+        self, path_or_buffer, io_engine: str = None, string_values=None, compression=None, **kwargs
+    ):
         """
-        Write the DataFrame to a file using the specified I/O engine.
+        Write the DataFrame to a file or buffer using the specified I/O engine.
 
         Args:
-            path (str): The path to save the file.
+            path_or_buffer: The path to save the file or a file-like object.
             io_engine (str, optional): The I/O engine to use. If None, it will be inferred from the file extension.
+            string_values (bool): Whether to convert all values to strings before writing.
+            compression (str, optional): Compression to use (e.g., 'gzip', 'bz2', 'zip', 'xz').
             **kwargs: Additional keyword arguments to pass to the specific write method.
 
         Raises:
             ValueError: If the I/O engine is not supported or installed.
         """
-        if io_engine is None:
-            io_engine = path.split(".")[-1].lower()
-            log.info(f"inferring io_engine from file extension: {io_engine}")
+        if io_engine is None and isinstance(path_or_buffer, str):
+            io_engine = path_or_buffer.split(".")[-1].lower()
+            log.debug(f"inferring io_engine from file extension: {io_engine}")
         io_engine = get_io_engine(io_engine)
-        # Write the io_engine to a separate file
-        if path.split(".")[-1].lower() != io_engine:
-            path = path + "." + io_engine
-        log.info(f"writing to {path} with {io_engine}")
+
+        if (
+            isinstance(path_or_buffer, str)
+            and path_or_buffer.split(".")[-1].lower() != io_engine
+        ):
+            path_or_buffer = path_or_buffer + "." + io_engine
+
+        log.debug(f"writing with {io_engine}")
+        if io_engine in {"feather", "parquet"}:
+            string_values = True
+
+        if string_values:
+            self = self.applymap(str)
+
+        if compression is None:
+            compression = DEFAULT_COMPRESS
 
         if io_engine == "csv":
-            return self.to_csv(path, **kwargs)
+            if compression not in {'infer', 'gzip', 'bz2', 'zip', 'xz', None}:
+                compression = None
+            return self.to_csv(path_or_buffer, compression=compression, **kwargs)
         elif io_engine == "parquet":
-            return self.to_parquet(path, **kwargs)
+            if compression not in {'snappy', 'gzip', 'brotli', None}:
+                compression = None
+            return self.to_parquet(path_or_buffer, compression=compression, **kwargs)
         elif io_engine == "json":
-            return self.to_json(path, **kwargs)
+            if compression not in {'infer', 'gzip', 'bz2', 'zip', 'xz', None}:
+                compression = None
+            return self.to_json(path_or_buffer, compression=compression, **kwargs)
         elif io_engine == "feather":
-            return self.to_feather(path, **kwargs)
+            if compression not in {'zstd', 'lz4', 'uncompressed'}:
+                compression = None
+            return self.to_feather(path_or_buffer, compression=compression, **kwargs)
         elif io_engine == "pickle":
-            if self.is_pandas:
-                return self.df.to_pickle(path, **kwargs)
-            else:
-                import pandas as pd
-
-                return pd.DataFrame(self.df).to_pickle(path, **kwargs)
+            if compression not in {'infer', 'gzip', 'bz2', 'zip', 'xz', None}:
+                compression = None
+            return self.to_pandas().df.to_pickle(path_or_buffer, compression=compression, **kwargs)
         else:
             raise ValueError(f"Unsupported I/O engine: {io_engine}")
 
     @classmethod
-    def read(cls, path: str, io_engine: str = None, df_engine: str = None, **kwargs):
+    def read(
+        cls, path_or_buffer, io_engine: str = None, df_engine: str = None, compression=None, **kwargs
+    ):
         """
-        Read a DataFrame from a file using the specified I/O engine.
+        Read a DataFrame from a file or buffer using the specified I/O engine.
 
         Args:
-            path (str): The path to read the file from.
-            io_engine (str, optional): The I/O engine to use. If None, it will be inferred from the file extension or the .type file.
+            path_or_buffer: The path to read the file from or a file-like object.
+            io_engine (str, optional): The I/O engine to use. If None, it will be inferred from the file extension.
             df_engine (str, optional): The DataFrame engine to use (pandas or polars).
+            compression (str, optional): Compression to use (e.g., 'gzip', 'bz2', 'zip', 'xz').
             **kwargs: Additional keyword arguments to pass to the specific read method.
 
         Returns:
@@ -317,46 +395,60 @@ class MetaDataFrame:
         Raises:
             ValueError: If the I/O engine is not supported or installed.
         """
-        # Try to read the io_engine from the .type file
-        if io_engine is None:
-            io_engine = path.split(".")[-1].lower()
-            log.info(f"inferring io_engine from file extension: {io_engine}")
+        if io_engine is None and isinstance(path_or_buffer, str):
+            io_engine = path_or_buffer.split(".")[-1].lower()
+            log.debug(f"inferring io_engine from file extension: {io_engine}")
 
         io_engine = get_io_engine(io_engine)
         df_engine = get_df_engine(df_engine)
+
+        log.debug(f"reading with {df_engine} and {io_engine}")
 
         if df_engine == "pandas":
             import pandas as pd
 
             if io_engine == "csv":
-                df = pd.read_csv(path, **kwargs)
+                if compression not in {'infer', 'gzip', 'bz2', 'zip', 'xz', None}:
+                    compression = None
+                df = pd.read_csv(path_or_buffer, compression=compression, **kwargs)
             elif io_engine == "parquet":
-                df = pd.read_parquet(path, **kwargs)
+                df = pd.read_parquet(path_or_buffer, **kwargs)
             elif io_engine == "json":
-                df = pd.read_json(path, **kwargs)
+                if compression not in {'infer', 'gzip', 'bz2', 'zip', 'xz', None}:
+                    compression = None
+                df = pd.read_json(path_or_buffer, compression=compression, **kwargs)
             elif io_engine == "feather":
-                df = pd.read_feather(path, **kwargs)
+                df = pd.read_feather(path_or_buffer, **kwargs)
             elif io_engine == "pickle":
-                df = pd.read_pickle(path, **kwargs)
+                if compression not in {'infer', 'gzip', 'bz2', 'zip', 'xz', None}:
+                    compression = None
+                df = pd.read_pickle(path_or_buffer, compression=compression, **kwargs)
             else:
                 raise ValueError(f"Unsupported I/O engine: {io_engine}")
+
+            reinfer_types(df)
         else:  # polars
             import polars as pl
 
             if io_engine == "csv":
-                df = pl.read_csv(path, **kwargs)
+                if compression not in {'gzip', 'zlib', None}:
+                    compression = None
+                df = pl.read_csv(path_or_buffer, infer_schema_length=10000, compression=compression, **kwargs)
             elif io_engine == "parquet":
-                df = pl.read_parquet(path, **kwargs)
+                df = pl.read_parquet(path_or_buffer, **kwargs)
             elif io_engine == "json":
-                df = pl.read_json(path, **kwargs)
+                if compression not in {'gzip', 'zlib', None}:
+                    compression = None
+                df = pl.read_json(path_or_buffer, infer_schema_length=10000, compression=compression, **kwargs)
             elif io_engine == "feather":
-                df = pl.read_ipc(path, **kwargs)
+                df = pl.read_ipc(path_or_buffer, **kwargs)
             elif io_engine == "pickle":
-                import pandas as pd
-
-                df = pl.DataFrame(pd.read_pickle(path, **kwargs))
+                df = cls.read(path_or_buffer, io_engine=io_engine, df_engine="pandas")
+                df = pl.DataFrame(df)
             else:
                 raise ValueError(f"Unsupported I/O engine: {io_engine}")
+
+        log.debug(f"done reading with {df_engine} and {io_engine}")
 
         return cls(df, df_engine)
 
@@ -405,88 +497,9 @@ class MetaDataFrame:
         return MetaDataFrame(new_df, self.df_engine)
 
 
-@fcache
-def get_working_io_engines():
-    """
-    Determine which I/O engines are available based on current pip installations.
-
-    Returns:
-        list: A list of available I/O engine names.
-    """
-    working_engines = ["csv", "json", "pickle"]
-
-    # Check for specific engines
-    try:
-        import pyarrow
-
-        working_engines.extend(["parquet", "feather"])
-    except ImportError:
-        pass
-
-    return set(working_engines)
-
-
-def get_io_engine(io_engine=None):
-    if io_engine is None:
-        if check_io_engine(OPTIMAL_DATAFRAME_IO_ENGINE):
-            return OPTIMAL_DATAFRAME_IO_ENGINE
-        return DEFAULT_DATAFRAME_IO_ENGINE
-    if check_io_engine(io_engine):
-        return io_engine
-    raise ValueError(
-        f"IO engine {io_engine} not found or installed. Please choose one of: {get_working_io_engines()}"
-    )
-
-
-def check_io_engine(io_engine):
-    return io_engine in get_working_io_engines()
-
-
-def get_working_df_engines() -> Set[str]:
-    working_engines = set()
-    try:
-        import pandas
-
-        working_engines.add("pandas")
-    except ImportError:
-        pass
-
-    try:
-        import polars
-
-        working_engines.add("polars")
-    except ImportError:
-        pass
-
-    return working_engines
-
-
-def check_df_engine(df_engine):
-    return df_engine in get_working_df_engines()
-
-
-def get_df_engine(df_engine=None):
-    if df_engine is None:
-        if check_df_engine(OPTIMAL_DATAFRAME_DF_ENGINE):
-            return OPTIMAL_DATAFRAME_DF_ENGINE
-        return DEFAULT_DATAFRAME_DF_ENGINE
-    if check_df_engine(df_engine):
-        return df_engine
-    raise ValueError(
-        f"DF engine {df_engine} not found or installed. Please choose one of: {get_working_df_engines()}"
-    )
-
-
-def get_dataframe_engine(df):
-    if not is_dataframe(df):
-        return
-    if isinstance(df, MetaDataFrame):
-        return df.df_engine
-    return get_obj_addr(df).split(".")[0]
-
 
 def reset_index(df, prefix_columns=None):
-    if has_index(df): # pandas
+    if has_index(df):  # pandas
         index = [x for x in df.index.names if x is not None]
         df = df.reset_index()
         if prefix_columns is not None:
@@ -543,7 +556,7 @@ def set_index(
 
 def has_index(df):
     if not is_dataframe(df):
-        raise ValueError('not a dataframe')
+        raise ValueError("not a dataframe")
     if get_dataframe_engine(df) == "pandas":
         return len([x for x in df.index.names if x is not None]) > 0
     elif get_dataframe_engine(df) == "polars":
@@ -552,3 +565,13 @@ def has_index(df):
         raise ValueError(
             "Unsupported DataFrame type. Use either pandas or polars DataFrame."
         )
+
+
+def reinfer_types(df):
+    import pandas as pd
+
+    # Infer types for pandas DataFrame
+    for column in df.columns:
+        df[column] = pd.to_numeric(df[column], errors="ignore")
+        if df[column].dtype == "object":
+            df[column] = pd.to_datetime(df[column], errors="ignore")

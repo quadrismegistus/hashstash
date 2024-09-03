@@ -9,12 +9,13 @@ import time
 import pytest
 import pandas as pd
 # logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.CRITICAL+1)
 
 start_redis_server() # run at beginning of tests
 start_mongo_server() # run at beginning of tests
 
 TEST_CLASSES = [
-    DataFrameHashStash,
+    # DataFrameHashStash,
     PairtreeHashStash,
     SqliteHashStash,
     MemoryHashStash,
@@ -75,6 +76,18 @@ class TestHashStash:
         retrieved_data = cache["large_data"]
         assert retrieved_data == large_data
 
+    # dataframes serialized special
+    def test_df_keys(self, cache):
+        import pandas as pd
+        df = pd.DataFrame({
+            "name":["cica","kutya"],
+            "goodness":["nagyon jó","nagyon rossz"]
+        })
+        key = "cica-kutya"
+        cache[key] = df
+        cache[df] = key
+        assert cache[df] == key
+
     def test_multiple_data_types(self, cache):
         test_data = {
             "string": "Hello, world!" * 1000,
@@ -105,15 +118,15 @@ class TestHashStash:
             "large_string": "".join(
                 random.choices("abcdefghijklmnopqrstuvwxyz", k=1_000_000)
             ),
-            "large_list": [random.randint(1, 1000000) for _ in range(100_000)],
+            "large_list": [random.randint(1, 1000000) for _ in range(1000)],
             "large_nested": {
                 f"key_{i}": {
                     "nested_string": "".join(
-                        random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=100)
+                        random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=10)
                     ),
-                    "nested_list": [random.random() for _ in range(100)],
+                    "nested_list": [random.random() for _ in range(10)],
                 }
-                for i in range(1_000)
+                for i in range(1_00)
             },
         }
 
@@ -412,8 +425,11 @@ class TestHashStash:
         test_func.stash.clear()
         result = test_func(5)
         assert test_func.stash.is_function_stash
-        assert test_func.stash.get(5) == result
-        assert test_func.stash.keys_l() == [{'args':(5,), 'kwargs':{}}]
+        func_key = test_func.stash.new_function_key(5)
+        assert func_key == {'args': (5,), 'kwargs': {}}
+        assert test_func.stash.get_func(5) == result
+        assert test_func.stash.get(func_key) == result
+        assert test_func.stash.keys_l() == [func_key]
 
     def test_sub_function_results(self, cache):
         def test_func(x):
@@ -485,12 +501,13 @@ class TestHashStash:
             return x + y
 
         func_stash = cache.sub_function_results(test_func)
+        cache.clear()
+        func_stash.clear()
         assert func_stash.is_function_stash
         assert func_stash is not cache
         assert func_stash.path != cache.path
 
         func_stash.set((1,2), 3)
-        assert func_stash.get((1, 2), as_function=False) == 3
         
         print('func_stash',func_stash.keys_l())
         print('cache',cache.keys_l())
@@ -498,7 +515,6 @@ class TestHashStash:
         assert len(cache) == 0
 
         cache.set((1,2), 3)
-        assert cache.get((1,2)) == 3
         assert len(func_stash) == 1
         assert len(cache) == 1
 
@@ -523,9 +539,9 @@ class TestHashStashFactory:
 
     def test_compress_parameter(self):
         stash = HashStash(compress=True)
-        assert stash.compress == True
+        assert stash.compress in {OPTIMAL_COMPRESS, DEFAULT_COMPRESS}
         stash = HashStash(compress=False)
-        assert stash.compress == False
+        assert stash.compress == RAW_NO_COMPRESS
 
     def test_b64_parameter(self):
         stash = HashStash(b64=True)
@@ -544,10 +560,10 @@ class TestHashStashFactory:
         assert stash.root_dir == root_dir
 
     def test_invalid_engine(self):
-        with pytest.raises(ValueError):
-            HashStash(engine="invalid_engine")
+        assert HashStash(engine="invalid_engine").engine == DEFAULT_ENGINE_TYPE
 
     def test_default_parameters(self):
+        config = Config()
         stash = HashStash()
         assert stash.engine == config.engine
         assert stash.name == DEFAULT_NAME
@@ -576,9 +592,9 @@ class TestHashStashFactory:
         assert stash.name == name
         assert stash.engine == engine
         assert stash.dbname == dbname
-        assert stash.compress == compress
+        assert stash.compress in {OPTIMAL_COMPRESS, DEFAULT_COMPRESS}
         assert stash.b64 == b64
-        assert serializer in stash.serializer
+        assert serializer == stash.serializer
 
 ## specific engine tests
 

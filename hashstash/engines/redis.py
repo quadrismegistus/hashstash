@@ -40,13 +40,16 @@ class RedisHashStash(BaseHashStash):
 
     def clear(self):
         super().close()
-
         import redis
         log.debug(f"Dropping Redis database at {self.host}:{self.port}")
         client = redis.Redis(host=self.host, port=self.port, db=get_db_number(self.dbname))
-        client.flushdb()
         # Free up disk space immediately
-        client.save()
+        try:
+            client.flushdb()
+            client.save()
+        except Exception as e:
+            pass
+        return self
         
 
 def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, dbname=DEFAULT_DBNAME, data_dir=DEFAULT_REDIS_DIR):
@@ -66,7 +69,7 @@ def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, dbname=DEFAULT_DBNAME, 
         redis_client = redis.Redis(host=host, port=port, db=db_number)
         redis_client.ping()
         _process_started = True
-        logger.info("Redis server is already running and accessible")
+        # logger.info("Redis server is already running and accessible")
         return
     except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError) as e:
         logger.info(f"Unable to connect to Redis. Checking Docker container status. Error: {e}")

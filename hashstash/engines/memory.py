@@ -1,16 +1,17 @@
 from . import *
+from .base import get_manager, BaseHashStash
+from multiprocessing import Manager
 
-IN_MEMORY_CACHE = defaultdict(dict)
+# # Use the existing get_manager function
+# manager = Manager()
 
-class MemoryDB(DictContext):
-    def __init__(self, name):
-        global IN_MEMORY_CACHE
-        self.name = name
-        self.data = IN_MEMORY_CACHE[name]
-
-    def clear(self):
-        global IN_MEMORY_CACHE
-        IN_MEMORY_CACHE[self.name].clear()
+SHARED_MEMORY_CACHE = None
+def get_shared_memory_cache():
+    global SHARED_MEMORY_CACHE
+    if SHARED_MEMORY_CACHE is None:
+        from UltraDict import UltraDict
+        SHARED_MEMORY_CACHE = UltraDict(recursive=True)
+    return SHARED_MEMORY_CACHE
 
 class MemoryHashStash(BaseHashStash):
     engine = 'memory'
@@ -18,8 +19,12 @@ class MemoryHashStash(BaseHashStash):
 
     @contextmanager
     def get_connection(self):
-        yield MemoryDB(self.path)
-    
+        cache = get_shared_memory_cache()
+        if not self.path in cache:
+            cache[self.path] = {}
+        yield cache[self.path]
+
     def clear(self):
-        with self as cache, cache.db as db:
-            db.clear()
+        cache = get_shared_memory_cache()
+        cache[self.path] = {}
+        return self

@@ -1,12 +1,6 @@
 import pytest
-from hashstash.utils.addrs import (
-    get_obj_module,
-    get_obj_addr,
-    get_obj_name,
-    get_obj_nice_name,
-    flexible_import,
-    can_import_object
-)
+from hashstash import *
+logger.setLevel(logging.CRITICAL+1)
 
 def test_function():
     pass

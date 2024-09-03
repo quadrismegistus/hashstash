@@ -1,12 +1,12 @@
 import pytest
-from hashstash.utils.encodings import encode, decode, encode_hash
+from hashstash.utils.encodings import encode, decode, encode_hash, RAW_NO_COMPRESS
 import json
 import base64
 import zlib
 
 @pytest.fixture
 def default_params():
-    return {"b64": True, "compress": True, "as_string": False}
+    return {"b64": True, "compress": RAW_NO_COMPRESS, "as_string": False}
 
 def test_encode_decode(default_params):
     data = json.dumps({"test": "data", "number": 42})
@@ -33,8 +33,8 @@ def test_b64_encoding(default_params):
 
 def test_compression(default_params):
     data = json.dumps({"test": "data" * 1000})
-    encoded_compressed = encode(data, b64=False, compress=True)
-    encoded_uncompressed = encode(data, b64=False, compress=False)
+    encoded_compressed = encode(data, b64=False, compress='zlib')
+    encoded_uncompressed = encode(data, b64=False, compress=RAW_NO_COMPRESS)
     assert len(encoded_compressed) < len(encoded_uncompressed)
 
 def test_as_string(default_params):
@@ -53,11 +53,11 @@ def test_no_compression(default_params):
 def test_different_combinations():
     data = json.dumps({"test": "data", "number": 42})
     combinations = [
-        {"b64": True, "compress": True, "as_string": False},
-        {"b64": True, "compress": False, "as_string": False},
-        {"b64": False, "compress": True, "as_string": False},
-        {"b64": False, "compress": False, "as_string": False},
-        {"b64": True, "compress": True, "as_string": True},
+        {"b64": True, "compress": 'zlib', "as_string": False},
+        {"b64": True, "compress": RAW_NO_COMPRESS, "as_string": False},
+        {"b64": False, "compress": 'zlib', "as_string": False},
+        {"b64": False, "compress": RAW_NO_COMPRESS, "as_string": False},
+        {"b64": True, "compress": 'zlib', "as_string": True},
     ]
     for params in combinations:
         encoded = encode(data, **params)

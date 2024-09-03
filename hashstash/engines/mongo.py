@@ -32,6 +32,8 @@ class MongoHashStash(BaseHashStash):
         super().__init__(*args, **kwargs)
         if host is not None: self.host = host
         if port is not None: self.port = port
+        # force b64 True for mongo
+        self.b64 = True
         
     @log.debug
     def get_db(self):
@@ -72,6 +74,7 @@ class MongoHashStash(BaseHashStash):
     def clear(self):
         with self.db as db:
             db.drop()
+        return self
 
     def __len__(self):
         with self.db as db:
@@ -97,7 +100,7 @@ def start_mongo_server(host='localhost', port=27017, dbname=DEFAULT_DBNAME, data
         client = MongoClient(host=host, port=port, serverSelectionTimeoutMS=2000)
         client.server_info()  # Will raise an exception if cannot connect
         _process_started = True
-        logger.info("MongoDB server is already running and accessible")
+        # logger.info("MongoDB server is already running and accessible")
         return
     except Exception as e:
         logger.info(f"Unable to connect to MongoDB. Checking Docker container status. Error: {e}")

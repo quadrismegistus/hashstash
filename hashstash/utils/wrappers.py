@@ -1,6 +1,6 @@
 from . import *
+from .misc import is_method
 
-@log.debug
 def attach_stash_to_function(func, stash = None, **stash_kwargs):
     from ..engines.base import HashStash
     if stash is None:
@@ -8,75 +8,9 @@ def attach_stash_to_function(func, stash = None, **stash_kwargs):
     local_stash = stash.sub_function_results(func)
     func.stash = local_stash
 
-@log.debug
-def stashed_result(
-    _func=None,
-    stash: Optional["BaseHashStash"] = None,
-    force=False,
-    store_args=True,
-    **stash_kwargs,
-):
-    @log.debug
-    def decorator(func: Callable, *args, **kwargs) -> Callable:
-        nonlocal stash, stash_kwargs
-        attach_stash_to_function(func, stash, **stash_kwargs)
-
-        @log.debug
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            from ..serializers import serialize
-            from .misc import ReusableGenerator, is_method
-
-            nonlocal force, stash, store_args, func
-            passed_stash = kwargs.pop("_stash", None)
-            if passed_stash is not None:
-                attach_stash_to_function(func, passed_stash)
-            
-            assert hasattr(func,'stash')
-            local_stash = wrapper.stash = func.stash
-            local_force = kwargs.pop("_force", force)
-            args = list(args)
-            if is_method(func):
-                args_key = tuple(args[1:])
-            else:
-                args_key = tuple(args)
-            key = {
-                # "func": get_obj_addr(func),
-                "args": args_key,
-                "kwargs": kwargs,
-            }
-            if not store_args:
-                key = encode_hash(local_stash.serialize(key))
 
 
-            # find it?
-            if not local_force:
-                res = local_stash.get(key,as_function=False)
-                if res is not None:
-                    log.debug(f"Stash hit for {func.__name__}. Returning stashed result.")
-                    return res
-
-            # didn't find
-            note = "Forced execution" if local_force else "Stash miss"
-            log.debug(f"{note} for {func.__name__}. Executing function.")
-
-            # call func
-            result = func(*args, **kwargs)
-            is_generator = inspect.isgenerator(result) or isinstance(result,ReusableGenerator)
-            result = list(result) if is_generator else result
-            log.debug(f"Caching result for {func.__name__}.")
-            local_stash.set(key, result)
-            return result
-
-        return wrapper
-
-    if _func is None:
-        return decorator
-    else:
-        return decorator(_func)
-
-
-def retry_patiently(max_retries=10, base_delay=0.1, max_delay=10):
+def retry_patiently(max_retries=10, base_delay=0.01, max_delay=1):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -115,74 +49,131 @@ class DictContext(UserDict):
     def __exit__(self, exc_type, exc_value, traceback):
         pass  # Nothing happens on close
 
+def get_dict(obj):
+    return {
+        k:getattr(obj,k)
+        for k in dir(obj)
+        if k and k[0]=='_'
+        and not isinstance(getattr(obj,k), dict)
+    }
+
 @log.debug
-def parallelized(
+def stashed_result(
     _func=None,
-    num_proc=None,
-    progress=True,
-    desc=None,
-    ordered=True,
-    stash=None,
-    stashed=False,
-    update_on_src_change=False,
-    *pmap_args,
-    **pmap_kwargs,
+    stash: Optional["BaseHashStash"] = None,
+    force=False,
+    store_args=True,
+    **stash_kwargs,
 ):
-    from .pmap import pmap
+    @log.debug
+    def decorator(func: Callable, *decorator_args, **decorator_kwargs) -> Callable:
+        from ..engines.base import HashStash
+        from .misc import ReusableGenerator
+        from .addrs import is_method, get_object_from_method
+        nonlocal stash, stash_kwargs
 
-    def decorator(func):
-        nonlocal stash
-        if stash is None and stashed:
-            from ..engines.base import HashStash
-            stash = HashStash()
-        
-        if stashed:
-            if get_obj_module(func) == "__main__":
-                update_on_src_change = True
-            func_stash = stash.sub_function_results(func, dbname='pmap_result', update_on_src_change=update_on_src_change)
-            func.stash = func_stash
-        else:
-            func_stash = None
+        if stash is None:
+            stash = HashStash(**stash_kwargs)
 
+        stash.attach_func(func)
+        @log.debug
         @wraps(func)
         def wrapper(*args, **kwargs):
-            nonlocal func_stash
+            from .misc import ReusableGenerator 
+            nonlocal force, stash, store_args, func, stash_kwargs, decorator_kwargs
+            if args and get_pytype(args[0]) in {'class','instance'}:
+                self_obj = args[0]
+                func = getattr(self_obj, func.__name__)
+                args = args[1:]
 
-            # Check if we're dealing with multiple sets of arguments
-            if args and isinstance(args[0], (list, tuple)):
-                log.info('parallelizing')
-                objects = args[0]
-                if kwargs:
-                    options = [kwargs] * len(objects)
-                else:
-                    options = [{} for _ in objects]
-
-                # Use pmap to execute the function(s)
-                results = pmap(
-                    func,
-                    objects=objects,
-                    options=options,
-                    num_proc=num_proc or os.cpu_count(),
-                    progress=progress,
-                    desc=desc or func.__name__,
-                    ordered=ordered,
-                    stash=func_stash,
-                    *pmap_args,
-                    **pmap_kwargs,
-                )
-                return list(results)  # Convert generator to list
-            else:
-                # Single function call
-                if func_stash is not None:
-                    log.info('getting from stash')
-                    res = func_stash.get(args, kwargs)  # Changed from func_stash.get(*args, **kwargs)
-                else:
-                    res = None
-                return func(*args, **kwargs) if res is None else res
-
+            return stash.run(func, *args, **kwargs)
+            
         return wrapper
 
     if _func is None:
         return decorator
     else:
         return decorator(_func)
+
+
+
+
+
+# @log.debug
+# def parallelized(
+#     _func=None,
+#     num_proc=None,
+#     progress=True,
+#     desc=None,
+#     ordered=True,
+#     stash=None,
+#     stashed=False,
+#     update_on_src_change=False,
+#     *pmap_args,
+#     **pmap_kwargs,
+# ):
+#     from .pmap import pmap
+
+#     def decorator(func):
+#         nonlocal stash
+#         if stash is None and stashed:
+#             from ..engines.base import HashStash
+#             stash = HashStash()
+
+#         if stashed:
+#             if get_obj_module(func) == "__main__":
+#                 update_on_src_change = True
+#             func_stash = stash.sub_function_results(
+#                 func, dbname="pmap_result", update_on_src_change=update_on_src_change
+#             )
+#             func.stash = func_stash
+#         else:
+#             func_stash = None
+
+#         @wraps(func)
+#         def wrapper(*args, **kwargs):
+#             nonlocal func_stash
+
+#             # Check if we're dealing with multiple sets of arguments
+#             if args and isinstance(args[0], (list, tuple)):
+#                 objects = args[0]
+#                 if kwargs:
+#                     options = [kwargs] * len(objects)
+#                 else:
+#                     options = [{} for _ in objects]
+
+#                 # Use pmap to execute the function(s)
+#                 results = pmap(
+#                     func,
+#                     objects=objects,
+#                     options=options,
+#                     num_proc=num_proc or os.cpu_count(),
+#                     progress=progress,
+#                     desc=desc or func.__name__,
+#                     ordered=ordered,
+#                     stash=func_stash,
+#                     *pmap_args,
+#                     **pmap_kwargs,
+#                 )
+#                 return list(results)  # Convert generator to list
+#             else:
+#                 # Single function call
+#                 if func_stash is not None:
+#                     res = func_stash.get(
+#                         args, kwargs
+#                     )  # Changed from func_stash.get(*args, **kwargs)
+#                 else:
+#                     res = None
+#                 return func(*args, **kwargs) if res is None else res
+
+#         return wrapper
+
+#     if _func is None:
+#         return decorator
+#     else:
+#         return decorator(_func)
+
+
+
+
+stashed_dataframe = partial(stashed_result, engine='dataframe', _as_dataframe=True, _with_metadata=True, _all_results=True)

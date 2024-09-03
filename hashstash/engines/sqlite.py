@@ -13,4 +13,4 @@ class SqliteHashStash(BaseHashStash):
         os.makedirs(self.path_dirname, exist_ok=True)
         
         from sqlitedict import SqliteDict
-        return SqliteDict(self.path, flag='c', autocommit=True, timeout=30)  # Added timeout
+        return SqliteDict(self.path, flag='c', autocommit=True)

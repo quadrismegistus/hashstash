@@ -1,5 +1,6 @@
 from . import *
 
+
 ## Logging setup
 class ColoredFormatter(logging.Formatter):
     """Custom formatter with colors and module/function information."""
@@ -51,6 +52,32 @@ def temporary_log_level(temp_level, only_sub=False):
     finally:
         logger.setLevel(original_level)
 
+def get_function_call_str_l(_func, *args, **kwargs):
+    from .addrs import get_obj_addr
+
+    args = list(args)
+    try:
+        if args and getattr(_func, '__code__', None) and _func.__code__.co_varnames and _func.__code__.co_varnames[0] == 'self':
+            args_str = ', '.join(map(repr, args[1:]))
+        else:
+            args_str = ', '.join(map(repr, args))
+    except Exception:
+        args_str = ', '.join(map(repr, args[1:]))
+    kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items())
+    params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
+    params_str = params_str.replace("\n", " ")
+    return get_obj_addr(_func), params_str
+
+
+def _cleanstr(x):
+    x=str(x).replace("\n"," ")
+    while '  ' in x: x=x.replace('  ',' ')
+    return x.strip()
+
+def get_function_call_str(func, *args, **kwargs):
+    funcname, params_str = get_function_call_str_l(func,*args,**kwargs)
+    params_str=params_str.replace("\n", " ")[:50].strip()
+    return f'{funcname}({_cleanstr(params_str)})'
 
 # Add a global variable to track the current depth
 current_depth = 0
@@ -64,19 +91,9 @@ def log_wrapper(_func=None, level=logging.INFO):
         @wraps(func)
         def wrapper(*args, **kwargs):
             global current_depth, last_log_time
-            args = list(args)
-            try:
-                if args and getattr(func, '__code__', None) and func.__code__.co_varnames and func.__code__.co_varnames[0] == 'self':
-                    args_str = ', '.join(map(repr, args[1:]))
-                else:
-                    args_str = ', '.join(map(repr, args))
-            except Exception:
-                args_str = ', '.join(map(repr, args[1:]))
-            kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items() if v is not None)
-            params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
-            params_str = params_str.replace("\n", " ")
             if level>=logger.level:
-                log_func(f'{get_obj_nice_name(func)}(){"  <<<  "+params_str if params_str else ""}', level=level)
+                funcname,params_str = get_function_call_str_l(func,*args,**kwargs)
+                log_func(f'{funcname}(){"  <<<  "+params_str if params_str else ""}', level=level)
                 current_depth += 1
             
             try:
@@ -89,10 +106,10 @@ def log_wrapper(_func=None, level=logging.INFO):
             if level>=logger.level:
                 current_depth -= 1
                 # if result is not None: 
-                if result is not None:
-                    resx=repr(result).replace("\n", " ")
-                    log_func(f'{get_obj_nice_name(func)}()  >>>  {resx}', level=level)
-                    # log_func(f'>>> {str(result)[:100]}', level=level)
+                # if result is not None:
+                resx=repr(result).replace("\n", " ")
+                log_func(f'{funcname}()  >>>  {resx}', level=level)
+                # log_func(f'>>> {str(result)[:100]}', level=level)
 
                 if not current_depth:
                     last_log_time = None
@@ -143,6 +160,10 @@ class log:
         return cls.log(_func, level=logging.DEBUG)
     
     @classmethod
+    def trace(cls, _func=None):
+        return cls.log(_func, level=logging.DEBUG-1)
+    
+    @classmethod
     def info(cls, _func=None):
         return cls.log(_func, level=logging.INFO)
     
@@ -174,14 +195,22 @@ class log:
 
 
 
-@log.debug
-def ff(x):
-    log.debug('inner hello')
-    time.sleep(2)
-    return x*2
+# @log.debug
+# def ff(x):
+#     log.debug('inner hello')
+#     time.sleep(2)
+#     return x*2
 
-@log.debug
-def f(x):
-    log.debug('outer hello')
-    time.sleep(1)
-    return ff(x)*2
+# from multiprocessing import Value
+
+# _fn = Value('i', 0)
+# def f(x):
+#     global _fn
+#     with _fn.get_lock():
+#         _fn.value += 1
+#     naptime=random.randint(1,3)
+#     print(f'startig process #{_fn.value}, sleeping for {naptime}')
+#     for n in range(naptime):
+#         print('.',end='',flush=True)
+#         time.sleep(1)
+#     return x

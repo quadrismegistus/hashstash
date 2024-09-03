@@ -1,6 +1,7 @@
 from hashstash import *
 import pytest
 from unittest.mock import Mock, patch
+logger.setLevel(logging.CRITICAL+1)
 
 # Test stashed_result decorator
 def test_stashed_result():
@@ -21,7 +22,7 @@ def test_stashed_result():
     assert result3 == 7
 
 counter = 0
-tmp = Stash(engine='memory')
+tmp = Stash(engine='memory').clear()
 
 @tmp.stashed_result
 def incrementing_function():
@@ -71,26 +72,29 @@ def test_retry_patiently_success():
 
 # Test parallelized decorator
 def test_parallelized():
-    @parallelized
-    def parallel_function(x):
-        return x * 2
+    with HashStash().tmp() as tmp:
+        @parallelized(stash=tmp)
+        def parallel_function(x):
+            return x * 2
 
-    result = parallel_function([1, 2, 3, 4])
-    assert result == [2, 4, 6, 8]
+        result = parallel_function([1, 2, 3, 4])
+        assert result == [2, 4, 6, 8]
 
 def test_parallelized_single_input():
-    @parallelized
-    def parallel_function(x):
-        return x * 2
+    logger.setLevel(logging.INFO)
+    with Stash().tmp() as tmp:
+        @parallelized(stash=tmp)
+        def parallel_function(x):
+            return x * 2
 
-    result = parallel_function(5)
-    assert result == 10
+        result = parallel_function(5)
+        assert result == 10
 
 def test_parallelized_with_stashed_result():
+    logger.setLevel(logging.INFO)
     with Stash().tmp() as tmp:
 
-        @tmp.stashed_result
-        @parallelized
+        @parallelized(stash=tmp)
         def parallel_stashed_function(x):
             return x * 2
 
