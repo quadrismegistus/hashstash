@@ -52,12 +52,12 @@ def temporary_log_level(temp_level, only_sub=False):
     finally:
         logger.setLevel(original_level)
 
-def get_function_call_str_l(func, *args, **kwargs):
+def get_function_call_str_l(_func, *args, **kwargs):
     from .addrs import get_obj_addr
 
     args = list(args)
     try:
-        if args and getattr(func, '__code__', None) and func.__code__.co_varnames and func.__code__.co_varnames[0] == 'self':
+        if args and getattr(_func, '__code__', None) and _func.__code__.co_varnames and _func.__code__.co_varnames[0] == 'self':
             args_str = ', '.join(map(repr, args[1:]))
         else:
             args_str = ', '.join(map(repr, args))
@@ -66,7 +66,7 @@ def get_function_call_str_l(func, *args, **kwargs):
     kwargs_str = ', '.join(f'{k}={v!r}' for k, v in kwargs.items())
     params_str = ', '.join(filter(bool, [args_str, kwargs_str]))
     params_str = params_str.replace("\n", " ")
-    return get_obj_addr(func), params_str
+    return get_obj_addr(_func), params_str
 
 
 def _cleanstr(x):
@@ -143,6 +143,7 @@ def log_prefix_str(message='', reset=True):
 
 
 def log_func(message, level=logging.DEBUG, maxlen=None):
+    return
     logger.log(level,log_prefix_str(message)[:maxlen])
 
 

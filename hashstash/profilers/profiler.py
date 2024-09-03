@@ -15,53 +15,10 @@ def generate_primitive():
     return random.choice(primitives)()
 
 
-def generate_numpy_array(max_dim: int = 3, max_size: int = 100) -> 'ndarray':
-    try:
-        import numpy as np
-        shape = tuple(
-            random.randint(1, max_size) for _ in range(random.randint(1, max_dim))
-        )
-        return np.random.rand(*shape)
-    except ImportError:
-        raise ImportError("NumPy is required for this function.")
-    
-
-
-def generate_pandas_dataframe(max_rows: int = 100, max_cols: int = 10) -> 'DataFrame':
-    try:
-        import pandas as pd
-        rows = random.randint(1, max(2, max_rows))
-        cols = random.randint(1, max(2, max_cols))
-        data = {
-            f"col_{i}": [generate_primitive() for _ in range(rows)] for i in range(cols)
-        }
-        return pd.DataFrame(data)
-    except ImportError:
-        raise ImportError("Pandas is required for this function.")
-    
-
-
-def generate_pandas_series(max_length: int = 100) -> 'Series':
-    try:
-        import pandas as pd
-        length = random.randint(1, max(2, max_length))
-        data = [generate_primitive() for _ in range(length)]
-        return pd.Series(data)
-    except ImportError:
-        raise ImportError("Pandas is required for this function.")
-
-
-
 def generate_complex_data(size: int) -> Dict[str, Any]:
     return {
-        "nested_structure": generate_data(target_size=size, depth=5),
-        "dataframe": generate_pandas_dataframe(
-            max_rows=size // 100, max_cols=size // 1000
-        ),
-        "numpy_array": generate_numpy_array(max_size=size // 100),
-        "series": generate_pandas_series(max_length=size // 10),
-        "large_list": generate_list(max_length=size // 10),
-        "large_dict": generate_dict(max_keys=size // 10),
+        "nested_structure": generate_data(size=size, data_type='dict'),
+        "dataframe": generate_data(size=size, data_type='pandas_df'),
     }
 
 
@@ -79,7 +36,7 @@ def generate_data(
     if depth <= 0:
         return generate_primitive()
 
-    choice = random.choice(data_types) if data_type is None else data_type
+    choice = data_type
 
     if choice == "primitive":
         return generate_primitive()
@@ -87,13 +44,9 @@ def generate_data(
         return generate_list(min(target_size // 10, 1000))
     elif choice == "dict":
         return generate_dict(target_size)
-    elif choice == "numpy":
-        return generate_numpy_array(max_dim=2, max_size=int(target_size**0.5))
     elif choice == "pandas_df" or choice == "meta_df":
         df = generate_data_dataframe(target_size)
-        return MetaDataFrame(df) if choice == "meta_df" else df
-    elif choice == "pandas_series":
-        return generate_pandas_series(max_length=min(target_size, 1000))
+        return df if choice == "meta_df" else df.df
     else:
         assert False, f"Invalid data type: {choice}"
 

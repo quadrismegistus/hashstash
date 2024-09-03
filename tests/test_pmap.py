@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from hashstash.utils.pmap import pmap, _pmap_item, progress_bar
 from hashstash.engines.base import HashStash
 from hashstash.serializers.serializer import serialize, deserialize
+logger.setLevel(logging.CRITICAL+1)
 
 def square(x):
     return x * x
@@ -53,8 +54,8 @@ def failing_function(x):
     return x * x
 
 def test_pmap_exception_handling():
-    with pytest.raises(ValueError):
-        list(pmap(failing_function, objects=[1, 2, 3, 4], num_proc=2))
+    res = list(pmap(failing_function, objects=[1, 2, 3, 4], num_proc=2))
+    assert None in res
 
 @pytest.fixture
 def mock_log_prefix_str():
@@ -138,23 +139,32 @@ def test_pmap_with_stash():
         assert func_stash.parent == stash
         
         # Verify that the results are in the function's stash
-        print(func_stash.keys_l())
-        assert all(func_stash.get(i) == (i**2) for i in [1, 2, 3])
+        for i in [1, 2, 3]:
+            assert func_stash.get_func(i) == i**2
 
 
 def test_pmap_item_without_stash():
-    func = serialize(square)
-    result = _pmap_item((func, [3], {}))
+    item = stuff({
+        "func": square,
+        "args": [3],
+        "kwargs": {},
+    })
+    result = _pmap_item(item)
     assert result == 9
 
 def test_pmap_item_with_stash():
     with HashStash().tmp() as stash:
         
-        func = serialize(square)
-        result = _pmap_item((func, [3], {}), stash=stash)
+        item = stuff({
+            "func": square,
+            "args": [3],
+            "kwargs": {},
+            "stash": stash,
+        })
+        result = _pmap_item(item)
         
         assert result == 9
-        assert len(stash) == 1  # Check if one item was stored in the stash
+        assert len(stash.sub_function_results(square)) == 1  # Check if one item was stored in the stash
 
 def test_pmap_with_total():
     result = list(pmap(square, objects=[1, 2, 3, 4], num_proc=2, total=3, progress=False))

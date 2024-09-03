@@ -320,19 +320,28 @@ class BaseHashStash(MutableMapping):
         self.set(unencoded_key, unencoded_value)
 
     @log.debug
-    def get_func(self, func, *args, _dbname=None, **kwargs):
-        fstash = self.sub_function_results(func, dbname=_dbname)
-        return fstash.get(self.new_function_key(func, *args, **kwargs))
+    def get_func(self, *args, func=None, _dbname=None, **kwargs):
+        fstash = (
+            self.sub_function_results(func, dbname=_dbname)
+            if not self.is_function_stash
+            else self
+        )
+        return fstash.get(
+            self.new_function_key(
+                *args,
+                **kwargs,
+            )
+        )
 
-    @log.debug
-    def set_func(self, func, unencoded_value, *args, _dbname=None, **kwargs):
-        fstash = self.sub_function_results(func, dbname=_dbname)
-        return fstash.set(self.new_function_key(func, *args, **kwargs), unencoded_value)
+    # @log.debug
+    # def set_func(self, unencoded_value, *args, _dbname=None, **kwargs):
+    #     fstash = self.sub_function_results(func, dbname=_dbname)
+    #     return fstash.set(self.new_function_key(*args, **kwargs), unencoded_value)
 
-    def get_set_func(self, func, setter, *args, _dbname=None, **kwargs):
-        fstash = self.sub_function_results(func, dbname=_dbname)
-        setter_func = lambda: setter(*args, **kwargs)
-        return fstash.get_set(self.new_function_key(func, *args, **kwargs), setter_func)
+    # def get_set_func(self, func, setter, *args, _dbname=None, **kwargs):
+    #     fstash = self.sub_function_results(func, dbname=_dbname)
+    #     setter_func = lambda: setter(*args, **kwargs)
+    #     return fstash.get_set(self.new_function_key(func, *args, **kwargs), setter_func)
 
     def get_set(
         self,
@@ -422,8 +431,8 @@ class BaseHashStash(MutableMapping):
     ):
         fstash = (
             self.attach_func(func)
-            if getattr(func, "stash", None) is None
-            else func.stash
+            # if getattr(func, "stash", None) is None
+            # else func.stash
         )
         args = list(args)
         if get_pytype(func) == "instancemethod":
@@ -432,7 +441,6 @@ class BaseHashStash(MutableMapping):
             args = [get_class_from_method(func)] + args
         # func = unwrap_func(func)
         unencoded_key = fstash.new_function_key(
-            func,
             *args,
             store_args=kwargs.get("store_args", True),
             **{k: v for k, v in kwargs.items() if k and k[0] != "_"},
@@ -455,7 +463,8 @@ class BaseHashStash(MutableMapping):
         # call func
         # args = [obj] + list(args) if obj else list(args)
         # result = unwrap_func(func)(*args, **kwargs)
-        result = unwrap_func(func)(*args, **kwargs, _force=_force)
+        funcx = unwrap_func(func)
+        result = call_function_politely(funcx, *args, **kwargs, _force=_force)
         result = list(result) if is_generator(result) else result
         log.debug(
             f"Caching result for {func.__name__} under {serialize(unencoded_key)}"
@@ -482,9 +491,22 @@ class BaseHashStash(MutableMapping):
         **common_kwargs,
     ):
         pmap = None
+        self.attach_func(func)
+        print('func',func)
+        print('objects',objects)
+        print('options',options)
+        print('num_proc',num_proc)
+        print('total',total)
+        print('desc',desc)
+        print('progress',progress)
+        print('ordered',ordered)
+        print('preload',preload)
+        print('precompute',precompute)
         key = StashMap.get_stash_key(func, objects, options, total=total)
+        pprint(key)
         if not _force:
             pmap = self.get(key)
+
         if pmap is None:
             return StashMap(
                 func,
@@ -529,9 +551,8 @@ class BaseHashStash(MutableMapping):
         return local_stash
 
     @log.debug
-    def new_function_key(self, func, *args, store_args=True, **kwargs):
+    def new_function_key(self, *args, store_args=True, **kwargs):
         key = {
-            "func": func,
             "args": args,
             "kwargs": kwargs,
         }
@@ -631,7 +652,7 @@ class BaseHashStash(MutableMapping):
             or str(self.root_dir).startswith("/private/var/")
             else self.path
         )
-        
+
         return self
 
     @log.debug
@@ -872,7 +893,7 @@ class BaseHashStash(MutableMapping):
             is_function_stash=True,
         )
         func.__dict__["stash"] = stash
-
+        stash.__dict__["func"] = func
         return stash
 
     def assemble_ld(

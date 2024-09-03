@@ -34,6 +34,7 @@ redis = ["redis", "redis_dict"]
 mongo = ["pymongo"]
 lmdb = ["lmdb"]
 diskcache = ["diskcache"]
+memory = ["ultradict"]
 
 pandas = ["pandas", "numpy"]
 polars = ["pandas", "polars", "numpy"]
@@ -41,7 +42,8 @@ filebased = [
   "pandas", "polars", "numpy", "pyarrow","fastparquet", 
   "sqlitedict", 
   "diskcache",
-  "lmdb"
+  "lmdb",
+  "ultradict",
 ]
 servers = [
   "redis", "redis_dict", "pymongo",
@@ -53,6 +55,7 @@ engines = [
     "diskcache", 
     "redis", "redis_dict",
     "mongo",
+    "ultradict",
 ]
 dev = [
   # engines
@@ -62,6 +65,7 @@ dev = [
   "diskcache", 
   "redis", "redis_dict",
   "mongo",
+  "ultradict",
 
   # serializers
   "jsonpickle",# "numpy", "pandas"
@@ -70,6 +74,7 @@ dev = [
   # utils
   "tqdm", 
   "plotnine",
+  "scikit-misc",
 
   # dev tools
   "pytest", "pytest-cov", "setuptools-scm", "ipython", 
@@ -82,6 +87,7 @@ all = [
   "diskcache", 
   "redis", "redis_dict",
   "mongo",
+  "ultradict",
 
   # serializers
   "jsonpickle",
@@ -94,6 +100,7 @@ all = [
   # utils
   "tqdm", 
   "plotnine",
+  "scikit-misc",
 ]
 
 [tool.setuptools]

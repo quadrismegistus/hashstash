@@ -1,41 +1,59 @@
 from . import *
 
+
 def is_jsonable(obj):
     return isinstance(obj, (dict, list, str, int, float, bool, type(None)))
 
 
 def prune_none_values(data, badkeys=None):
     if isinstance(data, dict):
-        return {k: prune_none_values(v) for k, v in data.items() if v is not None and (not badkeys or k not in badkeys)}
+        return {
+            k: prune_none_values(v)
+            for k, v in data.items()
+            if v is not None and (not badkeys or k not in badkeys)
+        }
     elif isinstance(data, list):
         return [prune_none_values(item) for item in data if item is not None]
     else:
         return data
+
 
 @log.debug
 def is_dir(path):
     fn, ext = os.path.splitext(path)
     return not bool(ext)
 
+
 @log.debug
 def ensure_dir(path):
-    if not is_dir(path): 
-        path=os.path.dirname(path)
+    if not is_dir(path):
+        path = os.path.dirname(path)
     return os.makedirs(path, exist_ok=True)
+
 
 def reset_index_misc(df, _index=False):
     import pandas as pd
+
     index = [x for x in df.index.names if x is not None]
-    df = df.reset_index() if index else (df if not _index else df.rename_axis('_index').reset_index())
-    return df, (index if index or not _index else ['_index'])
+    df = (
+        df.reset_index()
+        if index
+        else (df if not _index else df.rename_axis("_index").reset_index())
+    )
+    return df, (index if index or not _index else ["_index"])
 
 
 def get_fn_ext(fn):
     # without period
-    return fn.split('.')[-1]
+    return fn.split(".")[-1]
+
 
 def is_generator(obj):
-    return inspect.isgenerator(obj) or isinstance(obj,ReusableGenerator)
+    import inspect
+    from collections.abc import Generator
+
+    return (inspect.isgenerator(obj) or isinstance(obj, Generator)) or type(obj) is range
+
 
 class ReusableGenerator:
     def __init__(self, func, *args, **kwargs):
@@ -46,8 +64,10 @@ class ReusableGenerator:
     def __iter__(self):
         return self.func(*self.args, **self.kwargs)
 
+
 def rmtreefn(dir_path):
-    if not os.path.exists(dir_path): return
+    if not os.path.exists(dir_path):
+        return
     try:
         if os.path.isdir(dir_path):
             shutil.rmtree(dir_path, ignore_errors=True)
@@ -56,41 +76,46 @@ def rmtreefn(dir_path):
             os.remove(dir_path)
             # log.info(f'Deleted temporary file: {dir_path}')
         else:
-            log.warning(f'Temporary path does not exist: {dir_path}')
+            log.warning(f"Temporary path does not exist: {dir_path}")
     except Exception as e:
-        log.debug(f'Failed to delete temporary path {dir_path}: {e}')
+        log.debug(f"Failed to delete temporary path {dir_path}: {e}")
 
-def get_encoding_str(compress,b64):
-    return "+".join(filter(None, [
-        compress if compress else RAW_NO_COMPRESS,
-        "b64" if b64 else None
-    ]))
+
+def get_encoding_str(compress, b64):
+    return "+".join(
+        filter(
+            None, [compress if compress else RAW_NO_COMPRESS, "b64" if b64 else None]
+        )
+    )
+
 
 def fast_concat(*dfs):
     import pandas as pd
-    
+
     # # Reset index for all DataFrames before concatenation
     # reset_dfs = [df.reset_index(drop=True) for df in dfs]
-    
+
     # Concatenate the reset DataFrames
-    result = pd.concat(list(dfs), axis=0, ignore_index=True, join='outer')
-    
+    result = pd.concat(list(dfs), axis=0, ignore_index=True, join="outer")
+
     return result
+
+
 def slow_concat(*dfs):
     import pandas as pd
-    return pd.DataFrame([
-        d
-        for df in dfs
-        for d in df.to_dict(orient='records')
-    ])
+
+    return pd.DataFrame([d for df in dfs for d in df.to_dict(orient="records")])
+
 
 def is_nan(x):
     import numpy as np
+
     try:
         return np.isnan(x)
     except Exception:
         return False
-    
+
+
 def _flatten_ld(item, ind=None):
     if ind is None:
         ind = {}
@@ -102,7 +127,7 @@ def _flatten_ld(item, ind=None):
             if isinstance(v, (dict, list)) or is_dataframe(v):
                 new_ld = [
                     {
-                        k2 if k2[0] == "_" or k[0]=='_' else f"{k}.{k2}": v2
+                        k2 if k2[0] == "_" or k[0] == "_" else f"{k}.{k2}": v2
                         for k2, v2 in d.items()
                     }
                     for d in _flatten_ld(v, ind)
@@ -117,37 +142,52 @@ def _flatten_ld(item, ind=None):
             for _, row in reset_index_misc(item, _index=False)[0].iterrows()
         ]
     elif isinstance(item, list):
-        return [
-            row for subitem in item for row in _flatten_ld(subitem, ind)
-        ]
+        return [row for subitem in item for row in _flatten_ld(subitem, ind)]
     else:
         return [{**ind, "_value": item}]
-    
+
 
 def flatten_ld(item, ind={}):
     if isinstance(item, (dict, list)) or is_dataframe(item):
-        return [d for d in _flatten_ld(item,ind) if isinstance(d,dict) and d]
+        return [d for d in _flatten_ld(item, ind) if isinstance(d, dict) and d]
     else:
         return [{**ind, "_value": item}]
 
+
 def is_meta_col(col):
-    return col and col[0]=='_' and col not in {'_key','_value'}
+    return col and col[0] == "_" and col not in {"_key", "_value"}
+
 
 def filter_ld(ld, no_nan=False, no_meta=False):
     ld = [
-        {k: v for k, v in d.items() if (not no_nan or not is_nan(v)) and (not no_meta or not is_meta_col(k))}
+        {
+            k: v
+            for k, v in d.items()
+            if (not no_nan or not is_nan(v)) and (not no_meta or not is_meta_col(k))
+        }
         for d in ld
     ]
-    ld = [d for d in ld if isinstance(d,dict) and len(d) and (not '_key' in ld or len(d)>1)]
+    ld = [
+        d
+        for d in ld
+        if isinstance(d, dict) and len(d) and (not "_key" in ld or len(d) > 1)
+    ]
     return ld
 
 
-def filter_df(df, with_metadata=False, index=True, index_cols=None, key_col='_key', value_col='_value'):
+def filter_df(
+    df,
+    with_metadata=False,
+    index=True,
+    index_cols=None,
+    key_col="_key",
+    value_col="_value",
+):
     if not with_metadata:
-        df = df[[c for c in df.columns if c[0]!='_' or c in {key_col,value_col}]]
+        df = df[[c for c in df.columns if c[0] != "_" or c in {key_col, value_col}]]
     if index:
         if not index_cols:
-            index_cols = [x for x in df if x[0] == "_" and x!=value_col]
+            index_cols = [x for x in df if x[0] == "_" and x != value_col]
         if index_cols:
             df = df.set_index(index_cols if index_cols else prefix_cols)
     prefix_cols = [x for x in df if x[0] == "_"]
@@ -155,27 +195,35 @@ def filter_df(df, with_metadata=False, index=True, index_cols=None, key_col='_ke
     df = df[prefix_cols + non_prefix_cols]
     return df
 
+
 def separate_index(df, _index=None):
     index = [x for x in df.index.names if x is not None]
-    return (df if not index else df.reset_index()),index
+    return (df if not index else df.reset_index()), index
+
 
 def is_dataframe(df):
     return get_obj_addr(df).endswith("DataFrame")
 
 
-def flatten_args_kwargs(args_kwargs, prefix_args='_arg', prefix_kwargs='_'):
-    if not isinstance(args_kwargs,dict) or 'args' not in args_kwargs or 'kwargs' not in args_kwargs:
-        return {'_key':args_kwargs}
-    
+def flatten_args_kwargs(args_kwargs, prefix_args="_arg", prefix_kwargs="_"):
+    if (
+        not isinstance(args_kwargs, dict)
+        or "args" not in args_kwargs
+        or "kwargs" not in args_kwargs
+    ):
+        return {"_key": args_kwargs}
+
     result = {}
-        
+
     # Handle args
-    for i, arg in enumerate(args_kwargs.get('args',[]), start=1):
+    for i, arg in enumerate(args_kwargs.get("args", []), start=1):
         if is_jsonable(arg):
-            result[f'{prefix_args}{i}'] = arg
-        
+            result[f"{prefix_args}{i}"] = arg
+
     # Handle kwargs
-    result.update({f'{prefix_kwargs}{k}': v for k, v in args_kwargs.get('kwargs',{}).items()})
+    result.update(
+        {f"{prefix_kwargs}{k}": v for k, v in args_kwargs.get("kwargs", {}).items()}
+    )
     return result
 
 
@@ -221,6 +269,8 @@ def progress_bar(iterr=None, total=None, progress=True, leave=True, **kwargs):
         finally:
             current_depth -= 1
 
+
 def is_stash(x):
     from ..engines.base import BaseHashStash
-    return isinstance(x,BaseHashStash)
+
+    return isinstance(x, BaseHashStash)

@@ -1,4 +1,6 @@
 from . import *
+BUILTIN_DECORATORS = {'property', 'classmethod', 'staticmethod'}
+
 
 def get_obj_module(obj):
     if hasattr(obj, "__module__"): return obj.__module__
@@ -64,29 +66,24 @@ def get_function_src(func):
     if func.__name__ == '<lambda>':
         return get_lambda_src(func)
 
-    
     try:
         source = inspect.getsource(func)
         lines = source.splitlines()
-        # Find the function definition line
-        # func_start = next(
-        #     (i for i, ln in enumerate(lines) if ln.lstrip().startswith("def ")), None
-        # )
-        # if func_start is not None:
-        #     # Extract function body (including definition line)
-        #     func_body = lines[func_start:]
-        # else:
-        #     func_body = lines
-        func_body = lines
-        # Dedent the function body
-        dedented_func = reformat_python_source("\n".join(func_body))
+
+        # Remove non-builtin decorators
+        while lines and lines[0].strip().startswith('@'):
+            decorator = lines[0].strip()[1:].split('(')[0]
+            if decorator in BUILTIN_DECORATORS:
+                break
+            lines.pop(0)
+
+        dedented_func = reformat_python_source("\n".join(lines))
         return dedented_func
     except Exception as e:
         log.error(e)
         return ""
 
-
-
+    
 def flexible_import(obj_or_path):
     from .logs import log
     if isinstance(obj_or_path, str):
@@ -308,3 +305,10 @@ def get_object_from_method(method):
         return method.__self__
     else:
         return None
+    
+
+def call_function_politely(func, *args, **kwargs):
+    sig = inspect.signature(func)
+    allowed_params = set(sig.parameters.keys())
+    filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_params}
+    return func(*args, **filtered_kwargs)

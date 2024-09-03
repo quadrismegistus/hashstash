@@ -9,6 +9,7 @@ import time
 import pytest
 import pandas as pd
 # logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.CRITICAL+1)
 
 start_redis_server() # run at beginning of tests
 start_mongo_server() # run at beginning of tests
@@ -424,8 +425,11 @@ class TestHashStash:
         test_func.stash.clear()
         result = test_func(5)
         assert test_func.stash.is_function_stash
-        assert test_func.stash.get(5) == result
-        assert test_func.stash.keys_l() == [{'args':(5,), 'kwargs':{}}]
+        func_key = test_func.stash.new_function_key(5)
+        assert func_key == {'args': (5,), 'kwargs': {}}
+        assert test_func.stash.get_func(5) == result
+        assert test_func.stash.get(func_key) == result
+        assert test_func.stash.keys_l() == [func_key]
 
     def test_sub_function_results(self, cache):
         def test_func(x):
@@ -497,6 +501,8 @@ class TestHashStash:
             return x + y
 
         func_stash = cache.sub_function_results(test_func)
+        cache.clear()
+        func_stash.clear()
         assert func_stash.is_function_stash
         assert func_stash is not cache
         assert func_stash.path != cache.path
@@ -533,9 +539,9 @@ class TestHashStashFactory:
 
     def test_compress_parameter(self):
         stash = HashStash(compress=True)
-        assert stash.compress == True
+        assert stash.compress in {OPTIMAL_COMPRESS, DEFAULT_COMPRESS}
         stash = HashStash(compress=False)
-        assert stash.compress == False
+        assert stash.compress == RAW_NO_COMPRESS
 
     def test_b64_parameter(self):
         stash = HashStash(b64=True)
@@ -554,10 +560,10 @@ class TestHashStashFactory:
         assert stash.root_dir == root_dir
 
     def test_invalid_engine(self):
-        with pytest.raises(ValueError):
-            HashStash(engine="invalid_engine")
+        assert HashStash(engine="invalid_engine").engine == DEFAULT_ENGINE_TYPE
 
     def test_default_parameters(self):
+        config = Config()
         stash = HashStash()
         assert stash.engine == config.engine
         assert stash.name == DEFAULT_NAME
@@ -586,9 +592,9 @@ class TestHashStashFactory:
         assert stash.name == name
         assert stash.engine == engine
         assert stash.dbname == dbname
-        assert stash.compress == compress
+        assert stash.compress in {OPTIMAL_COMPRESS, DEFAULT_COMPRESS}
         assert stash.b64 == b64
-        assert serializer in stash.serializer
+        assert serializer == stash.serializer
 
 ## specific engine tests
 

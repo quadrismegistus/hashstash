@@ -69,6 +69,9 @@ class StashMap(UserList):
         self.objects, self.options = self.process_input(
             objects, options, total=total, **common_kwargs
         )
+        print('objects',self.objects)
+        print('options',self.options)
+        
         self.common_kwargs = common_kwargs
         self.total = len(self.objects)
         self.num_proc = num_proc
@@ -124,17 +127,31 @@ class StashMap(UserList):
 
     @staticmethod
     def process_input(objects=None, options=None, total=None, **common_kwargs):
-        assert objects or options, "At least one of objects or options must be non-empty"
-        assert total or (isinstance(objects,list) or isinstance(options,list)), "Total must be given if neither objects nor options is a list"
-        if total is None:
-            total = len(objects) if isinstance(objects,list) else len(options)
+        if not objects and not options:
+            raise ValueError("At least one of objects or options must be non-empty")
+        if is_generator(objects):
+            objects = list(objects)
+        if is_generator(options):
+            options = list(options)
 
-        if not isinstance(objects, list):
-            objects = [objects if objects is not None else ()] * total
-        if not isinstance(options, list):
-            options = [options if options is not None else {}] * total
+        if isinstance(objects,list) and isinstance(options,list) and objects and options and len(objects)!=len(options):
+            raise ValueError("objects and options must have the same length")
+
+        if not total:
+            if isinstance(objects,list) and objects:
+                total = len(objects)
+            elif isinstance(options,list) and options:
+                total = len(options)
+            else:
+                total = 1
+
+        if not isinstance(objects, list) or not len(objects):
+            objects = [objects if objects is not None and objects != [] else ()] * total
+        if not isinstance(options, list) or not len(options):
+            options = [options if options is not None and options != [] else {}] * total
         
-        assert len(objects) == len(options), "objects and options must have the same length"
+        objects = objects[:total]
+        options = options[:total]
 
         objects = [tuple(x) if isinstance(x, (tuple, list)) else (x,) for x in objects]
         if common_kwargs:
@@ -321,29 +338,29 @@ class StashMapSlice(StashMap):
         return (self.from_dict, (self.to_dict(),))
 
 
-def stash_mapped(num_proc=1, stash=None, preload=True, precompute=True):
+def stash_mapped(_func=None, stash=None, **top_kwargs):
     if stash is None:
         from ..engines.base import HashStash
-
         stash = HashStash()
 
     def decorator(func):
+        # stash.attach_func(func)
+
         @wraps(func)
-        def wrapper(objects=[], options=[], **kwargs):
-            return stash.map(
-                func,
-                objects=objects,
-                options=options,
-                num_proc=num_proc,
-                preload=preload,
-                precompute=precompute,
-            ).results
+        def wrapper(*args, **kwargs):
+            results = stash.map(func, *args, **{**top_kwargs, **kwargs}).results
+            if len(results)==1:
+                return results[0]
+            return results
 
         return wrapper
 
-    return decorator
+    if _func is None:
+        return decorator
+    else:
+        return decorator(_func)
 
-
+parallelized = stash_mapped
 
 
 
@@ -383,7 +400,7 @@ class StashMapRun:
     @cached_property
     def stash_key(self):
         if self.stash is not None:
-            return self.stash.new_function_key(self.func, *self.args, **self.kwargs)
+            return self.stash.new_function_key(*self.args, **self.kwargs)
 
     def stuff(self):
         from ..serializers import stuff
@@ -536,8 +553,8 @@ def _pmap_item(stuffed_item):
         unstuffed_item["args"],
         unstuffed_item["kwargs"],
     )
-    stash = unstuffed_item["stash"]
-    _force = unstuffed_item["_force"]
+    stash = unstuffed_item.get("stash")
+    _force = unstuffed_item.get("_force")
     if stash is not None:
         return stash.run(func, *args, **kwargs, _force=_force)
     else:
@@ -555,7 +572,7 @@ def _pmap_lookup_item(stuffed_item):
     )
     stash = unstuffed_item["stash"]
     if stash is not None:
-        return stash.get_func(func, *args, **kwargs)
+        return stash.get_func(*args, func=func,**kwargs)
 
 
 

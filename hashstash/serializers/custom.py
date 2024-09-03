@@ -388,10 +388,7 @@ class FunctionSerializer(CustomSerializer):
         
         if not can_import_object(full_name) or get_obj_module(obj) == '__main__':
             obj_d['__source__'] =  get_function_src(obj)
-            # closure = get_function_closure(func)
-            # if closure is not None:
-            #     obj_d['__closure__'] = closure
-        
+
         return obj_d
         
 
@@ -407,6 +404,7 @@ class FunctionSerializer(CustomSerializer):
         
         pytype = data.get('__pytype__')
         pyaddr = data.get('__py__')
+        pprint(data)
         pyname = pyaddr.split('.')[-1]
         if pytype == 'classmethod':
             cls = ClassSerializer.deserialize(data['__cls__'])
@@ -425,6 +423,7 @@ class FunctionSerializer(CustomSerializer):
             return recreate_function_from_src(source, func_name)
         
         else:
+            pprint(data)
             raise Exception('what happened?')
             
         
