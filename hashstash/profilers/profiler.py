@@ -46,7 +46,7 @@ def generate_data(
         return generate_dict(target_size)
     elif choice == "pandas_df" or choice == "meta_df":
         df = generate_data_dataframe(target_size)
-        return df if choice == "meta_df" else df.df
+        return MetaDataFrame(df) if choice == "meta_df" else df
     else:
         assert False, f"Invalid data type: {choice}"
 

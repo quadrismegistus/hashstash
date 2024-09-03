@@ -1,3 +1,4 @@
+import sys; sys.path.append('..')
 from hashstash.profilers import *
 logger.setLevel(logging.CRITICAL+1)
 import pytest
