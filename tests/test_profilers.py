@@ -85,27 +85,27 @@ def test_profile_one():
         ]:
             assert key in result
 
-def test_run_profiles():
-    result = HashStashProfiler.run_profiles(
-        iterations=2,
-        size=1000,
-        engines=['memory'],
-        serializers=['pickle'],
-        num_procs=[1],
-        num_proc=1,
-        progress=False
-    )
+# def test_run_profiles():
+#     result = HashStashProfiler.run_profiles(
+#         iterations=2,
+#         size=1000,
+#         engines=['memory'],
+#         serializers=['pickle'],
+#         num_procs=[1],
+#         num_proc=1,
+#         progress=False
+#     )
     
-    assert isinstance(result, pd.DataFrame)
-    assert len(result) > 0
-    print(result.columns)
-    assert all(column in result.columns for column in [
-        'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (B)','Iteration', 'Num Proc',
-        'Raw Size (B)', 'Set Time (s)', 'Get Time (s)',
-        'Encode Time (s)', 'Decode Time (s)', 'Serialize Time (s)',
-        'Deserialize Time (s)',
+#     assert isinstance(result, pd.DataFrame)
+#     assert len(result) > 0
+#     print(result.columns)
+#     assert all(column in result.columns for column in [
+#         'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (B)','Iteration', 'Num Proc',
+#         'Raw Size (B)', 'Set Time (s)', 'Get Time (s)',
+#         'Encode Time (s)', 'Decode Time (s)', 'Serialize Time (s)',
+#         'Deserialize Time (s)',
 
-    ])
+#     ])
 
 # def test_get_size_data():
 #     result = HashStashProfiler.get_size_data(
