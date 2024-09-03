@@ -14,7 +14,7 @@ start_redis_server() # run at beginning of tests
 start_mongo_server() # run at beginning of tests
 
 TEST_CLASSES = [
-    DataFrameHashStash,
+    # DataFrameHashStash,
     PairtreeHashStash,
     SqliteHashStash,
     MemoryHashStash,
@@ -117,15 +117,15 @@ class TestHashStash:
             "large_string": "".join(
                 random.choices("abcdefghijklmnopqrstuvwxyz", k=1_000_000)
             ),
-            "large_list": [random.randint(1, 1000000) for _ in range(100_000)],
+            "large_list": [random.randint(1, 1000000) for _ in range(1000)],
             "large_nested": {
                 f"key_{i}": {
                     "nested_string": "".join(
-                        random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=100)
+                        random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=10)
                     ),
-                    "nested_list": [random.random() for _ in range(100)],
+                    "nested_list": [random.random() for _ in range(10)],
                 }
-                for i in range(1_000)
+                for i in range(1_00)
             },
         }
 

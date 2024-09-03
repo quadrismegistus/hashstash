@@ -134,7 +134,8 @@ class BaseHashStash(MutableMapping):
 
     @staticmethod
     def _remove_dir(dir_path):
-        rmtreefn(dir_path)
+        if os.path.exists(dir_path):
+            rmtreefn(dir_path)
 
     @log.debug
     def encode(self, *args, b64=None, compress=None, **kwargs):
@@ -188,16 +189,28 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __enter__(self):
-        # log.info(f'locking {self}')
+        log.debug(f"locking {self}")
         self._lock = get_lock(self.path)
-        self._lock.acquire()
+        try:
+            # Attempt to acquire the lock without blocking
+            acquired = self._lock.acquire(False)
+            if not acquired:
+                log.debug(f"Lock already held for {self}")
+        except TypeError:
+            # If acquire(False) is not supported, fall back to blocking acquire
+            self._lock.acquire()
         return self
 
     @log.debug
     def __exit__(self, exc_type, exc_val, exc_tb):
         if hasattr(self, "_lock"):
-            # log.info(f'unlocking {self}')
-            self._lock.release()
+            log.debug(f"unlocking {self}")
+            try:
+                self._lock.release()
+            except (ValueError, RuntimeError) as e:
+                log.debug(e)
+                # Lock was already released or not held
+                pass
 
     @contextmanager
     @retry_patiently()
@@ -404,6 +417,7 @@ class BaseHashStash(MutableMapping):
         self,
         func,
         *args,
+        _force=False,
         **kwargs,
     ):
         fstash = (
@@ -425,7 +439,6 @@ class BaseHashStash(MutableMapping):
         )
         # pprint(unencoded_key)
         # print('run',meta_kwargs)
-        _force = kwargs.pop("_force", None)
         if not _force:
             res = fstash.get(unencoded_key, default=None, **kwargs)
             if res is not None:
@@ -442,7 +455,7 @@ class BaseHashStash(MutableMapping):
         # call func
         # args = [obj] + list(args) if obj else list(args)
         # result = unwrap_func(func)(*args, **kwargs)
-        result = unwrap_func(func)(*args, **kwargs)
+        result = unwrap_func(func)(*args, **kwargs, _force=_force)
         result = list(result) if is_generator(result) else result
         log.debug(
             f"Caching result for {func.__name__} under {serialize(unencoded_key)}"
@@ -465,10 +478,13 @@ class BaseHashStash(MutableMapping):
         precompute=True,
         stash_runs=True,
         stash_map=True,
+        _force=False,
         **common_kwargs,
     ):
+        pmap = None
         key = StashMap.get_stash_key(func, objects, options, total=total)
-        pmap = self.get(key)
+        if not _force:
+            pmap = self.get(key)
         if pmap is None:
             return StashMap(
                 func,
@@ -484,6 +500,7 @@ class BaseHashStash(MutableMapping):
                 precompute=precompute,
                 stash_runs=stash_runs,
                 stash_map=stash_map,
+                _force=_force,
                 _stash_key=key,
                 **common_kwargs,
             )
@@ -563,7 +580,7 @@ class BaseHashStash(MutableMapping):
         return self.encode(
             self.serialize(unencoded_key),
             as_string=self.string_keys,
-            compress=False
+            # compress=False
         )
 
     @log.debug
@@ -575,7 +592,10 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def decode_key(self, encoded_key: Any, as_string=False) -> Union[str, bytes]:
-        decoded_key = self.decode(encoded_key, compress=False)
+        decoded_key = self.decode(
+            encoded_key,
+            # compress=False,
+        )
         return (
             self.deserialize(decoded_key)
             if not as_string
@@ -611,6 +631,7 @@ class BaseHashStash(MutableMapping):
             or str(self.root_dir).startswith("/private/var/")
             else self.path
         )
+        
         return self
 
     @log.debug
@@ -741,7 +762,7 @@ class BaseHashStash(MutableMapping):
     @property
     def stashed_result(self):
         return stashed_result(stash=self)
-    
+
     @property
     def stashed_dataframe(self):
         return stashed_dataframe(stash=self)

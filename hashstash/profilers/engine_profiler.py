@@ -41,7 +41,8 @@ opts_engines = dict(
     iterations=1_000,
     size=1_000_000,
     engines=ENGINES,
-    serializers=['jsonpickle'],
+    # engines=[e for e in ENGINES if e!='sqlite'],
+    serializers=['pickle'],
     compress=[OPTIMAL_COMPRESS],
     num_procs=[8],
     b64=[True],
@@ -101,6 +102,7 @@ class HashStashProfiler:
         progress: bool = True,
         data_type=DEFAULT_DATA_TYPE,
         operations=None,
+        _force=False,
         **kwargs,
     ):
         import pandas as pd
@@ -127,6 +129,7 @@ class HashStashProfiler:
                 desc=f"Profiling {tmp_stash.engine} {tmp_stash.serializer} {tmp_stash.compress} {tmp_stash.b64} {data_type} {operations}",
                 stash_runs=False,
                 stash_map=True,
+                _force=_force,
                 **common_data
             )
             return pd.DataFrame({"Iteration":i+1, **sres} for i,sres in enumerate(smap.iter_results()) if sres is not None)
@@ -214,6 +217,7 @@ class HashStashProfiler:
             stash_runs=True,
             stash_map=True,
             desc=f"Profiling {len(objects)} stashes",
+            _force=_force
         )
         return pd.concat(smap.results)
         # # @parallelized(num_proc=num_proc, progress=progress)
@@ -309,10 +313,9 @@ class HashStashProfiler:
         return df
 
     @classmethod
-    def get_profile_data(cls, melted=True, operations=None, **profile_kwargs):
+    def get_profile_data(cls, melted=True, operations=None, _force=False, **profile_kwargs):
         import pandas as pd
-
-        df = cls.run_profiles(operations=operations, **profile_kwargs)
+        df = cls.run_profiles(operations=operations, _force=_force, **profile_kwargs)
         df["Data Type"] = df["Data Type"].apply(
             lambda x: str(x).split("['")[-1].split("']")[0]
         )

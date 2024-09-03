@@ -59,6 +59,7 @@ class StashMap(UserList):
         _stash_key=None,
         stash_runs=True,
         stash_map=True,
+        _force=False,
         **common_kwargs,
     ):
         self.func = func
@@ -84,6 +85,7 @@ class StashMap(UserList):
         self._precompute = precompute
         self.stash_runs = stash_runs
         self.stash_map = stash_map
+        self._force = _force
 
         self.progress_bar = None
         if self.progress:
@@ -396,6 +398,7 @@ class StashMapRun:
                     if self._pmap_instance.stash_runs
                     else None
                 ),
+                "_force": self._pmap_instance._force,
             }
         )
 
@@ -534,8 +537,9 @@ def _pmap_item(stuffed_item):
         unstuffed_item["kwargs"],
     )
     stash = unstuffed_item["stash"]
+    _force = unstuffed_item["_force"]
     if stash is not None:
-        return stash.run(func, *args, **kwargs)
+        return stash.run(func, *args, **kwargs, _force=_force)
     else:
         return func(*args, **kwargs)
 
