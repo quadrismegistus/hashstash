@@ -42,7 +42,7 @@ COMPRESSERS = ['zlib','lz4','blosc','gzip','bz2']
 ENGINE_TYPES = Literal[
     "memory", 
     "pairtree", 
-    "dataframe",
+    # "dataframe",
     "shelve",
     "lmdb",
     "sqlite",

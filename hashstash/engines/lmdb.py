@@ -17,12 +17,21 @@ class LMDBHashStash(BaseHashStash):
             self._env = lmdb.open(self.path, map_size=self.map_size)
         return self._env
 
+
     @contextmanager
     def get_transaction(self, write=False):
-        with self.db as env:
-            print([env, self._env, self.db])
-            with env.begin(write=write) as txn:
-                yield txn
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with self.get_db().begin(write=write) as txn:
+                    yield txn
+                break
+            except lmdb.Error as e:
+                log.warning(f"LMDB transaction error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt == max_retries - 1:
+                    raise
+                self.close()  # Close the current environment
+                self._env = None  # Reset the environment to force a new one on next attempt
 
     def _set(self, encoded_key, encoded_value):
         with self.get_transaction(write=True) as txn:

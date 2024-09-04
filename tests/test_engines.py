@@ -71,7 +71,7 @@ class TestHashStash:
         assert cached_size < raw_size
 
         compression_ratio = cached_size / raw_size
-        print(f"Compression ratio ({type(cache).__name__}): {compression_ratio:.2%}")
+        #print(f"Compression ratio ({type(cache).__name__}): {compression_ratio:.2%}")
 
         retrieved_data = cache["large_data"]
         assert retrieved_data == large_data
@@ -106,7 +106,7 @@ class TestHashStash:
         assert cached_size < raw_size
 
         compression_ratio = cached_size / raw_size
-        print(
+        #print(
             f"Compression ratio for mixed data ({type(cache).__name__}): {compression_ratio:.2%}"
         )
 
@@ -140,17 +140,17 @@ class TestHashStash:
         assert cached_size < raw_size
 
         compression_ratio = cached_size / raw_size
-        print(f"Very large data compression ({type(cache).__name__}):")
-        print(f"Raw size: {raw_size / 1024 / 1024:.2f} MB")
-        print(f"Cached size: {cached_size / 1024 / 1024:.2f} MB")
-        print(f"Compression ratio: {compression_ratio:.2%}")
-        print(f"Space saved: {(raw_size - cached_size) / 1024 / 1024:.2f} MB")
+        #print(f"Very large data compression ({type(cache).__name__}):")
+        #print(f"Raw size: {raw_size / 1024 / 1024:.2f} MB")
+        #print(f"Cached size: {cached_size / 1024 / 1024:.2f} MB")
+        #print(f"Compression ratio: {compression_ratio:.2%}")
+        #print(f"Space saved: {(raw_size - cached_size) / 1024 / 1024:.2f} MB")
 
         retrieved_data = cache["very_large_data"]
         assert retrieved_data == very_large_data
 
     def test_cache_path(self, cache, tmp_path):
-        print([cache, cache.path, tmp_path])
+        #print([cache, cache.path, tmp_path])
         if not isinstance(cache, MemoryHashStash):
             assert str(cache.path).startswith(str(tmp_path))
 
@@ -214,14 +214,14 @@ class TestHashStash:
         assert "example_func" in sub_stash.dbname
 
     def test_assemble_ld(self, cache):
-        print(len(cache))
+        #print(len(cache))
         cache['x'] = 1
         cache['y'] = 2
         cache['z'] = {'result':3}
         cache['zz'] = {'result':4}
 
         ld = cache.assemble_ld()
-        pprint(ld)
+        #pprint(ld)
         assert len(ld) == 4
         assert all("_key" in item for item in ld)
         assert sum("_value" in item for item in ld) == 2
@@ -232,7 +232,7 @@ class TestHashStash:
         cache["list_key"] = [{"a": 1}, {"b": 2}, 3, 4]
         cache["df_key"] = pd.DataFrame({'col1': [1, 2], 'col2': ['a', 'b']})
         ld = cache.assemble_ld()
-        pprint(ld)
+        #pprint(ld)
         assert len(ld) == 6
         assert all("_key" in item for item in ld)
         # assert ld[0]['a']==1
@@ -245,7 +245,7 @@ class TestHashStash:
         cache["df_key"] = df
         ld = cache.assemble_ld()
         assert len(ld) == 2
-        pprint(ld)
+        #pprint(ld)
         assert ld[0] == {"_key": "df_key", "col1": 1, "col2": "a"}
         assert ld[1] == {"_key": "df_key", "col1": 2, "col2": "b"}
 
@@ -278,12 +278,12 @@ class TestHashStash:
 
         result_df = cache.assemble_df(with_metadata=False)
         assert is_dataframe(result_df)
-        print(result_df)
+        #print(result_df)
 
         assert len(result_df) == 6
         assert set(result_df.columns) == {"_value", "result", "nested", "col1", "col2"}
 
-        print(result_df)
+        #print(result_df)
         assert set(result_df.index.names) == {'_key'}
 
         result_df = cache.assemble_df(with_metadata=True)
@@ -509,8 +509,8 @@ class TestHashStash:
 
         func_stash.set((1,2), 3)
         
-        print('func_stash',func_stash.keys_l())
-        print('cache',cache.keys_l())
+        #print('func_stash',func_stash.keys_l())
+        #print('cache',cache.keys_l())
         assert len(func_stash) == 1
         assert len(cache) == 0
 

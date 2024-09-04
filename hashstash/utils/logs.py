@@ -209,8 +209,8 @@ class log:
 #     with _fn.get_lock():
 #         _fn.value += 1
 #     naptime=random.randint(1,3)
-#     print(f'startig process #{_fn.value}, sleeping for {naptime}')
+#     #print(f'startig process #{_fn.value}, sleeping for {naptime}')
 #     for n in range(naptime):
-#         print('.',end='',flush=True)
+#         #print('.',end='',flush=True)
 #         time.sleep(1)
 #     return x

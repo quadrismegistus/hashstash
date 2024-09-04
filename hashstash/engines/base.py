@@ -445,8 +445,8 @@ class BaseHashStash(MutableMapping):
             store_args=kwargs.get("store_args", True),
             **{k: v for k, v in kwargs.items() if k and k[0] != "_"},
         )
-        # pprint(unencoded_key)
-        # print('run',meta_kwargs)
+        # #pprint(unencoded_key)
+        # #print('run',meta_kwargs)
         if not _force:
             res = fstash.get(unencoded_key, default=None, **kwargs)
             if res is not None:
@@ -492,18 +492,18 @@ class BaseHashStash(MutableMapping):
     ):
         pmap = None
         self.attach_func(func)
-        print('func',func)
-        print('objects',objects)
-        print('options',options)
-        print('num_proc',num_proc)
-        print('total',total)
-        print('desc',desc)
-        print('progress',progress)
-        print('ordered',ordered)
-        print('preload',preload)
-        print('precompute',precompute)
+        #print('func',func)
+        #print('objects',objects)
+        #print('options',options)
+        #print('num_proc',num_proc)
+        #print('total',total)
+        #print('desc',desc)
+        #print('progress',progress)
+        #print('ordered',ordered)
+        #print('preload',preload)
+        #print('precompute',precompute)
         key = StashMap.get_stash_key(func, objects, options, total=total)
-        pprint(key)
+        #pprint(key)
         if not _force:
             pmap = self.get(key)
 

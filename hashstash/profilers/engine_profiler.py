@@ -92,7 +92,7 @@ class HashStashProfiler:
     def __repr__(self):
         return f"{self.__class__.__name__}({self.stash})"
 
-    @profiler_stash.stashed_dataframe
+    # @profiler_stash.stashed_dataframe
     def profile(
         self,
         iterations: int = DEFAULT_ITERATIONS,
@@ -167,7 +167,7 @@ class HashStashProfiler:
         return HashStashProfiler(stash).profile(**opt)
 
     @classmethod
-    @profiler_stash.stashed_dataframe
+    # @profiler_stash.stashed_dataframe
     def run_profiles(
         cls,
         iterations=1_000,
@@ -187,7 +187,6 @@ class HashStashProfiler:
         **kwargs,
     ):
         import pandas as pd
-
         stashes = cls.get_stashes_from_options(engines, serializers, compress, b64, num_procs, append_mode, _force)
         random.shuffle(stashes)
         objects = []
@@ -205,7 +204,7 @@ class HashStashProfiler:
                     }
                     options.append(opt)
                     objects.append(stash)
-            
+        random.shuffle(objects)
         smap = profiler_stash.map(
             HashStashProfiler.profile_stash,
             objects=objects,
@@ -460,7 +459,7 @@ class HashStashProfiler:
         fig = p9.ggplot(figdf, p9.aes(x=x, y=y, color=color_by))
         # fig += p9.geom_line()
         if smooth:
-            fig += p9.geom_smooth(method='loess',se=True, alpha=.25)
+            fig += p9.geom_smooth(method='loess',se=True, alpha=.1)
         # fig += p9.geom_point(data=figdf[figdf.Iteration % 10 == 0], alpha=0.5)
 
         if label_by:
@@ -532,7 +531,9 @@ class HashStashProfiler:
         **opts,
     ):
         if df is None:
-            df = cls.profile_serializers(**opts)
+            df = cls.profile_serializers(**opts).reset_index()
+            df = df[df.Operation.isin(['Serialize + Deserialize'])]
+
         return cls.plot(
             df=df,
             color_by=color_by,
@@ -562,7 +563,7 @@ class HashStashProfiler:
         color_by="Engine",
         operations=["Set + Get", "Set", "Get"],
         label_by="Engine",
-        log_y=True,
+        log_y=False,
         x='Iteration',
         y='Rate (it/s)',
         height=6,
@@ -579,7 +580,8 @@ class HashStashProfiler:
         **opts,
     ):
         if df is None:
-            df = cls.profile_engines(**opts)
+            df = cls.profile_engines(**opts).reset_index()
+            df = df[df.Operation.isin(['Set + Get'])]
         return cls.plot(
             df=df,
             color_by=color_by,
@@ -627,7 +629,8 @@ class HashStashProfiler:
         **opts,
     ):
         if df is None:
-            df = cls.profile_encodings(**opts)
+            df = cls.profile_encodings(**opts).reset_index()
+            df = df[df.Operation.isin(['Encode + Decode'])]
         return cls.plot(
             df=df,
             color_by=color_by,

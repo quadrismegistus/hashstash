@@ -22,7 +22,7 @@ def test_generate_data(data_type):
     elif data_type == "dict":
         assert isinstance(result, dict)
     elif data_type == "pandas_df":
-        print(type(result))
+        #print(type(result))
         assert isinstance(result, pd.DataFrame)
     elif data_type == "meta_df":
         assert isinstance(result, MetaDataFrame)
@@ -64,7 +64,7 @@ def test_hashstash_profiler():
         result = profiler.profile(size=1000, iterations=2, num_proc=1, stash=stash)
         assert isinstance(result, pd.DataFrame)
         assert len(result) > 0
-        print(result.columns)
+        #print(result.columns)
         assert all(column in result.columns for column in [
             'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (B)',
             'Raw Size (B)', 'Iteration', 'Num Proc'
@@ -77,7 +77,7 @@ def test_profile_one():
         result = profile_stash_transaction(stash, size=1000)
         assert isinstance(result, dict)
         assert len(result) > 0
-        pprint(result)
+        #pprint(result)
         for key in [
             'Raw Size (B)', 'Set Time (s)', 'Get Time (s)',
             'Encode Time (s)', 'Decode Time (s)', 'Serialize Time (s)',
@@ -98,7 +98,7 @@ def test_profile_one():
     
 #     assert isinstance(result, pd.DataFrame)
 #     assert len(result) > 0
-#     print(result.columns)
+#     #print(result.columns)
 #     assert all(column in result.columns for column in [
 #         'Engine', 'Serializer', 'Encoding', 'Data Type', 'Size (B)','Iteration', 'Num Proc',
 #         'Raw Size (B)', 'Set Time (s)', 'Get Time (s)',

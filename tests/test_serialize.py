@@ -154,6 +154,6 @@ class TestSerializers:
         read_time = time.time() - start_time
 
         assert result == large_data
-        print(f"\nSerializer: {cache.serializer}")
-        print(f"Write time: {write_time:.4f} seconds")
-        print(f"Read time: {read_time:.4f} seconds")
+        #print(f"\nSerializer: {cache.serializer}")
+        #print(f"Write time: {write_time:.4f} seconds")
+        #print(f"Read time: {read_time:.4f} seconds")

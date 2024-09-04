@@ -66,11 +66,10 @@ class StashMap(UserList):
         self._objects = objects
         self._options = options
         self._total = total
+        
         self.objects, self.options = self.process_input(
             objects, options, total=total, **common_kwargs
         )
-        print('objects',self.objects)
-        print('options',self.options)
         
         self.common_kwargs = common_kwargs
         self.total = len(self.objects)
@@ -471,7 +470,10 @@ class StashMapRun:
         self._computed = True
         if self._result is None:
             if isinstance(future_or_result, Future):
-                self._result = future_or_result.result()
+                try:
+                    self._result = future_or_result.result()
+                except Exception as e:
+                    log.error(e)
             else:
                 self._result = future_or_result
         if self._pmap_instance.progress_bar:

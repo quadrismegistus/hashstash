@@ -306,9 +306,15 @@ def get_object_from_method(method):
     else:
         return None
     
-
 def call_function_politely(func, *args, **kwargs):
     sig = inspect.signature(func)
-    allowed_params = set(sig.parameters.keys())
-    filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_params}
-    return func(*args, **filtered_kwargs)
+    params = sig.parameters
+    
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
+        # If there's a **kwargs parameter, pass all keyword arguments
+        return func(*args, **kwargs)
+    else:
+        # Otherwise, filter the kwargs as before
+        allowed_params = set(params.keys())
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_params}
+        return func(*args, **filtered_kwargs)
