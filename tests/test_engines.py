@@ -105,11 +105,6 @@ class TestHashStash:
         cached_size = self._get_cached_size(cache, "test_data")
         assert cached_size < raw_size
 
-        compression_ratio = cached_size / raw_size
-        #print(
-            f"Compression ratio for mixed data ({type(cache).__name__}): {compression_ratio:.2%}"
-        )
-
         retrieved_data = cache["test_data"]
         assert retrieved_data == test_data
 

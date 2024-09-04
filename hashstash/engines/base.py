@@ -6,8 +6,8 @@ from multiprocessing import Manager, Lock as mp_Lock
 from multiprocessing.managers import SyncManager
 from ..serializers import serialize, deserialize
 
-_manager = None
-_connection_lock = None
+_manager = Manager()
+_connection_lock = _manager.dict()
 _connection_pool = {}
 _last_used = {}
 
@@ -23,14 +23,12 @@ def get_manager():
 
 # Function to get or create a lock for a given path
 def get_lock(path):
+    global _connection_lock
     manager = get_manager()
     if path not in _connection_lock:
         _connection_lock[path] = manager.Lock()
     return _connection_lock[path]
 
-
-_connection_pool = {}
-_last_used = {}
 
 
 class BaseHashStash(MutableMapping):
@@ -64,6 +62,7 @@ class BaseHashStash(MutableMapping):
     append_mode = DEFAULT_APPEND_MODE
     is_tmp = False
     is_function_stash = False
+    needs_lock = True
 
     @log.debug
     def __init__(
@@ -189,6 +188,9 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __enter__(self):
+        if not self.needs_lock:
+            return self
+        
         log.debug(f"locking {self}")
         self._lock = get_lock(self.path)
         try:
@@ -203,6 +205,8 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if not self.needs_lock:
+            return
         if hasattr(self, "_lock"):
             log.debug(f"unlocking {self}")
             try:
@@ -223,7 +227,6 @@ class BaseHashStash(MutableMapping):
         else:
             conn = _connection_pool[self.path]
             _last_used[self.path] = time.time()
-
         try:
             yield conn
         finally:
@@ -951,6 +954,29 @@ class BaseHashStash(MutableMapping):
     def __hash__(self):
         # Use a combination of class name and path for hashing
         return hash(tuple(sorted(self.to_dict().items())))
+    
+
+    @property
+    def filesize(self):
+        """
+        Get the total size of self.path in bytes, whether it's a file or directory.
+        
+        Returns:
+            int: Total size in bytes
+        """
+        if not os.path.exists(self.path):
+            return 0
+        
+        if os.path.isfile(self.path):
+            return os.path.getsize(self.path)
+        
+        total_size = 0
+        for dirpath, dirnames, filenames in os.walk(self.path):
+            for filename in filenames:
+                file_path = os.path.join(dirpath, filename)
+                total_size += os.path.getsize(file_path)
+        
+        return total_size
 
 
 # @fcache

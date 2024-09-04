@@ -7,6 +7,7 @@ class PairtreeHashStash(BaseHashStash):
     key_filename = ".key"
     valtype_filename = ".valtype"
     metadata_cols = ["_version", "_timestamp"]
+    needs_lock = False
 
     def connect(self):
         pass

@@ -2,14 +2,14 @@ from . import *
 from ..utils.encodings import encode, decode
 
 opts_all = dict(
-    iterations=1_000,
+    iterations=1_0,
     size=1_000_00,
     serializers=SERIALIZERS,
     engines=ENGINES,
     compress=get_working_compressers(),
     b64=[True],
-    num_procs=[8],
-    progress_inner=True,
+    num_procs=[12],
+    progress_inner=False,
     operations=None
 )
 
@@ -38,13 +38,13 @@ opts_encoders = dict(
 )
 
 opts_engines = dict(
-    iterations=1_000,
+    iterations=1_00,
     size=1_000_000,
     engines=ENGINES,
     # engines=[e for e in ENGINES if e!='sqlite'],
     serializers=['pickle'],
     compress=[OPTIMAL_COMPRESS],
-    num_procs=[8],
+    num_procs=[1,5,10],
     b64=[True],
     progress_inner=True,
     operations=['Set','Get', 'Set + Get']
@@ -188,12 +188,13 @@ class HashStashProfiler:
     ):
         import pandas as pd
         stashes = cls.get_stashes_from_options(engines, serializers, compress, b64, num_procs, append_mode, _force)
-        random.shuffle(stashes)
         objects = []
         options = []
         for nproc in num_procs:
             for dtype in data_types: 
                 for stash in stashes:
+                    if stash.engine in {'shelve'} and nproc > 1:
+                        continue
                     opt = {
                         'num_proc': nproc,
                         'progress': progress_inner,
@@ -204,7 +205,7 @@ class HashStashProfiler:
                     }
                     options.append(opt)
                     objects.append(stash)
-        random.shuffle(objects)
+
         smap = profiler_stash.map(
             HashStashProfiler.profile_stash,
             objects=objects,
@@ -241,19 +242,16 @@ class HashStashProfiler:
             for serializer in serializers:
                 for compressx in compress:
                     for b64x in b64:
-                        for numproc in num_procs:
-                            if engine == "shelve" and numproc > 1:
-                                continue
-                            for appendmode in append_mode:
-                                opt = {
-                                    "engine": engine,
-                                    "serializer": serializer,
-                                    "compress": compressx,
-                                    "b64": b64x,
-                                    "append_mode": appendmode,
-                                    "_force": _force,
-                                }
-                                opts.append(opt)
+                        for appendmode in append_mode:
+                            opt = {
+                                "engine": engine,
+                                "serializer": serializer,
+                                "compress": compressx,
+                                "b64": b64x,
+                                "append_mode": appendmode,
+                                "_force": _force,
+                            }
+                            opts.append(opt)
         return [HashStash(**opt) for opt in opts]
 
     @classmethod
@@ -277,7 +275,7 @@ class HashStashProfiler:
         df["Data Type"] = df["Data Type"].apply(
             lambda x: str(x).split("['")[-1].split("']")[0]
         )
-        df["Num Proc"] = df["Num Proc"].astype(str)
+        # df["Num Proc"] = df["Num Proc"].astype(str)
         df['Encoding'] = df['Encoding'].fillna('').apply(lambda x: x if x and str(x)!='nan' else 'raw')
 
         groupby = [
@@ -630,7 +628,7 @@ class HashStashProfiler:
     ):
         if df is None:
             df = cls.profile_encodings(**opts).reset_index()
-            df = df[df.Operation.isin(['Encode + Decode'])]
+            # df = df[df.Operation.isin(['Encode + Decode'])]
         return cls.plot(
             df=df,
             color_by=color_by,
@@ -705,6 +703,9 @@ def profile_stash_transaction(stash, size=DEFAULT_DATA_SIZE, data_type=DEFAULT_D
         _, out['Deserialize Time (s)'] = time_function(
             lambda: stash.deserialize(serialized_data)
         )
+
+    if not operations or 'Set' in operations or 'Get' in operations:
+        out['Filesize (B)'] = stash.filesize
     
     return out
 

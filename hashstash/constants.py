@@ -43,7 +43,7 @@ ENGINE_TYPES = Literal[
     "memory", 
     "pairtree", 
     # "dataframe",
-    "shelve",
+    # "shelve",
     "lmdb",
     "sqlite",
     "diskcache", 
