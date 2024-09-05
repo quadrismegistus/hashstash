@@ -63,6 +63,7 @@ class BaseHashStash(MutableMapping):
     is_tmp = False
     is_function_stash = False
     needs_lock = True
+    needs_reconnect = False
 
     @log.debug
     def __init__(
@@ -220,17 +221,22 @@ class BaseHashStash(MutableMapping):
     @retry_patiently()
     def get_connection(self):
         global _connection_pool, _last_used
-        if not self.path in _connection_pool:
-            log.debug(f"Opening {self.engine} at {self.path}")
-            conn = self.get_db()
-            _connection_pool[self.path] = conn
+
+        if self.needs_reconnect:
+            with self.get_db() as db:
+                yield db
         else:
-            conn = _connection_pool[self.path]
-            _last_used[self.path] = time.time()
-        try:
-            yield conn
-        finally:
-            self._cleanup_connections()
+            if not self.path in _connection_pool:
+                log.debug(f"Opening {self.engine} at {self.path}")
+                conn = self.get_db()
+                _connection_pool[self.path] = conn
+            else:
+                conn = _connection_pool[self.path]
+                _last_used[self.path] = time.time()
+            try:
+                yield conn
+            finally:
+                self._cleanup_connections()
 
     def _cleanup_connections(self):
         global _connection_pool, _last_used
@@ -495,16 +501,6 @@ class BaseHashStash(MutableMapping):
     ):
         pmap = None
         self.attach_func(func)
-        #print('func',func)
-        #print('objects',objects)
-        #print('options',options)
-        #print('num_proc',num_proc)
-        #print('total',total)
-        #print('desc',desc)
-        #print('progress',progress)
-        #print('ordered',ordered)
-        #print('preload',preload)
-        #print('precompute',precompute)
         key = StashMap.get_stash_key(func, objects, options, total=total)
         #pprint(key)
         if not _force:

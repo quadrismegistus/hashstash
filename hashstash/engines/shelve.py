@@ -3,6 +3,7 @@ from . import *
 class ShelveHashStash(BaseHashStash):
     engine = 'shelve'
     string_keys = True
+    needs_reconnect = True
 
     @log.debug
     @retry_patiently()

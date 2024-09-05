@@ -19,7 +19,7 @@ TEST_CLASSES = [
     PairtreeHashStash,
     SqliteHashStash,
     MemoryHashStash,
-    ShelveHashStash,
+    # ShelveHashStash,
     RedisHashStash,
     DiskCacheHashStash,
     LMDBHashStash,

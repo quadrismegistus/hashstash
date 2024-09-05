@@ -5,6 +5,7 @@ import os
 class SqliteHashStash(BaseHashStash):
     engine = "sqlite"
     _db = None
+    needs_reconnect = True
 
     @log.debug
     @retry_patiently()
@@ -19,6 +20,6 @@ class SqliteHashStash(BaseHashStash):
         
         if self._db is None or not os.path.exists(self.path):
             log.debug("Creating new SqliteDict instance")
-            self._db = SqliteDict(self.path, flag='c', autocommit=True, journal_mode='WAL')
+            self._db = SqliteDict(self.path, flag='c', autocommit=True)
         
         return self._db

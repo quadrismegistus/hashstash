@@ -66,7 +66,6 @@ class StashMap(UserList):
         self._objects = objects
         self._options = options
         self._total = total
-        
         self.objects, self.options = self.process_input(
             objects, options, total=total, **common_kwargs
         )

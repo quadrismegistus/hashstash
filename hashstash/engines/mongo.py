@@ -83,6 +83,10 @@ class MongoHashStash(BaseHashStash):
     def _keys(self):
         with self.db as db:
             return (doc["_id"] for doc in db.find({}, {"_id": 1}))
+        
+    @property
+    def filesize(self):
+        return sum(bytesize(k) + bytesize(self._get(k)) for k in self._keys())
 
 def start_mongo_server(host='localhost', port=27017, dbname=DEFAULT_DBNAME, data_dir=DEFAULT_MONGO_DIR):
     global _process_started, _container_id

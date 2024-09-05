@@ -16,6 +16,8 @@ def retry_patiently(max_retries=10, base_delay=0.01, max_delay=1):
         def wrapper(*args, **kwargs):
             retries = 0
             while True:
+                if retries:
+                    log.info(f'retrying {func.__name__} for the {retries+1}th time')
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:

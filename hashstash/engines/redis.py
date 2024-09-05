@@ -50,6 +50,10 @@ class RedisHashStash(BaseHashStash):
         except Exception as e:
             pass
         return self
+    
+    @property
+    def filesize(self):
+        return sum(bytesize(k) + bytesize(v) for k,v in self._items())
         
 
 def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, dbname=DEFAULT_DBNAME, data_dir=DEFAULT_REDIS_DIR):

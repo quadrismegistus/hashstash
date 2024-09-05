@@ -28,3 +28,7 @@ class MemoryHashStash(BaseHashStash):
         cache = get_shared_memory_cache()
         cache[self.path] = {}
         return self
+
+    @property
+    def filesize(self):
+        return sum(bytesize(k) + bytesize(v) for k,v in self._items())
