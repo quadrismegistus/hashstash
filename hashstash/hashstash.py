@@ -3,7 +3,10 @@ from .constants import *
 
 ## standard library
 import multiprocessing as mp
-mp.set_start_method('fork')
+try:
+    mp.set_start_method('fork')
+except RuntimeError:
+    pass
 from multiprocessing import freeze_support, Manager
 import ast
 import atexit
