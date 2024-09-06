@@ -3,10 +3,15 @@ BUILTIN_DECORATORS = {'property', 'classmethod', 'staticmethod'}
 
 
 def get_obj_module(obj):
+    if hasattr(obj,'__name__') and obj.__name__ == '<lambda>': 
+        print(obj,obj.__name__)
+        return '__main__'
     if hasattr(obj, "__module__"): return obj.__module__
     if hasattr(obj, "__class__"): return get_obj_module(obj.__class__)
     return type(obj).__module__
 def get_obj_addr(obj):
+    if hasattr(obj,'__name__') and obj.__name__ == '<lambda>': return f'__main__.<lambda>'
+
     if isinstance(obj, types.BuiltinFunctionType):
         return f"builtins.{obj.__name__}"
     
@@ -63,6 +68,8 @@ def get_obj_nice_name(obj):
 
 def get_function_src(func):
     from .logs import log
+    if hasattr(func,'__source__') and func.__source__:
+        return func.__source__
     if func.__name__ == '<lambda>':
         return get_lambda_src(func)
 
@@ -179,7 +186,9 @@ def get_lambda_src(obj):
 
             out.append(char)
         return 'lambda ' + (''.join(out)).rstrip(',')  # Remove trailing comma if present
-    except Exception:
+    except Exception as e:
+        from .logs import log
+        log.error(e)
         # Fallback for cases where we can't get the source
         return f"lambda {inspect.signature(obj)}: ..."
 
