@@ -100,7 +100,7 @@ all = [
   "plotnine",
   "scikit-misc",
 ]
-best = ["pandas","pyarrow","lmdb","lz4"]
+rec = ["pandas","pyarrow","lmdb","lz4"]
 
 [tool.setuptools]
 packages = {find = {}}

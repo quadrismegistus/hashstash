@@ -4,16 +4,46 @@ HashStash is a versatile caching library for Python that supports multiple stora
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/quadrismegistus/hashstash/blob/main/README.ipynb)
 
+## Table of Contents
+
+- [Features](#features)
+  - [Convenient usage](#convenient-usage)
+  - [Multiple storage engines](#multiple-storage-engines)
+  - [Multiple serializers](#multiple-serializers)
+  - [Compression and encoding options](#compression-and-encoding-options)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Creating a stash](#creating-a-stash)
+  - [Stashing objects](#stashing-objects)
+  - [Works like a dictionary](#works-like-a-dictionary)
+  - [Stashing function results](#stashing-function-results)
+  - [Mapping functions](#mapping-functions)
+  - [Assembling DataFrames](#assembling-dataframes)
+  - [Append mode](#append-mode)
+  - [Temporary Caches](#temporary-caches)
+  - [Utilities](#utilities)
+    - [Serialization](#serialization)
+    - [Encoding and Compression](#encoding-and-compression)
+- [Profiling](#profiling)
+  - [Engines](#engines)
+  - [Serializers](#serializers)
+  - [Encodings](#encodings)
+  - [All together](#all-together)
+- [Development](#development)
+  - [Tests](#tests)
+  - [Contributing](#contributing)
+  - [License](#license)
+
 ## Features
 
 ### Convenient usage
 - Dictionary-like interface, except absolutely anything can be either a key or value (even unhashable entities like sets or unpicklable entities like lambdas, local functions, etc)
 
-- Multiprocessing support: connection pooling, multiprocessing locks, parallelize operations as much as a given engine allows
+- Multiprocessing support: connection pooling and locking parallelize operations as much as the specific engine allows
 
-- Function decorators like `@stashed_result`, which cache the results of function calls
+- Functions like `stash.run` and decorators like `@stashed_result` cache the results of function calls
 
-- Context managers for temporary caches
+- Functions like `stash.map` and `@stash_mapped` parallelize function calls across many objects, with stashed results
 
 - Easy dataframe assembly from cached contents
 

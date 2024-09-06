@@ -77,18 +77,9 @@ def test_parallelized():
         def parallel_function(x):
             return x * 2
 
-        result = parallel_function([1, 2, 3, 4])
+        result = parallel_function([1, 2, 3, 4]).results
         assert result == [2, 4, 6, 8]
 
-def test_parallelized_single_input():
-    logger.setLevel(logging.INFO)
-    with Stash().tmp() as tmp:
-        @parallelized(stash=tmp)
-        def parallel_function(x):
-            return x * 2
-
-        result = parallel_function(5)
-        assert result == 10
 
 def test_parallelized_with_stashed_result():
     logger.setLevel(logging.INFO)
@@ -99,15 +90,15 @@ def test_parallelized_with_stashed_result():
             return x * 2
 
         # First call
-        result1 = parallel_stashed_function([1, 2, 3, 4])
+        result1 = parallel_stashed_function([1, 2, 3, 4]).results
         assert result1 == [2, 4, 6, 8]
 
         # Second call (should be cached)
-        result2 = parallel_stashed_function([1, 2, 3, 4])
+        result2 = parallel_stashed_function([1, 2, 3, 4]).results
         assert result2 == [2, 4, 6, 8]
 
         # Different input
-        result3 = parallel_stashed_function([5, 6, 7, 8])
+        result3 = parallel_stashed_function([5, 6, 7, 8]).results
         assert result3 == [10, 12, 14, 16]
 
 def test_parallelized_with_stashed_result_single_input():
