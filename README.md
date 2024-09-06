@@ -94,36 +94,18 @@ HashStash is a versatile caching library for Python that supports multiple stora
 
 HashStash requires no dependencies by default, but you can install optional dependencies to get the best performance.
 
-* Default installation: `pip install hashstash`
+* Default installation (no dependencies): `pip install hashstash`
 
-* Installation with only the optimal engine (lmdb), compressor (lz4), and dataframe serializer (pandas + pyarrow): `pip install hashstash[best]`
+* Installation with only the recommended/optimal settings (lmdb engine, lz4 compression, and pyarrow dataframe serialization): `pip install hashstash[rec]`
 
 * Full installation with all optional dependencies: `pip install hashstash[all]`
 
-* Installation with specific optional dependencies:
+* Development installation: `pip install hashstash[dev]`
 
-    - For pandas dataframe serialization and support: `pip install hashstash[dataframe]`
-
-    - For file-based engines: `pip install hashstash[filebased]`
-
-    - For server-based engines: `pip install hashstash[servers]`
-
-    - For all engine types: `pip install hashstash[engines]`
-
-    - For specific engines:
-        - `pip install hashstash[redis]`
-        - `pip install hashstash[mongo]`
-        - `pip install hashstash[lmdb]`
-        - `pip install hashstash[sqlite]`
-        - `pip install hashstash[diskcache]`
-        - `pip install hashstash[memory]`
-
-    - For development: `pip install hashstash[dev]`
-
-Note: You can combine multiple optional dependencies, e.g., `pip install hashstash[dataframe,filebased]`
+For all options see [pyproject.toml](./pyproject.toml) under [project.optional-dependencies].
 
 ```python
-!pip install -qU hashstash[best]
+!pip install -qU hashstash[rec]
 ```
 
 ## Usage
