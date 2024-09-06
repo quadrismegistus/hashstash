@@ -1,243 +1,323 @@
 # HashStash
 
-HashStash is a versatile and efficient caching library for Python that supports multiple storage engines and encoding options. It provides a simple dictionary-like interface for caching data with various backend options.
+HashStash is a versatile caching library for Python that supports multiple storage engines, serializers, and encoding options. It provides a simple dictionary-like interface for caching data with various backend options. HashStash is designed to be easy to use, flexible, and efficient.
 
 ## Features
 
-- Multiple storage engines: file (pairtree), sqlite, memory, shelve, redis, diskcache, lmdb, and dataframe
-- Compression and base64 encoding options
-- Configurable serialization methods
-- Simple dictionary-like interface
-- Efficient storage and retrieval of cached data
-- Support for any serializable Python object
-- Performance profiling tools
-- Temporary cache creation
+### Convenient usage
+- Dictionary interface: but absolutely anything can be either a key or value (even functions, dataframes, etc)
+
+- Multiprocessing support: connection pooling, multiprocessing locks, etc
+
+- Function decorators like `@stashed_result`, which cache the results of function calls
+
+- Context managers for temporary caches
+
+- Easy dataframe assembly from cached contents
+
+### Multiple storage engines
+
+- File-based
+    - "__pairtree__" (no dependencies, no database; just organized folder and file structure; very fast)
+    - "__[lmdb](https://pypi.org/project/lmdb/)__" (single file, very efficient, slightly faster than pairtree)
+    - "__[diskcache](https://pypi.org/project/diskcache/)__" (similar to pairtree, but slower)
+    - "__sqlite__" (using [sqlitedict](https://pypi.org/project/sqlitedict/))
+
+- Server-based
+    - "__redis__" (using [redis-py](https://pypi.org/project/redis/))
+    - "__mongo__" (using [pymongo](https://pypi.org/project/pymongo/))
+
+- In-memory
+    - "__memory__" (shared memory, using [ultradict](https://pypi.org/project/ultradict/))
+
+### Multiple serializers
+
+- Transportable between Python versions
+    - "__hashstash__"
+        - Custom, no dependencies
+        - Can serialize nearly anything, even lambdas or functions defined within functions
+        - Serializes pandas dataframes using pyarrow if available
+        - Faster than jsonpickle but with larger file sizes
+        - Mostly JSON-based, with some binary data
+    - "__[jsonpickle](https://pypi.org/project/jsonpickle/)__"
+        - Flexible, battle-tested, but slowest
+
+- Not transportable between Python versions
+    - "__pickle__"
+        - Standard library
+        - By far the fastest
+        - But dangerous to use when sharing data across projects or Python versions 
+
+### Compression and encoding options
+- External compressors (with depedencies):
+    - "__[lz4](<https://pypi.org/project/python-lz4/)>)__" (fastest)
+    - "__[blosc](https://pypi.org/project/blosc/)__"
+
+- Built-in compressors (no dependencies):
+    - "__zlib__"
+    - "__gzip__"
+    - "__bz2__" (smallest file size, but slowest)
 
 ## Installation
 
-You can install HashStash using pip:
+HashStash requires no dependencies by default, but you can install optional dependencies to get the best performance.
 
-```bash
-pip install hashstash
-```
+* Default installation: `pip install hashstash`
+
+* Installation with only the optimal dependencies (lmdb + lz4 + pyarrow): `pip install hashstash[best]`
+
+* Full installation with all optional dependencies: `pip install hashstash[all]`
+
+* Installation with specific optional dependencies:
+
+    - For pandas dataframe serialization and support: `pip install hashstash[dataframe]`
+
+    - For file-based engines: `pip install hashstash[filebased]`
+
+    - For server-based engines: `pip install hashstash[servers]`
+
+    - For all engine types: `pip install hashstash[engines]`
+
+    - For specific engines:
+        - `pip install hashstash[redis]`
+        - `pip install hashstash[mongo]`
+        - `pip install hashstash[lmdb]`
+        - `pip install hashstash[sqlite]`
+        - `pip install hashstash[diskcache]`
+        - `pip install hashstash[memory]`
+
+    - For development: `pip install hashstash[dev]`
+
+Note: You can combine multiple optional dependencies, e.g., `pip install hashstash[dataframe,filebased]`
 
 ## Usage
 
-Here's a quick example of how to use HashStash:
+Here's a quick example of how to use HashStash. 
+
+### Creating a stash
 
 ```python
 from hashstash import HashStash
 
-# Create a cache instance
-cache = HashStash() # default: engine is pairtree, serializer is hashstash
-cache = HashStash(
-    name="named_cache",
-    engine="sqlitedict",
-    serializer="jsonpickle",
+# Create a stash instance
+stash = HashStash()
+
+# or customize:
+stash = HashStash(
+    # naming
+    root_dir="project_cache",    # root directory of the stash (default: default_stash)
+                                 # if not an absolute path, will be ~/.cache/hashstash/[root_dir]
+    dbname="sub_cache",          # name of "database" or subfolder (default: main)
     
+    # engines
+    engine="pairtree",           # or lmdb, sqlite, diskcache, redis, mongo, or memory
+    serializer="hashstash",      # or jsonpickle or pickle
+    compress='lz4',              # or blosc, bz2, gzip, zlib, or raw
+    b64=False,                   # base64 encode keys and values
+
+    # storage options
+    append_mode=False,           # store all versions of a key/value pair
 )
 
-# Store key-value pairs
-cache["string_key"] = "Hello, World!"
-cache[42] = {"answer": "to life, the universe, and everything"}
-cache[("tuple", "key")] = [1, 2, 3, 4, 5]
+# clear for this readme
+stash.clear()
 
-# Retrieve values
-print(cache["string_key"])  # Output: Hello, World!
-print(cache[42])  # Output: {'answer': 'to life, the universe, and everything'}
-print(cache[("tuple", "key")])  # Output: [1, 2, 3, 4, 5]
-
-# Check if a key exists
-if "string_key" in cache:
-    print("Key exists!")
-
-# Get a value with a default
-value = cache.get("non_existent_key", "default_value")
-print(value)  # Output: default_value
-
-# Iterate over keys, values, and items
-print("Keys:", list(cache.keys()))
-print("Values:", list(cache.values()))
-print("Items:", list(cache.items()))
-
-# Update the cache with another dictionary
-cache.update({"new_key": "new_value", "another_key": 123})
-
-# Remove and return a value
-popped_value = cache.pop("new_key")
-print("Popped value:", popped_value)  # Output: new_value
-
-# Remove and return the last inserted item
-last_item = cache.popitem()
-print("Last item:", last_item)
-
-# Get the number of items in the cache
-print("Cache size:", len(cache))
-
-# Clear the cache
-cache.clear()
-
-# Use the cache as a context manager
-with cache:
-    cache["temporary"] = "This value exists only within the context"
-    print(cache["temporary"])
-# The 'temporary' key is automatically removed when exiting the context
-
-# Create a temporary cache
-with cache.tmp() as temp_cache:
-    temp_cache["temp_key"] = "This is a temporary value"
-    print(temp_cache["temp_key"])
-# The temporary cache is automatically cleared and removed after the with block
-
-# Profile the cache performance
-results = cache.profiler.profile(size=[1000, 10000], iterations=3)
-print(results)
-
-# Convert cache contents to a list of dictionaries or a DataFrame
-ld = cache.ld
-df = cache.df
-
-# Create a sub-cache
-sub_cache = cache.sub(dbname="subcache")
-sub_cache["sub_key"] = "This is in the sub-cache"
-
-# Use the stashed_result decorator to cache function results
-@cache.stashed_result
-def expensive_computation(x, y):
-    # Some time-consuming calculation
-    return x + y
-
-result1 = expensive_computation(5, 10)  # Computes and caches the result
-result2 = expensive_computation(5, 10)  # Returns the cached result
+# show stash config
+stash
 ```
 
-## Supported Engines
+<pre>PairtreeHashStash</pre><table border="1" class="dataframe"><thead><tr><th>Config</th><th>Param</th><th>Value</th></tr></thead><tbody><tr><td><b>Path</b></td><td>Root Dir</td><td><i>/Users/ryan/.cache/hashstash/project_cache</i></td></tr><tr><td><b></b></td><td>Dbname</td><td><i>sub_cache</i></td></tr><tr><td><b></b></td><td>Filename</td><td><i>pairtree.hashstash.lz4.db</i></td></tr><tr><td><b>Engine</b></td><td>Engine</td><td><i>pairtree</i></td></tr><tr><td><b></b></td><td>Serializer</td><td><i>hashstash</i></td></tr><tr><td><b></b></td><td>Compress</td><td><i>lz4</i></td></tr></tbody></table>
 
-HashStash supports the following storage engines:
+### Stashing objects
 
-1. File (`engine="pairtree"`)
-2. SQLite (`engine="sqlite"`)
-3. In-memory (`engine="memory"`)
-4. Shelve (`engine="shelve"`)
-5. Redis (`engine="redis"`)
-6. DiskCache (`engine="diskcache"`)
-7. LMDB (`engine="lmdb"`)
-8. DataFrame (`engine="dataframe"`)
-
-Each engine has its own characteristics and is suitable for different use cases. Choose the engine that best fits your needs.
-
-## Configuration
-
-HashStash provides a global configuration class that allows you to set default values for all HashStash instances:
+Literally anything can be a key or value, including functions, dataframes, dictionaries, etc.
 
 ```python
-from hashstash import config
+# store arbitrary objects in keys and values, even unhashable ones
+stash["cat"] = {"goodness":"good"}
+stash[{"goodness":"bad"}] = 'dog'
 
-config.set_serializer("jsonpickle")
-config.set_engine("sqlite")
-config.enable_compression()
-config.enable_b64()
+for key, value in stash.items():
+    print(f'KEY: {key} >>> VALUE: {value}')
 ```
 
-## API
+↓
 
-### `HashStash(name: str = DEFAULT_NAME, engine: ENGINE_TYPES = DEFAULT_ENGINE_TYPE, compress: bool = None, b64: bool = None, serializer: SERIALIZER_TYPES = None, *args, **kwargs)`
+    KEY: cat >>> VALUE: {'goodness': 'good'}
+    KEY: {'goodness': 'bad'} >>> VALUE: dog
 
-Create a new HashStash instance.
+```python
+# Even dataframes can be a key or value
+import pandas as pd
+df = pd.DataFrame({
+    "name":["cat","dog"],
+    "goodness":["good","bad"]
+})
+stash["cat-dog"] = df
+stash[df] = "cat-dog"
 
-- `name`: The name of the cache (default: "unnamed")
-- `engine`: The type of cache to create (one of the supported engines)
-- `compress`: Whether to use compression (default: None, uses global config)
-- `b64`: Whether to use base64 encoding (default: None, uses global config)
-- `serializer`: The serialization method to use (default: None, uses global config)
-- `*args`, `**kwargs`: Additional arguments to pass to the cache constructor
+stash[df] == "cat-dog", stash["cat-dog"].equals(df)
+```
 
-### Methods
+↓
 
-HashStash implements the `MutableMapping` interface, providing the following methods:
+    (True, True)
 
-- `__setitem__(key: str, value: Any)`: Set an item in the cache
-- `__getitem__(key: str) -> Any`: Get an item from the cache
-- `__contains__(key: str) -> bool`: Check if a key exists in the cache
-- `get(key: str, default: Any = None) -> Any`: Get an item with a default value
+### Other dictionary operations
+
+HashStash fully implements the dictionary-like `MutableMapping` interface, providing the following methods:
+
+- `__setitem__(key: Any, value: Any)`: Set an item in the cache
+
+- `__getitem__(key: Any) -> Any`: Get an item from the cache
+
+- `__contains__(key: Any) -> bool`: Check if a key exists in the cache
+
+- `get(key: Any, default: Any = None) -> Any`: Get an item with a default value
+
 - `clear() -> None`: Clear all items from the cache
+
 - `__len__() -> int`: Return the number of items in the cache
+
 - `__iter__()`: Iterate over all keys in the cache
 
-Additional methods:
-
 - `keys()`: Return an iterator over the cache keys
+
 - `values()`: Return an iterator over the cache values
+
 - `items()`: Return an iterator over the cache key-value pairs
+
 - `update(other=None, **kwargs)`: Update the cache with key-value pairs from another dictionary or keyword arguments
+
 - `setdefault(key, default=None)`: Set a key with a default value if it doesn't exist, and return the value
+
 - `pop(key, default=None)`: Remove and return the value for a key, or return the default if the key doesn't exist
+
 - `popitem()`: Remove and return a (key, value) pair from the cache
 
-## Performance Profiling
+There are also extra dictionary-like functions for convenience:
 
-HashStash includes a performance profiling tool to help you evaluate different cache configurations. You can use it as follows:
+- `keys_l()`: Return a list of all keys in the cache
 
-```python
-from hashstash import HashStash
+- `values_l()`: Return a list of all values in the cache
 
-# Create a cache instance
-cache = HashStash(name="profile_cache", engine="pairtree")
+- `items_l()`: Return a list of all key-value pairs in the cache
 
-# Run the profiler
-results = cache.profile(
-    size=[1000, 10000, 100000],
-    iterations=5
-)
-
-# The results are returned as a pandas DataFrame
-print(results)
-```
-
-You can also use the `HashStashProfiler` class directly for more advanced profiling options.
-
-## Temporary Caches
-
-HashStash provides a `tmp` method for creating temporary caches that are automatically cleaned up:
+### Append mode
 
 ```python
-from hashstash import HashStash
+# Append mode
+stash = HashStash(engine="memory", append_mode=True).clear()
 
-cache = HashStash(name="my_cache", engine="pairtree")
-
-with cache.tmp() as temp_cache:
-    # Use temp_cache as a temporary cache
-    temp_cache["key"] = "value"
-    print(temp_cache["key"])  # Output: value
-
-# The temporary cache is automatically cleared and removed after the with block
+stash["cat"] = "good"
+stash["cat"] = "bad"
+stash.get_all("cat")
 ```
 
-To expand on the utilities section of the README, I'll add more details about the available utility functions and their usage. Here's an updated version of the Utilities section:
+↓
 
-## Utilities
+    ['good', 'bad']
 
-HashStash provides various utility functions for encoding, serialization, and more. These utilities are used internally but can also be helpful for advanced users. Some key utilities include:
+```python
+# Not append mode
+stash = HashStash(engine="memory", append_mode=False)
+stash["cat"] = "good"
+stash["cat"] = "bad"
+stash.get_all("cat")
+```
 
-### Caching Function Results
+↓
 
-- `stashed_result`: A decorator for caching function results. This can be used to automatically cache the output of functions, improving performance for repeated calls with the same inputs.
+    ['bad']
 
-Example usage:
+### Function decorators
+
+HashStash provides a `@stashed_result` decorator for caching the results of function calls.
+
 ```python
 from hashstash import stashed_result
 
-@stashed_result(name="my_cached_function")
-def expensive_computation(x, y):
-    # Some time-consuming calculation
-    return x + y
+@stashed_result(engine="memory")          # or @my_stash.stashed_result
+def expensive_computation(x):
+    print('performing some time consuming calculation')
+    return x * 2
 
-# The first call will compute and cache the result
-result1 = expensive_computation(5, 10)
+# you can now access the stash directly as an attribute of the function
+expensive_computation.stash
 
-# Subsequent calls with the same arguments will return the cached result
-result2 = expensive_computation(5, 10)  # This will be much faster
+# clear it for this readme
+expensive_computation.stash.clear()
+
+# first call will compute and cache the result
+expensive_computation(5)
+
+# subsequent calls will return the cached result -- will not print
+expensive_computation(5)
+
+# you can iterate over results like any other stash
+for key,value in expensive_computation.stash.items():
+    print(f'KEY: {key} >>> VALUE: {value}')
 ```
+
+↓
+
+    performing some time consuming calculation
+    KEY: {'args': (5,), 'kwargs': {}} >>> VALUE: 10
+
+### Temporary Caches
+
+HashStash provides a `tmp` method for creating temporary caches that are automatically cleaned up. The temporary cache is automatically cleared and removed after the with block:
+
+```python
+stash = HashStash()
+
+with stash.tmp() as tmp_stash:
+    tmp_stash["key"] = "value"
+    print("key" in tmp_stash)
+    
+print("key" in tmp_stash)
+```
+
+↓
+
+    True
+    False
+
+### Utilities
+
+#### Serialization
+
+HashStash supports multiple serialization methods:
+
+- `serialize`: Serializes Python objects
+- `deserialize`: Deserializes data back into Python objects
+
+```python
+from hashstash import serialize, deserialize
+
+data = pd.DataFrame({"name": ["kitty", "doggy"], "goodness": ["good", "bad"]})
+serialized_data = serialize(data)
+deserialized_data = deserialize(serialized_data)
+
+data.equals(deserialized_data)
+```
+
+↓
+
+    True
+
+You can also specify the serializer. The custom "hashstash" serializer is the default, but you can also use "jsonpickle" or "pickle":
+
+```python
+serialized_data = serialize(data, serializer="jsonpickle")
+deserialized_data = deserialize(serialized_data, serializer="jsonpickle")
+
+data.equals(deserialized_data)
+```
+
+↓
+
+    True
 
 ### Encoding and Compression
 
@@ -249,41 +329,55 @@ HashStash provides functions for encoding and compressing data:
 These functions are used internally by HashStash but can also be used directly:
 
 ```python
-from hashstash.utils import encode, decode
+from hashstash import encode, decode
 
-data = "Hello, World!"
-encoded_data = encode(data, compress=True, b64=True)
-decoded_data = decode(encoded_data, compress=True, b64=True)
+data = b"Hello, World!"
+encoded_data = encode(data, compress='lz4', b64=True)
+decoded_data = decode(encoded_data, compress='lz4', b64=True)
+
+data == decoded_data
 ```
 
-### Serialization
+↓
 
-HashStash supports multiple serialization methods:
+    True
 
-- `serialize`: Serializes Python objects
-- `deserialize`: Deserializes data back into Python objects
+## Profiling
 
-Example:
-```python
-from hashstash.utils import serialize, deserialize
+### Engines
 
-data = {"name": "John", "age": 30}
-serialized_data = serialize(data, serializer="jsonpickle")
-deserialized_data = deserialize(serialized_data, serializer="jsonpickle")
-```
+LMDB is the fastest engine, followed by the custom "pairtree" implementation.
 
-## Running Tests
+![Engines](./figures/fig.comparing_engines.png)
 
-To run the tests, use the following command:
+### Serializers
 
-```bash
-pytest
-```
+Pickle is by far the fastest serializer, but it is not transportable between Python versions. HashStash is generally faster than jsonpickle, and can serialize more data types (including lambdas and functions within functions), but it produces larger file sizes.
 
-## Contributing
+![Serializers](./figures/fig.comparing_serializers_size_speed.png)
+
+### Encodings
+
+LZ4 is the fastest compressor, but it requires an external dependency. BZ2 is the slowest, but it provides the best compression ratio.
+
+![Compressors](./figures/fig.comparing_encodings_size_speed.png)
+
+### All together
+
+LMDB engine, with pickle serializer, with no compression (raw) or LZ4 or blosc compression is the fastest combination of parameters; followed by pairtree with the same. 
+
+![All together](./figures/fig.comparing_engines_serializers_encodings.png)
+
+## Development
+
+### Tests
+
+To run the tests, clone this repository and run  `pytest` in the root project directory.
+
+### Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
+### License
 
 This project is licensed under the GNU License.

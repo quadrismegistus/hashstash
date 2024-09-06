@@ -28,7 +28,7 @@ version = {attr = "hashstash.__version__"}
 [project.optional-dependencies]
 jsonpickle = ["jsonpickle", "numpy", "pandas"]
 
-dataframe = ["pandas", "polars", "numpy", "pyarrow","fastparquet"]
+dataframe = ["pandas", "numpy", "pyarrow","fastparquet"]
 sqlite = ["sqlitedict"]
 redis = ["redis", "redis_dict"]
 mongo = ["pymongo"]
@@ -36,8 +36,6 @@ lmdb = ["lmdb"]
 diskcache = ["diskcache"]
 memory = ["ultradict"]
 
-pandas = ["pandas", "numpy"]
-polars = ["pandas", "polars", "numpy"]
 filebased = [
   "pandas", "polars", "numpy", "pyarrow","fastparquet", 
   "sqlitedict", 
@@ -102,6 +100,7 @@ all = [
   "plotnine",
   "scikit-misc",
 ]
+best = ["pandas","pyarrow","lmdb","lz4"]
 
 [tool.setuptools]
 packages = {find = {}}

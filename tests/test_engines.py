@@ -30,7 +30,7 @@ TEST_CLASSES = [
 @pytest.fixture(params=TEST_CLASSES)
 def cache(request, tmp_path):
     cache_type = request.param
-    cache = cache_type(name=f"{cache_type.__name__.lower()}_cache", root_dir=tmp_path)
+    cache = cache_type(os.path.join(tmp_path, f"{cache_type.__name__.lower()}_cache"))
     cache.clear()
     yield cache
 
@@ -319,7 +319,6 @@ class TestHashStash:
         assert "root_dir" in cache_dict
         assert "compress" in cache_dict
         assert "b64" in cache_dict
-        assert "name" in cache_dict
         assert "dbname" in cache_dict
         assert "serializer" in cache_dict
 
@@ -336,9 +335,9 @@ class TestHashStash:
         assert new_cache.serializer == cache.serializer
 
     def test_sub(self, cache):
-        sub_cache = cache.sub(name="sub_cache")
+        sub_cache = cache.sub("sub_cache")
         assert isinstance(sub_cache, BaseHashStash)
-        assert sub_cache.name == "sub_cache"
+        assert sub_cache.root_dir.endswith("sub_cache")
         assert sub_cache.engine == cache.engine
 
     def test_tmp(self, cache):
@@ -522,10 +521,6 @@ class TestHashStashFactory:
             stash = HashStash(engine=engine)
             assert stash.engine == engine
 
-    def test_name_parameter(self):
-        name = "test_stash"
-        stash = HashStash(name=name)
-        assert stash.name == name
 
     def test_dbname_parameter(self):
         dbname = "test_db"
@@ -568,7 +563,7 @@ class TestHashStashFactory:
         assert stash.serializer in get_working_serializers()
 
     def test_multiple_parameters(self):
-        name = "multi_test"
+        path = "multi_test"
         engine = "sqlite"
         dbname = "multi_db"
         compress = True
@@ -576,7 +571,7 @@ class TestHashStashFactory:
         serializer = "pickle"
 
         stash = HashStash(
-            name=name,
+            root_dir=path,
             engine=engine,
             dbname=dbname,
             compress=compress,
@@ -584,7 +579,7 @@ class TestHashStashFactory:
             serializer=serializer
         )
 
-        assert stash.name == name
+        assert stash.root_dir == os.path.join(Config().root_dir, path)
         assert stash.engine == engine
         assert stash.dbname == dbname
         assert stash.compress in {OPTIMAL_COMPRESS, DEFAULT_COMPRESS}

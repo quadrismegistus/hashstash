@@ -59,7 +59,7 @@ DEFAULT_NUM_PROC = 1# mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1
 DEFAULT_DATA_SIZE = 1_000_00
 
 DEFAULT_ENGINE_TYPE = "pairtree"
-OPTIMAL_ENGINE_TYPE = "pairtree"
+OPTIMAL_ENGINE_TYPE = "lmdb"
 INITIAL_SIZE = 1024
 DEFAULT_ITERATIONS = 1000
 GROUPBY = ["Engine", "Encoding", "Operation", "write_num"]

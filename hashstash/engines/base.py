@@ -47,7 +47,6 @@ class BaseHashStash(MutableMapping):
     filename_is_dir = False
     to_dict_attrs = [
         "root_dir",
-        "name",
         "dbname",
         "engine",
         "serializer",
@@ -68,7 +67,6 @@ class BaseHashStash(MutableMapping):
     @log.debug
     def __init__(
         self,
-        name: str = None,
         root_dir: str = None,
         dbname: str = None,
         compress: str = None,
@@ -82,7 +80,16 @@ class BaseHashStash(MutableMapping):
         **kwargs,
     ) -> None:
         config = Config()
-        self.name = name if name is not None else self.name
+        # self.name = name if name is not None else self.name
+        if root_dir is None: 
+            self.root_dir = os.path.join(config.root_dir,DEFAULT_NAME)
+        elif not os.path.isabs(root_dir):
+            self.root_dir = os.path.join(config.root_dir, root_dir)
+        else:
+            self.root_dir = root_dir
+
+        self.root_dir = os.path.expanduser(self.root_dir)
+        
         self.compress = get_compresser(
             compress if compress is not None else config.compress
         )
@@ -90,9 +97,6 @@ class BaseHashStash(MutableMapping):
         if self.compress and (self.string_keys or self.string_values):
             self.b64 = True
         self.serializer = serializer if serializer is not None else config.serializer
-        self.root_dir = os.path.expanduser(
-            root_dir if root_dir is not None else self.root_dir
-        )
         self.dbname = dbname if dbname is not None else self.dbname
         self.parent = parent
         self.children = [] if not children else children
@@ -119,15 +123,11 @@ class BaseHashStash(MutableMapping):
         if self.filename_ext:
             subnames.append(get_fn_ext(self.filename_ext))
         self.filename = ".".join(subnames)
-        self.path = os.path.join(
-            (
-                self.name
-                if os.path.isabs(self.name)
-                else os.path.join(self.root_dir, self.name)
-            ),
+        self.path = os.path.expanduser(os.path.join(
+            self.root_dir,
             self.dbname,
             self.filename,
-        )
+        ))
         self.path_dirname = (
             self.path if self.filename_is_dir else os.path.dirname(self.path)
         )
@@ -798,8 +798,10 @@ class BaseHashStash(MutableMapping):
         return self.profiler.profile
 
     @log.debug
-    def sub(self, **kwargs):
+    def sub(self, root_dir:str=None, **kwargs):
         kwargs = {**self.to_dict(), **kwargs, "parent": self}
+        if root_dir:
+            kwargs['root_dir'] = os.path.join(self.root_dir, root_dir) if not os.path.isabs(root_dir) else root_dir
         new_instance = self.__class__(**kwargs)
         self.children.append(new_instance)
         return new_instance
@@ -838,13 +840,14 @@ class BaseHashStash(MutableMapping):
         dict_items = self.to_dict()
         dict_items["len"] = len(self)
         attr_groups = {
-            "path": ["root_dir", "name", "dbname", "filename"],
+            "path": ["root_dir", "dbname", "filename"],
             "engine": [
                 "engine",
                 "serializer",
                 "compress",
                 "b64",
                 "df_engine",
+
                 "io_engine",
             ],
             "misc": ["append_mode", "is_function_stash", "is_tmp", "is_sub"],
@@ -977,7 +980,7 @@ class BaseHashStash(MutableMapping):
 
 # @fcache
 def HashStash(
-    name: str = None,
+    root_dir: str = None,
     engine: ENGINE_TYPES = None,
     dbname: str = None,
     compress: bool = None,
@@ -1062,7 +1065,7 @@ def HashStash(
         )
 
     object = cls(
-        name=name,
+        root_dir=root_dir,
         compress=compress,
         b64=b64,
         serializer=serializer,

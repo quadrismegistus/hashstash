@@ -7,12 +7,15 @@ class Config:
         engine: ENGINE_TYPES = None,
         compress: bool = None,
         b64: bool = DEFAULT_B64,
+        root_dir: str = DEFAULT_ROOT_DIR,
         **kwargs,
     ):
         self.serializer = get_serializer_type(serializer)
         self.engine = get_engine(engine)
         self.compress = get_compresser(compress)
         self.b64 = b64
+        self.root_dir = root_dir
+
 
     def to_dict(self):
         return {
@@ -20,6 +23,7 @@ class Config:
             "engine": self.engine,
             "compress": self.compress,
             "b64": self.b64,
+            "root_dir": self.root_dir,
         }
 
     def __repr__(self):
@@ -45,6 +49,9 @@ class Config:
 
     def set_compress(self, compress: bool):
         self.compress = compress
+
+    def set_root_dir(self, root_dir: str):
+        self.root_dir = root_dir
 
     def set_b64(self, b64: bool):
         self.b64 = b64

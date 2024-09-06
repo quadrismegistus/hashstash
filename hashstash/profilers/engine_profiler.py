@@ -41,7 +41,7 @@ opts_encoders = dict(
     size=1_000_00,
     serializers=["pickle"],
     engines=[DEFAULT_ENGINE_TYPE],
-    b64=[False],
+    b64=[False,True],
     compress=get_working_compressers(),
     num_procs=[8],
     progress_inner=True,
@@ -49,10 +49,10 @@ opts_encoders = dict(
 )
 
 opts_engines = dict(
-    iterations=1_00,
-    size=1_000_000,
+    iterations=1_000,
+    size=1_000_00,
     engines=ENGINES,
-    # engines=[e for e in ENGINES if e!='sqlite'],
+    # engines=[e for e in ENGINES if e!='mongo' and e!='redis'],
     serializers=["pickle"],
     compress=[OPTIMAL_COMPRESS],
     num_procs=[8],
@@ -65,13 +65,13 @@ opts_engines = dict(
 RAW_SIZE_KEY = "Raw Size (B)"
 
 
-profiler_stash = HashStash(name="profilers", compress=False, b64=False)
+profiler_stash = HashStash("profilers", compress=False, b64=False)
 
 
 def time_function(func, *args, **kwargs):
-    start_time = time.time()
+    start_time = time.perf_counter()
     result = func(*args, **kwargs)
-    end_time = time.time()
+    end_time = time.perf_counter()
     return result, end_time - start_time
 
 
@@ -129,12 +129,17 @@ class HashStashProfiler:
                 "Size (B)": size,
             }
             task = {"size": size, "data_type": data_type, "operations": operations}
+            tasks = [{**task} for _ in range(iterations)]
+            if operations is not None:
+                tasks[-1]['operations'] = [x for x in operations] + ["Size"]
+            print(tasks[0])
+            print(tasks[-1])
 
             smap = profiler_stash.map(
                 profile_stash_transaction,
                 objects=tmp_stash,
-                options=task,
-                total=iterations,
+                options=tasks,
+                # total=iterations,
                 num_proc=num_proc,
                 ordered=True,
                 progress=progress,
@@ -234,7 +239,7 @@ class HashStashProfiler:
             ordered=True,
             progress=progress,
             stash_runs=True,
-            stash_map=True,
+            stash_map=False,
             desc=f"Profiling {len(objects)} stashes",
             _force=_force,
         )
@@ -562,55 +567,6 @@ class HashStashProfiler:
         return fig
 
     @classmethod
-    def plot_serializers(
-        cls,
-        df=None,
-        color_by="Serializer",
-        operations=["Serialize", "Deserialize", "Serialize + Deserialize"],
-        label_by="Serializer",
-        log_y=True,
-        x="Iteration",
-        y="Rate (it/s)",
-        height=6,
-        width=8,
-        ncol=None,
-        nrow=1,
-        scales="fixed",
-        group_by=None,
-        moving_window=100,
-        facet_by=None,
-        facet_grid_by="Operation ~ Data Type",
-        facet_order=None,
-        filename="fig.comparing_serializers.png",
-        **opts,
-    ):
-        if df is None:
-            df = cls.profile_serializers(**opts).reset_index()
-            df = df[df.Operation.isin(["Serialize + Deserialize"])]
-
-        return cls.plot(
-            df=df,
-            color_by=color_by,
-            operations=operations,
-            label_by=label_by,
-            log_y=log_y,
-            x=x,
-            y=y,
-            height=height,
-            width=width,
-            ncol=ncol,
-            nrow=nrow,
-            scales=scales,
-            group_by=group_by,
-            moving_window=moving_window,
-            facet_by=facet_by,
-            facet_grid_by=facet_grid_by,
-            facet_order=facet_order,
-            filename=filename,
-            **opts,
-        )
-
-    @classmethod
     def plot_engines(
         cls,
         df=None,
@@ -619,7 +575,7 @@ class HashStashProfiler:
         label_by="Engine",
         log_y=False,
         x="Iteration",
-        y="Rate (it/s)",
+        y="Speed (MB/s)",
         height=6,
         width=8,
         ncol=None,
@@ -628,14 +584,15 @@ class HashStashProfiler:
         group_by=None,
         moving_window=100,
         facet_by=None,
-        facet_grid_by="Operation ~ Data Type",
+        facet_grid_by="Data Type ~ Operation",
         facet_order=None,
         filename="fig.comparing_engines.png",
         **opts,
     ):
         if df is None:
             df = cls.profile_engines(**opts).reset_index()
-            df = df[df.Operation.isin(["Set + Get"])]
+            # df = df[df.Operation.isin(["Set + Get"])]
+            df = df[df['Data Type']=='Average']
         return cls.plot(
             df=df,
             color_by=color_by,
@@ -657,101 +614,6 @@ class HashStashProfiler:
             filename=filename,
             **opts,
         )
-
-    @classmethod
-    def plot_encodings(
-        cls,
-        df=None,
-        color_by="Encoding",
-        operations=["Encode", "Decode", "Encode + Decode"],
-        label_by="Encoding",
-        log_y=True,
-        x="Iteration",
-        y="Rate (it/s)",
-        height=6,
-        width=8,
-        ncol=None,
-        nrow=1,
-        scales="fixed",
-        group_by=None,
-        moving_window=100,
-        facet_by=None,
-        facet_grid_by="Operation ~ Data Type",
-        facet_order=None,
-        filename="fig.comparing_encodings.png",
-        **opts,
-    ):
-        if df is None:
-            df = cls.profile_encodings(**opts).reset_index()
-            # df = df[df.Operation.isin(['Encode + Decode'])]
-        return cls.plot(
-            df=df,
-            color_by=color_by,
-            operations=operations,
-            label_by=label_by,
-            log_y=log_y,
-            x=x,
-            y=y,
-            height=height,
-            width=width,
-            ncol=ncol,
-            nrow=nrow,
-            scales=scales,
-            group_by=group_by,
-            moving_window=moving_window,
-            facet_by=facet_by,
-            facet_grid_by=facet_grid_by,
-            facet_order=facet_order,
-            filename=filename,
-            **opts,
-        )
-
-    @classmethod
-    def plot_sizes(cls):
-        import plotnine as p9
-
-        opts = {
-            **opts_encoders,
-            "serializers": get_working_serializers(),
-            "iterations": 100,
-            "operations": ["Serialize", "Deserialize", "Encode", "Decode"],
-        }
-        df = cls.get_size_data(**opts)
-        df["Compression (%)"] = 1 - (df["Encoded Size (B)"] / df["Raw Size (B)"])
-        df["Encode Time (s)"] += df["Serialize Time (s)"]
-        df["Decode Time (s)"] += df["Deserialize Time (s)"]
-        df["Encode + Decode Time (s)"] = df["Encode Time (s)"] + df["Decode Time (s)"]
-        df["Encode + Decode Rate (it/s)"] = 1 / df["Encode + Decode Time (s)"]
-        df["Encode Rate (it/s)"] = 1 / df["Encode Time (s)"]
-        df["Decode Rate (it/s)"] = 1 / df["Decode Time (s)"]
-        df = (
-            df.groupby(["Serializer", "Encoding"])
-            .median(numeric_only=True)
-            .reset_index()
-        )
-        # df = df.melt(id_vars=['Serializer','Encoding','Compression (%)', 'Raw Size (B)'], value_vars=['Encode Rate (it/s)', 'Decode Rate (it/s)', 'Encode + Decode Rate (it/s)'], value_name='Rate (it/s)', var_name='Operation')
-        # df['Operation']=df['Operation'].str.split('Rate').str[0].str.strip()
-        fig = cls.plot(
-            df,
-            y="Encode + Decode Rate (it/s)",
-            x="Compression (%)",
-            facet_by=None,
-            color_by="Serializer",
-            label_by="Encoding",
-            smooth=False,
-            height=6,
-            log_y=True,
-            filename="fig.comparing_sizes.png",
-            width=8,
-        )
-        # Add a vertical line at x=0
-        fig += p9.geom_vline(
-            xintercept=0, linetype="dashed", color="red", size=0.5, alpha=0.5
-        )
-
-        fig
-
-        return fig
     
     @classmethod
     def plot_all(cls,filename=None,**opts):
@@ -808,6 +670,76 @@ class HashStashProfiler:
         fig.save(figfn)
         return fig
 
+    def plot_encodings(cls,filename=None,**opts):
+        import plotnine as p9
+        import pandas as pd
+        p9.options.figure_size = (8, 6)
+        df = cls.run_profiles(**opts_encoders).reset_index()
+        df['Rate (MB/s)'] = df['Raw Size (B)'] / (df['Encode Time (s)'] + df['Decode Time (s)']) / 1024 / 1024
+        df=df[df.Encoding!='raw']
+        df['Label'] = df['Engine'] + ' + ' + (df['Encoding'].str.replace('+b64',''))
+        df['Encoded Size (KB)'] = df['Encoded Size (B)'] / 1024
+        figdf = df.groupby('Encoding').agg({'Rate (MB/s)': 'median', 'Encoded Size (KB)': 'last'}).reset_index()
+        figdf['Encoding Type'] = figdf['Encoding'].str.replace('+b64','')
+        fig = p9.ggplot(figdf, p9.aes(x='Encoded Size (KB)', y='Rate (MB/s)', label='Encoding', color='Encoding Type'))
+        fig+=p9.geom_text()
+        fig+=p9.theme_classic()
+        fig+=p9.scale_y_log10()
+        fig+=p9.scale_color_brewer(type='qual', palette=2)
+        rawsize = df['Raw Size (B)'].median()/1024
+        fig += p9.geom_vline(xintercept=rawsize, linetype='dashed', color='gray')
+        fig += p9.annotate("text", x=rawsize, nudge_x=.5, y=1, label=f'Raw size = {rawsize:.0f} KB', color='gray', alpha=1, ha='left')
+        fig+=p9.labs(
+            x=f'Encoded Size (KB)',
+            y='Rate (MB/s)',
+            color='Encoding',
+            title='Comparing encodings'
+        )
+        if filename is None:
+            filename = f"fig.comparing_encodings_size_speed.png"
+        figfn = Path(profiler_stash.path).parent / "figures" / filename
+        figfn.parent.mkdir(parents=True, exist_ok=True)
+        fig.save(figfn)
+        return fig
+        
+    def plot_serializers(cls,filename=None,**opts):
+        import plotnine as p9
+        import pandas as pd
+        p9.options.figure_size = (8, 6)
+        df = cls.run_profiles(**opts_serializers).reset_index()
+        figdf = df.groupby(['Serializer','Data Type']).median(numeric_only=True).reset_index().melt(
+            id_vars=['Serializer','Data Type','Raw Size (B)', 'Serialized Size (B)'], 
+            value_vars=['Serialize Time (s)', 'Deserialize Time (s)'], 
+            value_name='Time (s)', 
+            var_name='Operation'
+        )
+        figdf['Operation'] = figdf['Operation'].str.replace(' Time (s)', '')
+        figdf['Operation'] = pd.Categorical(figdf['Operation'], categories=['Serialize', 'Deserialize'])
+        figdf['Serialized Size (MB)'] = figdf['Serialized Size (B)'] / 1024 / 1024
+        figdf['Rate (MB/s)'] = figdf['Raw Size (B)'] / figdf['Time (s)'] / 1024 / 1024
+        fig = p9.ggplot(figdf, p9.aes(x='Serialized Size (MB)', y='Rate (MB/s)', label='Serializer', color='Serializer'))
+        fig+=p9.facet_grid('. ~ Operation')
+        fig+=p9.geom_text(nudge_y=.05)
+        fig+=p9.geom_point(p9.aes(shape='Data Type'))
+        fig+=p9.theme_classic()
+        fig+=p9.scale_y_log10()
+        fig+=p9.scale_color_brewer(type='qual', palette=2)
+        fig+=p9.labs(
+            x=f'Serialized Size (MB)',
+            y='Rate (MB/s)',
+            color='Serializer',
+            title='Comparing serializers'
+        )
+        rawsize = df['Raw Size (B)'].median()/1024/1024
+        fig += p9.geom_vline(xintercept=rawsize, linetype='dashed', color='gray')
+        fig += p9.annotate("text", x=rawsize, y=5, nudge_x=.001, label=f'Raw size = {rawsize:.1f} MB', color='gray', alpha=1, ha='left')
+        if filename is None:
+            filename = f"fig.comparing_serializers_size_speed.png"
+        figfn = Path(profiler_stash.path).parent / "figures" / filename
+        figfn.parent.mkdir(parents=True, exist_ok=True)
+        fig.save(figfn)
+        return fig
+
 
 
 def profile_stash_transaction(
@@ -852,7 +784,7 @@ def profile_stash_transaction(
             lambda: stash.deserialize(serialized_data)
         )
 
-    if not operations or "Set" in operations or "Get" in operations:
+    if not operations or "Size" in operations:
         out["Filesize (B)"] = stash.filesize
 
     return out

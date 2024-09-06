@@ -15,7 +15,7 @@ def serializer_type(request):
 
 @pytest.fixture
 def cache(serializer_type, tmp_path):
-    cache = MemoryHashStash(name=f"{serializer_type}_cache", root_dir=tmp_path, serializer=serializer_type)
+    cache = MemoryHashStash(root_dir=os.path.join(tmp_path, f"{serializer_type}_cache"), serializer=serializer_type)
     cache.clear()
     yield cache
 
