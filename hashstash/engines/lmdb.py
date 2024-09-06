@@ -27,7 +27,7 @@ class LMDBHashStash(BaseHashStash):
                     yield txn
                 break
             except lmdb.Error as e:
-                log.warning(f"LMDB transaction error (attempt {attempt + 1}/{max_retries}): {e}")
+                log.debug(f"LMDB transaction error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise
                 self.close()  # Close the current environment
