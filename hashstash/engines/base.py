@@ -903,7 +903,7 @@ class BaseHashStash(MutableMapping):
         all_results=None,
         with_metadata=None,
         flatten=True,
-        progress=True,
+        progress=False,
     ):
         ld = []
         iterr = self.items(
@@ -911,7 +911,7 @@ class BaseHashStash(MutableMapping):
             with_metadata=True,
         )
         if progress:
-            iterr = progress_bar(iterr)
+            iterr = progress_bar(iterr, desc='Assembling cached contents')
         for key, value_d in iterr:
             key_d = {"_key": key} if not isinstance(key, dict) else key
             if flatten:

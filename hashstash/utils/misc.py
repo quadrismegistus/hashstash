@@ -116,29 +116,26 @@ def is_nan(x):
         return False
 
 
+def _flatten_dict(d, parent_key='', sep='.'):
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(_flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
 def _flatten_ld(item, ind=None):
     if ind is None:
         ind = {}
 
     if isinstance(item, dict):
-        item_d = {}
-        item_ld = [item_d]
-        for k, v in item.items():
-            if isinstance(v, (dict, list)) or is_dataframe(v):
-                new_ld = [
-                    {
-                        k2 if k2[0] == "_" or k[0] == "_" else f"{k}.{k2}": v2
-                        for k2, v2 in d.items()
-                    }
-                    for d in _flatten_ld(v, ind)
-                ]
-                item_ld.extend(new_ld)
-            else:
-                item_d[k] = v
-        return [{**ind, **v} for v in item_ld]
+        flattened = _flatten_dict(item)
+        return [{**ind, **flattened}]
     elif is_dataframe(item):
         return [
-            {**ind, **row.to_dict()}
+            {**ind, **_flatten_dict(row.to_dict())}
             for _, row in reset_index_misc(item, _index=False)[0].iterrows()
         ]
     elif isinstance(item, list):

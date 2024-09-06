@@ -586,6 +586,38 @@ class TestHashStashFactory:
         assert stash.b64 == b64
         assert serializer == stash.serializer
 
+    def test_assemble_ld_with_nested_dicts(self, cache):
+        cache.clear()
+        
+        # Populate cache with random animals
+        import random
+        for n in range(100):
+            cache[f'Animal {n+1}'] = {
+                'name': random.choice(['cat', 'dog']), 
+                'goodness': random.choice(['good', 'bad']),
+                'other': {
+                    'age': random.randint(1, 10),
+                }
+            }
+        
+        # Get the list of dictionaries
+        result = cache.ld
+        
+        # Assertions
+        assert isinstance(result, list)
+        assert len(result) == 100
+        
+        expected_keys = {'_key', 'name', 'goodness', 'other.age'}
+        
+        for item in result:
+            assert isinstance(item, dict)
+            assert set(item.keys()) == expected_keys
+            assert item['_key'].startswith('Animal ')
+            assert item['name'] in ['cat', 'dog']
+            assert item['goodness'] in ['good', 'bad']
+            assert isinstance(item['other.age'], int)
+            assert 1 <= item['other.age'] <= 10
+
 ## specific engine tests
 
 import pytest
