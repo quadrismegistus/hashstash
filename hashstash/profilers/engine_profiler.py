@@ -151,14 +151,14 @@ class HashStashProfiler:
             )
             return pd.DataFrame(
                 {"Iteration": i + 1, **sres}
-                for i, sres in enumerate(smap.iter_results())
+                for i, sres in enumerate(smap.results_iter())
                 if sres is not None
             )
             # timestart = time.time()
             # sizestart = 0
             # o = []
 
-            # for i, result_dict in enumerate(smap.iter_results()):
+            # for i, result_dict in enumerate(smap.results_iter()):
             #     sizestart += result_dict["Raw Size (B)"]
             #     out_d = {
             #         "Iteration": i,

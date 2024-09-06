@@ -8,9 +8,9 @@ class DataFrameHashStash(PairtreeHashStash):
 
     def __init__(self, *args, df_engine=None, io_engine=None, **kwargs):
         ## check io engine
-        super().__init__(*args, **kwargs)
         self.io_engine = get_io_engine(io_engine)
         self.df_engine = get_df_engine(df_engine)
+        super().__init__(*args, **kwargs)
 
     def to_dict(self):
         return {**super().to_dict(), 'io_engine': self.io_engine, 'df_engine': self.df_engine}

@@ -40,6 +40,9 @@ def shutdown_global_executors():
 
 atexit.register(shutdown_global_executors)
 
+def get_num_proc(n=None, num_spare=2):
+    num_avail = mp.cpu_count()
+    return n if n and 1<=n<=num_avail else (num_avail-num_spare) if (num_avail-num_spare)>0 else 1
 
 class StashMap(UserList):
     def __init__(
@@ -48,7 +51,7 @@ class StashMap(UserList):
         objects=None,
         options=None,
         total=None,
-        num_proc=1,
+        num_proc=None,
         desc=None,
         progress=True,
         ordered=True,
@@ -62,6 +65,7 @@ class StashMap(UserList):
         _force=False,
         **common_kwargs,
     ):
+
         self.func = func
         self._objects = objects
         self._options = options
@@ -72,6 +76,7 @@ class StashMap(UserList):
         
         self.common_kwargs = common_kwargs
         self.total = len(self.objects)
+        num_proc=get_num_proc(num_proc)
         self.num_proc = num_proc
         self.desc = (
             desc
@@ -91,7 +96,6 @@ class StashMap(UserList):
         self.progress_bar = None
         if self.progress:
             from .misc import progress_bar
-
             self.progress_bar = progress_bar(total=self.total, desc=self.desc)
 
         self._executor = get_global_executor(num_proc)
@@ -207,7 +211,23 @@ class StashMap(UserList):
             self.progress_bar.close()
         return resl
     
-    def iter_results(self):
+    def items(self):
+        for res in self:
+            yield (res.args, res.kwargs), res.result
+
+    def keys(self):
+        yield from (k for k,v in self.items())
+    def values(self):
+        yield from (v for k,v in self.items())
+    
+    def items_l(self):
+        return list(self.items())
+    def values_l(self):
+        return list(self.values())
+    def keys_l(self):
+        return list(self.keys())
+
+    def results_iter(self):
         self.compute()
         yield from (res.result for res in self)
 
@@ -336,27 +356,27 @@ class StashMapSlice(StashMap):
         return (self.from_dict, (self.to_dict(),))
 
 
-def stash_mapped(_func=None, stash=None, **top_kwargs):
+def stash_mapped(_func=None, *stash_args, stash=None, _force=False, **stash_kwargs):
     if stash is None:
         from ..engines.base import HashStash
-        stash = HashStash()
+        stash = HashStash(*stash_args, **stash_kwargs)
 
     def decorator(func):
-        # stash.attach_func(func)
-
         @wraps(func)
         def wrapper(*args, **kwargs):
-            results = stash.map(func, *args, **{**top_kwargs, **kwargs}).results
-            if len(results)==1:
-                return results[0]
-            return results
-
+            return stash.map(func, *args, _force=_force, **{**stash_kwargs, **kwargs})
         return wrapper
 
-    if _func is None:
+    # Check if _func is a string (root_dir) or a function
+    if isinstance(_func, str):
+        stash_kwargs['root_dir'] = _func
         return decorator
-    else:
+    elif callable(_func):
         return decorator(_func)
+    else:
+        return decorator
+
+parallelized = stash_mapped
 
 parallelized = stash_mapped
 
@@ -446,10 +466,8 @@ class StashMapRun:
             result = future_or_result
         if result is not None:
             self._set_computed(result)
-        # if self._result is not None:
-        #     self._computed = True
-        # elif self._precompute:
-        #     self.compute()
+        else:
+            self.compute()
 
     def _start_processing(self):
         if self._result is not None:

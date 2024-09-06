@@ -218,10 +218,10 @@ class PairtreeHashStash(BaseHashStash):
             yield self._get_from_filepath(path)
 
     @log.debug
-    # def _values(self, all_results=None):
-    #     for paths in self.paths_values(all_results=all_results):
-    #         for path in paths:
-    #             yield self._get_from_filepath(path)
+    def _values(self, all_results=None):
+        for paths in self.paths_values(all_results=all_results):
+            for path in paths:
+                yield self._get_from_filepath(path)
 
     @log.debug
     # def values(self, all_results=None, **kwargs):
@@ -230,12 +230,12 @@ class PairtreeHashStash(BaseHashStash):
     #     )
 
     @log.debug
-    # def _items(self, all_results=None):
-    #     for path_key, path_values in self.paths_items(all_results=all_results):
-    #         encoded_key = self._get_from_filepath(path_key)
-    #         for path_value in path_values:
-    #             encoded_value = self._get_from_filepath(path_value)
-    #             yield (encoded_key, encoded_value)
+    def _items(self, all_results=None):
+        for path_key, path_values in self.paths_items(all_results=all_results):
+            encoded_key = self._get_from_filepath(path_key)
+            for path_value in path_values:
+                encoded_value = self._get_from_filepath(path_value)
+                yield (encoded_key, encoded_value)
 
     @log.debug
     # def items(self, all_results=None, with_metadata=False, **kwargs):

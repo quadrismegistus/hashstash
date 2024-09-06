@@ -27,13 +27,15 @@ class MongoHashStash(BaseHashStash):
     ensure_dir = False
     string_keys = True
     string_values = True
+    dbname = 'hashstash'
 
     def __init__(self, *args, host=None, port=None, **kwargs):
-        super().__init__(*args, **kwargs)
         if host is not None: self.host = host
         if port is not None: self.port = port
         # force b64 True for mongo
         self.b64 = True
+        super().__init__(*args, **kwargs)
+
         
     @log.debug
     def get_db(self):
@@ -88,7 +90,7 @@ class MongoHashStash(BaseHashStash):
     def filesize(self):
         return sum(bytesize(k) + bytesize(self._get(k)) for k in self._keys())
 
-def start_mongo_server(host='localhost', port=27017, dbname=DEFAULT_DBNAME, data_dir=DEFAULT_MONGO_DIR):
+def start_mongo_server(host='localhost', port=27017, dbname='hashstash', data_dir=DEFAULT_MONGO_DIR):
     global _process_started, _container_id
 
     if _process_started:

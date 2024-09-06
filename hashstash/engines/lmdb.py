@@ -6,9 +6,9 @@ class LMDBHashStash(BaseHashStash):
     filename_is_dir = True
 
     def __init__(self, *args, map_size=10 * 1024**3, **kwargs):  # Default to 10GB
-        super().__init__(*args, **kwargs)
         self._env = None
         self.map_size = map_size
+        super().__init__(*args, **kwargs)
 
     @log.debug
     def get_db(self):

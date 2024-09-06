@@ -224,7 +224,7 @@ def flatten_args_kwargs(args_kwargs, prefix_args="_arg", prefix_kwargs="_"):
     return result
 
 
-def progress_bar(iterr=None, total=None, progress=True, leave=True, **kwargs):
+def progress_bar(iterr=None, total=None, progress=True, leave=False, **kwargs):
     global current_depth
 
     class DummyProgressBar:
@@ -271,3 +271,20 @@ def is_stash(x):
     from ..engines.base import BaseHashStash
 
     return isinstance(x, BaseHashStash)
+
+
+def print_md(*args):
+    from IPython.display import Markdown, display
+    display(Markdown(' '.join(str(x) for x in args)))
+
+
+def get_encoding_str(compress,b64):
+    return "+".join(
+            filter(
+                None,
+                [
+                    compress if compress else "raw",
+                    "b64" if b64 else None,
+                ],
+            )
+        )

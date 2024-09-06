@@ -3,10 +3,15 @@ BUILTIN_DECORATORS = {'property', 'classmethod', 'staticmethod'}
 
 
 def get_obj_module(obj):
+    if hasattr(obj,'__name__') and obj.__name__ == '<lambda>': 
+        print(obj,obj.__name__)
+        return '__main__'
     if hasattr(obj, "__module__"): return obj.__module__
     if hasattr(obj, "__class__"): return get_obj_module(obj.__class__)
     return type(obj).__module__
 def get_obj_addr(obj):
+    if hasattr(obj,'__name__') and obj.__name__ == '<lambda>': return f'__main__.<lambda>'
+
     if isinstance(obj, types.BuiltinFunctionType):
         return f"builtins.{obj.__name__}"
     
@@ -63,6 +68,8 @@ def get_obj_nice_name(obj):
 
 def get_function_src(func):
     from .logs import log
+    if hasattr(func,'__source__') and func.__source__:
+        return func.__source__
     if func.__name__ == '<lambda>':
         return get_lambda_src(func)
 
@@ -163,18 +170,90 @@ def get_obj_src(obj):
 def get_lambda_src(obj):
     try:
         source = inspect.getsource(obj)
-        # Extract just the lambda part
-        lambda_pattern = r'lambda.*?:.*?(?=\n|$)'
-        match = re.search(lambda_pattern, source)
-        if match:
-            source = match.group(0)
-        else:
-            # Fallback if regex fails
-            source = f"lambda {inspect.signature(obj)}: ..."
-    except Exception:
+        lambda_pattern = source.split('lambda ',1)[-1].strip()
+        open = Counter()
+        out=[]
+        for i, char in enumerate(lambda_pattern):
+            if char=='(': open['(']+=1
+            if char=='[': open['[']+=1
+            if char=='{': open['{']+=1
+
+            if char==')': open['(']-=1
+            if char==']': open['[']-=1
+            if char=='}': open['{']-=1
+            if any(v<0 for v in open.values()):
+                break
+
+            out.append(char)
+        return 'lambda ' + (''.join(out)).rstrip(',')  # Remove trailing comma if present
+    except Exception as e:
+        from .logs import log
+        log.error(e)
         # Fallback for cases where we can't get the source
-        source = f"lambda {inspect.signature(obj)}: ..."
-    return source
+        return f"lambda {inspect.signature(obj)}: ..."
+
+
+# def get_lambda_src(lambda_func):
+#     """Return the source of a (short) lambda function.
+    
+#     From: https://gist.github.com/Xion/617c1496ff45f3673a5692c3b0e3f75a
+#     """
+#     try:
+#         source_lines, _ = inspect.getsourcelines(lambda_func)
+#     except (IOError, TypeError):
+#         return None
+
+#     # skip `def`-ed functions and long lambdas
+#     if len(source_lines) != 1:
+#         return None
+
+#     source_text = os.linesep.join(source_lines).strip()
+
+#     # find the AST node of a lambda definition
+#     # so we can locate it in the source code
+#     source_ast = ast.parse(source_text)
+#     lambda_node = next((node for node in ast.walk(source_ast)
+#                         if isinstance(node, ast.Lambda)), None)
+#     if lambda_node is None:  # could be a single line `def fn(x): ...`
+#         return None
+
+#     # HACK: Since we can (and most likely will) get source lines
+#     # where lambdas are just a part of bigger expressions, they will have
+#     # some trailing junk after their definition.
+#     #
+#     # Unfortunately, AST nodes only keep their _starting_ offsets
+#     # from the original source, so we have to determine the end ourselves.
+#     # We do that by gradually shaving extra junk from after the definition.
+#     lambda_text = source_text[lambda_node.col_offset:]
+#     lambda_body_text = source_text[lambda_node.body.col_offset:]
+#     min_length = len('lambda:_')  # shortest possible lambda expression
+#     while len(lambda_text) > min_length:
+#         try:
+#             # What's annoying is that sometimes the junk even parses,
+#             # but results in a *different* lambda. You'd probably have to
+#             # be deliberately malicious to exploit it but here's one way:
+#             #
+#             #     bloop = lambda x: False, lambda x: True
+#             #     get_short_lamnda_source(bloop[0])
+#             #
+#             # Ideally, we'd just keep shaving until we get the same code,
+#             # but that most likely won't happen because we can't replicate
+#             # the exact closure environment.
+#             code = compile(lambda_body_text, '<unused filename>', 'eval')
+
+#             # Thus the next best thing is to assume some divergence due
+#             # to e.g. LOAD_GLOBAL in original code being LOAD_FAST in
+#             # the one compiled above, or vice versa.
+#             # But the resulting code should at least be the same *length*
+#             # if otherwise the same operations are performed in it.
+#             if len(code.co_code) == len(lambda_func.__code__.co_code):
+#                 return lambda_text
+#         except SyntaxError:
+#             pass
+#         lambda_text = lambda_text[:-1]
+#         lambda_body_text = lambda_body_text[:-1]
+    
+#     return f"lambda {inspect.signature(lambda_func)}: ..."
 
 def can_import_object(obj):
     try:

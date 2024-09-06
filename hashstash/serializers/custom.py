@@ -435,7 +435,9 @@ def recreate_function_from_src(source, func_name):
     if source.startswith('lambda'):
         lambda_expr = source.split(':')[0] + ':' + source.split(':')[1].split(',')[0]
         code = compile(lambda_expr, '<string>', 'eval')
-        return eval(code)
+        func = eval(code)
+        func.__source__ = source
+        return func
     
     code = compile(source, '<string>', 'exec')
     
@@ -443,6 +445,7 @@ def recreate_function_from_src(source, func_name):
         namespace = globals()
         exec(code, namespace)
         func = namespace[func_name]
+        func.__source__ = source
         return func
 
         # closure = get_function_closure(func)    
