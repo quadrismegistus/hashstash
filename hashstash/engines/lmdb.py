@@ -1,5 +1,4 @@
 from . import *
-import lmdb
 
 class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
@@ -13,13 +12,16 @@ class LMDBHashStash(BaseHashStash):
     @log.debug
     def get_db(self):
         if self._env is None:
+            import lmdb
             os.makedirs(self.path_dirname, exist_ok=True)
+
             self._env = lmdb.open(self.path, map_size=self.map_size)
         return self._env
 
 
     @contextmanager
     def get_transaction(self, write=False):
+        import lmdb
         max_retries = 3
         for attempt in range(max_retries):
             try:
