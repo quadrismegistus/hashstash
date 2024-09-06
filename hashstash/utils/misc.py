@@ -224,7 +224,7 @@ def flatten_args_kwargs(args_kwargs, prefix_args="_arg", prefix_kwargs="_"):
     return result
 
 
-def progress_bar(iterr=None, total=None, progress=True, leave=True, **kwargs):
+def progress_bar(iterr=None, total=None, progress=True, leave=False, **kwargs):
     global current_depth
 
     class DummyProgressBar:

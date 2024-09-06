@@ -64,7 +64,7 @@ def stashed_result(
     _func=None,
     *stash_args,
     stash: Optional["BaseHashStash"] = None,
-    force=False,
+    _force=False,
     store_args=True,
     **stash_kwargs,
 ):
@@ -81,14 +81,14 @@ def stashed_result(
         @log.debug
         @wraps(func)
         def wrapper(*args, **kwargs):
-            nonlocal force, stash, store_args, func
+            nonlocal _force, stash, store_args, func
             if args and get_pytype(args[0]) in {'class', 'instance'}:
                 self_obj = args[0]
                 func = getattr(self_obj, func.__name__)
                 args = args[1:]
 
             # Extract _force from kwargs if present, otherwise use the default force value
-            _force = kwargs.pop('_force', force)
+            _force = kwargs.pop('_force', _force)
             
             return stash.run(func, *args, _force=_force, _store_args=store_args, **kwargs)
             

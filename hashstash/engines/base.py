@@ -474,7 +474,7 @@ class BaseHashStash(MutableMapping):
         func,
         objects=[],
         options=[],
-        num_proc=1,
+        num_proc=None,
         total=None,
         desc=None,
         progress=True,
@@ -516,7 +516,7 @@ class BaseHashStash(MutableMapping):
             pmap.desc = desc
             pmap.progress = progress
             pmap.ordered = ordered
-            pmap.num_proc = num_proc
+            pmap.num_proc = get_num_proc(num_proc)
             pmap.stash = self
             pmap._stash_key = key
 

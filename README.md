@@ -245,10 +245,10 @@ for i, (key, value) in enumerate(stash.items()):
     ['bad', 'good'] >>> cat
     
     Item #7:
-    <function func_key at 0x110022a70> >>> cat
+    <function func_key at 0x12846c160> >>> cat
     
     Item #8:
-    <function <lambda> at 0x12546a680> >>> cat
+    <function <lambda> at 0x1291c0160> >>> cat
     
 
 Other dictionary functions:
@@ -287,11 +287,6 @@ You can also iterate the keys and values as actually exist in the data store, i.
 These methods are used internally and not necessary to use.
 
 ```python
-print('\nIterating over .items():')
-for orig_key,orig_value in stash.items():
-    print(orig_key, 'is the original (un-encoded, un-compressed, un-serialized) key for the original value of', orig_value)
-    break
-
 print('\nIterating over ._items():')
 for encoded_key,encoded_value in stash._items():
     print(encoded_key, 'is the serialized, compressed, and encoded key for', encoded_value)
@@ -299,16 +294,10 @@ for encoded_key,encoded_value in stash._items():
     decoded_value = stash.decode_value(encoded_value)
     print(decoded_key, 'is the decoded, uncompressed, and deserialized key for', decoded_value)
     break
-
-assert orig_key == decoded_key
-assert orig_value == decoded_value
 ```
 
 ↓
 
-    
-    Iterating over .items():
-    {'good', 'bad'} is the original (un-encoded, un-compressed, un-serialized) key for the original value of cat
     
     Iterating over ._items():
     b'NwAAAPETeyJfX3B5X18iOiAiYnVpbHRpbnMuc2V0IiwgIl9fZGF0YRwA8AFbImdvb2QiLCAiYmFkIl19' is the serialized, compressed, and encoded key for b'BQAAAFAiY2F0Ig=='
@@ -429,7 +418,134 @@ assert stashed_result7 == stashed_result8 == stashed_result5 == stashed_result6
     Called args: (['cat', 'dog'],)
     Called kwargs: {'goodnesses': ['good', 'bad']}
     
-    Stashed value = [{'name': 'dog', 'goodness': 'good', 'random': 0.25762423037748594}, {'name': 'dog', 'goodness': 'good', 'random': 0.29385673877094953}, {'name': 'cat', 'goodness': 'bad', 'random': 0.5878139714240894}, {'name': 'dog', 'goodness': 'bad', 'random': 0.1936244273282528}, {'name': 'dog', 'goodness': 'good', 'random': 0.5884200909803989}, {'name': 'cat', 'goodness': 'good', 'random': 0.31725362322880646}, {'name': 'cat', 'goodness': 'good', 'random': 0.9938326430071288}, {'name': 'cat', 'goodness': 'bad', 'random': 0.20807352833935855}, {'name': 'dog', 'goodness': 'good', 'random': 0.4892373539721653}, {'name': 'cat', 'goodness': 'good', 'random': 0.9858799354889001}]
+    Stashed value = [{'name': 'dog', 'goodness': 'bad', 'random': 0.5057600020943653}, {'name': 'dog', 'goodness': 'bad', 'random': 0.44942716869985244}, {'name': 'dog', 'goodness': 'bad', 'random': 0.04412090932878976}, {'name': 'dog', 'goodness': 'good', 'random': 0.26390218890484296}, {'name': 'dog', 'goodness': 'good', 'random': 0.8861568169357764}, {'name': 'dog', 'goodness': 'bad', 'random': 0.8113840172104607}, {'name': 'dog', 'goodness': 'bad', 'random': 0.29450288091375965}, {'name': 'cat', 'goodness': 'good', 'random': 0.10650085474589033}, {'name': 'dog', 'goodness': 'bad', 'random': 0.10346094332240874}, {'name': 'cat', 'goodness': 'bad', 'random': 0.29552371113906584}]
+
+### Mapping functions
+
+You can also map functions across many objects, with stashed results, with `stash.map`. By default it uses {num_proc}-2 processors to start computing results in background. In the meantime it returns a `StashMap` object.
+
+```python
+def expensive_computation3(name, goodnesses=['good']):
+    time.sleep(random.randint(1,5))
+    return {'name':name, 'goodness':random.choice(goodnesses)}
+
+# this returns a custom StashMap object instantly, computing results in background (if num_proc>1)
+stash_map = functions_stash.map(expensive_computation3, ['cat','dog','aardvark','zebra'], goodnesses=['good', 'bad'], num_proc=2)
+stash_map
+```
+
+↓
+
+    Mapping __main__.expensive_computation3 across 4 objects [2x]:   0%|          | 0/4 [00:00<?, ?it/s]
+
+    StashMap([StashMapRun(__main__.expensive_computation3('cat', goodnesses=['good', 'bad']) >>> ?),
+              StashMapRun(__main__.expensive_computation3('dog', goodnesses=['good', 'bad']) >>> ?),
+              StashMapRun(__main__.expensive_computation3('aardvark', goodnesses=['good', 'bad']) >>> ?),
+              StashMapRun(__main__.expensive_computation3('zebra', goodnesses=['good', 'bad']) >>> ?)])
+
+```python
+# iterate over results as they come in:
+timestart=time.time()
+for result in stash_map.results_iter():
+    print(f'[+{time.time()-timestart:.1f}] {result}')
+```
+
+↓
+
+    Mapping __main__.expensive_computation3 across 4 objects [2x]:  50%|█████     | 2/4 [00:05<00:04,  2.42s/it]
+
+    [+5.0] {'name': 'cat', 'goodness': 'good'}
+    [+5.0] {'name': 'dog', 'goodness': 'good'}
+    [+5.0] {'name': 'aardvark', 'goodness': 'good'}
+
+    Mapping __main__.expensive_computation3 across 4 objects [2x]: 100%|██████████| 4/4 [00:09<00:00,  2.16s/it]
+
+    [+9.0] {'name': 'zebra', 'goodness': 'bad'}
+
+```python
+# or wait for as a list
+stash_map.results
+```
+
+↓
+
+                                                                                                                
+
+    [{'name': 'cat', 'goodness': 'good'},
+     {'name': 'dog', 'goodness': 'good'},
+     {'name': 'aardvark', 'goodness': 'good'},
+     {'name': 'zebra', 'goodness': 'bad'}]
+
+```python
+# or by .items() or .keys() or .values()
+for (args,kwargs),result in stash_map.items():
+    print(f'{args} {kwargs} >>> {result}')
+```
+
+↓
+
+    ('cat',) {'goodnesses': ['good', 'bad']} >>> {'name': 'cat', 'goodness': 'good'}
+    ('dog',) {'goodnesses': ['good', 'bad']} >>> {'name': 'dog', 'goodness': 'good'}
+    ('aardvark',) {'goodnesses': ['good', 'bad']} >>> {'name': 'aardvark', 'goodness': 'good'}
+    ('zebra',) {'goodnesses': ['good', 'bad']} >>> {'name': 'zebra', 'goodness': 'bad'}
+
+```python
+# the next time, it will return stashed results, and compute only new values
+stash_map2 = functions_stash.map(expensive_computation3, ['cat','dog','elephant','donkey'], goodnesses=['good', 'bad'], num_proc=2)
+stash_map2
+```
+
+↓
+
+    Mapping __main__.expensive_computation3 across 4 objects [2x]:   0%|          | 0/4 [00:00<?, ?it/s]
+
+    StashMap([StashMapRun(__main__.expensive_computation3('cat', goodnesses=['good', 'bad']) >>> ?),
+              StashMapRun(__main__.expensive_computation3('dog', goodnesses=['good', 'bad']) >>> ?),
+              StashMapRun(__main__.expensive_computation3('elephant', goodnesses=['good', 'bad']) >>> ?),
+              StashMapRun(__main__.expensive_computation3('donkey', goodnesses=['good', 'bad']) >>> ?)])
+
+```python
+# heavily customizable
+stash_map3 = functions_stash.map(
+    expensive_computation3, 
+    objects=['cat','parrot'],               # (2 new animals
+    options=[{'goodnesses':['bad']}, {}],   # list of dictionaries for specific keyword arguments
+    goodnesses=['good', 'bad'],             # keyword arguments common to all function calls
+    num_proc=4,                             # number of processes to use
+    preload=True,                           # start loading stashed results on init
+    precompute=True,                        # start computing stashed results 
+    progress=True,                          # show progress bar
+    desc="Mapping expensive_computation3",  # description for progress bar
+    ordered=True,                           # maintain order of input
+    stash_runs=True,                        # store individual function runs
+    stash_map=True,                         # store the entire map result
+    _force=False,                           # don't force recomputation if results exist
+)
+```
+
+↓
+
+    
+
+```python
+# Can also use as a decorator
+
+@stash_mapped('function_stash', num_proc=1)
+def expensive_computation4(name, goodnesses=['good']):
+    time.sleep(random.randint(1,5))
+    return {'name':name, 'goodness':random.choice(goodnesses)}
+
+expensive_computation4(['mole','lizard','turkey'])
+```
+
+↓
+
+    
+    
+
+    StashMap([StashMapRun(__main__.expensive_computation4('mole', root_dir='function_stash') >>> {'name': 'mole', 'goodness': 'good'}),
+              StashMapRun(__main__.expensive_computation4('lizard', root_dir='function_stash') >>> {'name': 'lizard', 'goodness': 'good'}),
+              StashMapRun(__main__.expensive_computation4('turkey', root_dir='function_stash') >>> {'name': 'turkey', 'goodness': 'good'})])
 
 ### Assembling DataFrames
 
@@ -446,16 +562,16 @@ print(func_stash.df)         # or stash.assemble_df()
 ↓
 
       name goodness    random
-    0  dog     good  0.257624
-    1  dog     good  0.293857
-    2  cat      bad  0.587814
-    3  dog      bad  0.193624
-    4  dog     good  0.588420
-    5  cat     good  0.317254
-    6  cat     good  0.993833
-    7  cat      bad  0.208074
-    8  dog     good  0.489237
-    9  cat     good  0.985880
+    0  dog      bad  0.505760
+    1  dog      bad  0.449427
+    2  dog      bad  0.044121
+    3  dog     good  0.263902
+    4  dog     good  0.886157
+    5  dog      bad  0.811384
+    6  dog      bad  0.294503
+    7  cat     good  0.106501
+    8  dog      bad  0.103461
+    9  cat      bad  0.295524
 
 Nested data flattening:
 
@@ -472,7 +588,7 @@ for n in range(100):
         'etc': {
             'age': random.randint(1, 10),
             'goes_to':{
-                'heaven':cat_or_dog=='dog' or goodness=='good',
+                'heaven':True if cat_or_dog=='dog' or goodness=='good' else False,
             }
         }
     }
@@ -485,16 +601,16 @@ print(nested_data_stash.df)         # or stash.assemble_df()
 
                name goodness  etc.age  etc.goes_to.heaven
     _key                                                 
-    Animal 1    cat      bad        5               False
-    Animal 2    dog     good       10                True
-    Animal 3    cat     good        8                True
-    Animal 4    cat     good        6                True
-    Animal 5    cat      bad        6               False
+    Animal 1    cat     good        9                True
+    Animal 2    cat      bad        8               False
+    Animal 3    cat     good        6                True
+    Animal 4    dog      bad        7                True
+    Animal 5    dog      bad       10                True
     ...         ...      ...      ...                 ...
-    Animal 96   cat      bad        9               False
-    Animal 97   dog      bad        5                True
-    Animal 98   dog     good        3                True
-    Animal 99   dog     good        8                True
+    Animal 96   dog      bad        2                True
+    Animal 97   dog      bad        8                True
+    Animal 98   cat      bad        9               False
+    Animal 99   cat     good        5                True
     Animal 100  cat     good        9                True
     
     [100 rows x 4 columns]
@@ -518,7 +634,7 @@ print(f'All values with metadata: {append_stash.get_all(key, with_metadata=True)
 
     Latest value: {'goodness': 'bad'}
     All values: [{'goodness': 'good'}, {'goodness': 'bad'}]
-    All values with metadata: [{'_version': 1, '_timestamp': 1725646207.325359, '_value': {'goodness': 'good'}}, {'_version': 2, '_timestamp': 1725646207.325587, '_value': {'goodness': 'bad'}}]
+    All values with metadata: [{'_version': 1, '_timestamp': 1725652978.878733, '_value': {'goodness': 'good'}}, {'_version': 2, '_timestamp': 1725652978.878886, '_value': {'goodness': 'bad'}}]
 
 Can also get metadata on dataframe:
 
@@ -530,8 +646,8 @@ print(append_stash.assemble_df(with_metadata=True))
 
                           name goodness
     _version _timestamp                
-    1        1.725646e+09  cat     good
-    2        1.725646e+09  cat      bad
+    1        1.725653e+09  cat     good
+    2        1.725653e+09  cat      bad
 
 ### Temporary Caches
 
@@ -595,6 +711,8 @@ data == decoded_data
 ↓
 
     True
+
+    Mapping __main__.expensive_computation3 across 4 objects [2x]: 6it [00:04,  1.45it/s]               
 
 ## Profiling
 
