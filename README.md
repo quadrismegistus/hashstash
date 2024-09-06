@@ -7,7 +7,7 @@ HashStash is a versatile caching library for Python that supports multiple stora
 ### Convenient usage
 - Dictionary-like interface, except absolutely anything can be either a key or value (even unhashable entities like sets or unpicklable entities like lambdas, local functions, etc)
 
-- Multiprocessing support: connection pooling, multiprocessing locks, etc
+- Multiprocessing support: connection pooling, multiprocessing locks, parallelize operations as much as a given engine allows
 
 - Function decorators like `@stashed_result`, which cache the results of function calls
 
@@ -64,7 +64,7 @@ HashStash requires no dependencies by default, but you can install optional depe
 
 * Default installation: `pip install hashstash`
 
-* Installation with only the optimal dependencies (lmdb + lz4 + pyarrow): `pip install hashstash[best]`
+* Installation with only the optimal engine (lmdb), compressor (lz4), and dataframe serializer (pandas + pyarrow): `pip install hashstash[best]`
 
 * Full installation with all optional dependencies: `pip install hashstash[all]`
 
@@ -126,28 +126,28 @@ stash.clear()
 stash
 ```
 
-<pre>PairtreeHashStash</pre><table border="1" class="dataframe"><thead><tr><th>Config</th><th>Param</th><th>Value</th></tr></thead><tbody><tr><td><b>Path</b></td><td>Root Dir</td><td><i>/Users/ryan/.cache/hashstash/project_cache</i></td></tr><tr><td><b></b></td><td>Dbname</td><td><i>sub_cache</i></td></tr><tr><td><b></b></td><td>Filename</td><td><i>pairtree.hashstash.lz4.db</i></td></tr><tr><td><b>Engine</b></td><td>Engine</td><td><i>pairtree</i></td></tr><tr><td><b></b></td><td>Serializer</td><td><i>hashstash</i></td></tr><tr><td><b></b></td><td>Compress</td><td><i>lz4</i></td></tr></tbody></table>
+<pre>PairtreeHashStash</pre><table border="1" class="dataframe"><thead><tr><th>Config</th><th>Param</th><th>Value</th></tr></thead><tbody><tr><td><b>Path</b></td><td>Root Dir</td><td><i>/Users/ryan/.cache/hashstash/project_stash</i></td></tr><tr><td><b></b></td><td>Dbname</td><td><i>sub_stash</i></td></tr><tr><td><b></b></td><td>Filename</td><td><i>pairtree.hashstash.lz4.db</i></td></tr><tr><td><b>Engine</b></td><td>Engine</td><td><i>pairtree</i></td></tr><tr><td><b></b></td><td>Serializer</td><td><i>hashstash</i></td></tr><tr><td><b></b></td><td>Compress</td><td><i>lz4</i></td></tr></tbody></table>
 
 ### Stashing objects
 
-Literally anything can be a key or value, including functions, dataframes, dictionaries, etc.
+Literally anything can be a key or value, including lambdas, local functions, sets, dataframes, dictionaries, etc:
 
 ```python
-# store arbitrary objects in keys and values, even unhashable ones
 stash["cat"] = {"goodness":"good"}
 stash[{"goodness":"bad"}] = 'dog'
 
 for key, value in stash.items():
-    print(f'KEY: {key} >>> VALUE: {value}')
+    print(f'{key} >>> {value}')
 ```
 
 ↓
 
-    KEY: cat >>> VALUE: {'goodness': 'good'}
-    KEY: {'goodness': 'bad'} >>> VALUE: dog
+    {'goodness': 'bad'} >>> dog
+    cat >>> {'goodness': 'good'}
+
+Even dataframes can be a key:
 
 ```python
-# Even dataframes can be a key or value
 import pandas as pd
 df = pd.DataFrame({
     "name":["cat","dog"],
@@ -296,9 +296,9 @@ stash.df         # or stash.assemble_df()
   <tbody>
     <tr>
       <th>Animal 1</th>
-      <td>cat</td>
-      <td>good</td>
-      <td>5</td>
+      <td>dog</td>
+      <td>bad</td>
+      <td>1</td>
       <td>True</td>
     </tr>
     <tr>
@@ -311,23 +311,23 @@ stash.df         # or stash.assemble_df()
     <tr>
       <th>Animal 3</th>
       <td>cat</td>
-      <td>bad</td>
-      <td>9</td>
-      <td>False</td>
+      <td>good</td>
+      <td>3</td>
+      <td>True</td>
     </tr>
     <tr>
       <th>Animal 4</th>
       <td>cat</td>
-      <td>bad</td>
-      <td>2</td>
-      <td>False</td>
+      <td>good</td>
+      <td>10</td>
+      <td>True</td>
     </tr>
     <tr>
       <th>Animal 5</th>
-      <td>cat</td>
+      <td>dog</td>
       <td>bad</td>
-      <td>9</td>
-      <td>False</td>
+      <td>6</td>
+      <td>True</td>
     </tr>
     <tr>
       <th>...</th>
@@ -338,37 +338,37 @@ stash.df         # or stash.assemble_df()
     </tr>
     <tr>
       <th>Animal 96</th>
-      <td>dog</td>
+      <td>cat</td>
       <td>good</td>
-      <td>3</td>
+      <td>9</td>
       <td>True</td>
     </tr>
     <tr>
       <th>Animal 97</th>
-      <td>cat</td>
+      <td>dog</td>
       <td>bad</td>
-      <td>4</td>
-      <td>False</td>
+      <td>3</td>
+      <td>True</td>
     </tr>
     <tr>
       <th>Animal 98</th>
       <td>dog</td>
       <td>bad</td>
-      <td>3</td>
+      <td>2</td>
       <td>True</td>
     </tr>
     <tr>
       <th>Animal 99</th>
-      <td>cat</td>
-      <td>good</td>
-      <td>6</td>
+      <td>dog</td>
+      <td>bad</td>
+      <td>1</td>
       <td>True</td>
     </tr>
     <tr>
       <th>Animal 100</th>
-      <td>cat</td>
-      <td>good</td>
-      <td>6</td>
+      <td>dog</td>
+      <td>bad</td>
+      <td>5</td>
       <td>True</td>
     </tr>
   </tbody>
@@ -408,10 +408,10 @@ stash.get_all("cat", with_metadata=True)
 ↓
 
     [{'_version': 1,
-      '_timestamp': 1725618315.274457,
+      '_timestamp': 1725618975.57192,
       '_value': {'goodness': 'good'}},
      {'_version': 2,
-      '_timestamp': 1725618315.274704,
+      '_timestamp': 1725618975.572103,
       '_value': {'goodness': 'bad'}}]
 
 ```python
@@ -440,12 +440,12 @@ stash.assemble_df(with_metadata=True)
     <tr>
       <th rowspan="2" valign="top">cat</th>
       <th>1</th>
-      <th>1.725618e+09</th>
+      <th>1.725619e+09</th>
       <td>good</td>
     </tr>
     <tr>
       <th>2</th>
-      <th>1.725618e+09</th>
+      <th>1.725619e+09</th>
       <td>bad</td>
     </tr>
   </tbody>
