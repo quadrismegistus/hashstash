@@ -87,7 +87,10 @@ def stashed_result(
                 func = getattr(self_obj, func.__name__)
                 args = args[1:]
 
-            return stash.run(func, *args, _force=force, _store_args=store_args, **kwargs)
+            # Extract _force from kwargs if present, otherwise use the default force value
+            _force = kwargs.pop('_force', force)
+            
+            return stash.run(func, *args, _force=_force, _store_args=store_args, **kwargs)
             
         func_stash = stash.attach_func(func)
         wrapper.stash = func_stash

@@ -20,6 +20,7 @@ class RedisHashStash(BaseHashStash):
     ensure_dir = False
     string_keys = True
     string_values = True
+    dbname = 'hashstash'
 
     def __init__(self, *args, host=None, port=None, **kwargs):
         if host is not None: self.host = host
@@ -56,7 +57,7 @@ class RedisHashStash(BaseHashStash):
         return sum(bytesize(k) + bytesize(v) for k,v in self._items())
         
 
-def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, dbname=DEFAULT_DBNAME, data_dir=DEFAULT_REDIS_DIR):
+def start_redis_server(host=REDIS_HOST, port=REDIS_PORT, dbname='hashstash', data_dir=DEFAULT_REDIS_DIR):
     global _process_started, _container_id
 
     if _process_started:

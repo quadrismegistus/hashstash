@@ -364,7 +364,7 @@ class TestHashStash:
         cache.clear()
         cache["popitem_key"] = "popitem_value"
         item = cache.popitem()
-        assert item == "popitem_value"
+        assert item == ("popitem_key", "popitem_value")
         assert len(cache) == 0
 
     def test_keys_l(self, cache):
