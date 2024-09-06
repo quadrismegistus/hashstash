@@ -117,16 +117,30 @@ stash = HashStash(
 
     # storage options
     append_mode=False,           # store all versions of a key/value pair
+    clear=True                   # clear on init
 )
 
-# clear for this readme
-stash.clear()
+# show stash type and path
+print(stash)
 
 # show stash config
-stash
+stash.to_dict()
 ```
 
-<pre>PairtreeHashStash</pre><table border="1" class="dataframe"><thead><tr><th>Config</th><th>Param</th><th>Value</th></tr></thead><tbody><tr><td><b>Path</b></td><td>Root Dir</td><td><i>/Users/ryan/.cache/hashstash/project_stash</i></td></tr><tr><td><b></b></td><td>Dbname</td><td><i>sub_stash</i></td></tr><tr><td><b></b></td><td>Filename</td><td><i>data.db</i></td></tr><tr><td><b>Engine</b></td><td>Engine</td><td><i>pairtree</i></td></tr><tr><td><b></b></td><td>Serializer</td><td><i>hashstash</i></td></tr><tr><td><b></b></td><td>Compress</td><td><i>lz4</i></td></tr><tr><td><b></b></td><td>B64</td><td><i>True</i></td></tr></tbody></table>
+↓
+
+    PairtreeHashStash(~/.cache/hashstash/project_stash/sub_stash/pairtree.hashstash.lz4+b64/data.db)
+
+    {'root_dir': '/Users/ryan/.cache/hashstash/project_stash',
+     'dbname': 'sub_stash',
+     'engine': 'pairtree',
+     'serializer': 'hashstash',
+     'compress': 'lz4',
+     'b64': True,
+     'append_mode': False,
+     'is_function_stash': False,
+     'is_tmp': False,
+     'filename': 'data.db'}
 
 ### Stashing objects
 
@@ -134,44 +148,44 @@ Literally anything can be a key or value, including lambdas, local functions, se
 
 ```python
 # traditional dictionary keys,,,
-string_key = "bad"
-tuple_key = ("bad","good")
+stash["bad"] = "cat"                 # string key
+stash[("bad","good")] = "cat"        # tuple key
 
 # ...unhashable keys...
-dict_key = {"goodness":"bad"}
-list_key = ["bad","good"]
-set_key = {"bad","good"}
+stash[{"goodness":"bad"}] = "cat"    # dict key
+stash[["bad","good"]] = "cat"        # list key
+stash[{"bad","good"}] = "cat"        # set key
 
 # ...func keys...
-def func_key(x): pass
+def func_key(x): pass                
+stash[func_key] = "cat"              # function key
 lambda_key = lambda x: x
+stash[lambda_key] = "cat"           # lambda key
 
 # ...very unhashable keys...
 import pandas as pd
-df_key = pd.DataFrame({"name":["cat"], "goodness":["bad"]})
-
-# ...can all be assigned to a value on a stash:
-all_keys = [string_key, tuple_key, dict_key, list_key, set_key, func_key, lambda_key, df_key]
-for key in all_keys:
-    stash[key] = "cat"
+df_key = pd.DataFrame(                  
+    {"name":["cat"], 
+     "goodness":["bad"]}
+)
+stash[df_key] = "cat"                # dataframe key  
 
 # all should equal "cat":
 (
-    "cat"
-    == stash[string_key]
-    == stash[tuple_key]
-    == stash[dict_key]
-    == stash[list_key]
-    == stash[set_key]
-    == stash[func_key]
-    == stash[lambda_key]
-    == stash[df_key]
+    stash["bad"],
+    stash[("bad","good")],
+    stash[{"goodness":"bad"}],
+    stash[["bad","good"]],
+    stash[{"bad","good"}],
+    stash[func_key],
+    stash[lambda_key],
+    stash[df_key]
 )
 ```
 
 ↓
 
-    True
+    ('cat', 'cat', 'cat', 'cat', 'cat', 'cat', 'cat', 'cat')
 
 ### Works like a dictionary
 
@@ -186,19 +200,54 @@ assert stash.get('fake_key') == None
 assert df_key in stash
 
 # __len__
-assert len(stash) == len(all_keys) # from earlier
+assert len(stash) == 8   # from earlier
 
 # keys()
+from hashstash import *
 for i,key in enumerate(stash.keys()): 
-    print(f'Key #{i+1}: {key} ({type(key).__name__})')
+    pass
 
 # values()
 for value in stash.values():
     assert value == "cat"
 
 # items()
-for key, value in stash.items(): pass
+for i, (key, value) in enumerate(stash.items()):
+    print(f'Item #{i+1}:\n{key} >>> {value}\n')
 
+```
+
+↓
+
+    Item #1:
+    {'good', 'bad'} >>> cat
+    
+    Item #2:
+    {'goodness': 'bad'} >>> cat
+    
+    Item #3:
+    bad >>> cat
+    
+    Item #4:
+      name goodness
+    0  cat      bad >>> cat
+    
+    Item #5:
+    ('bad', 'good') >>> cat
+    
+    Item #6:
+    ['bad', 'good'] >>> cat
+    
+    Item #7:
+    <function func_key at 0x10625feb0> >>> cat
+    
+    Item #8:
+    <function <lambda> at 0x13295a7a0> >>> cat
+    
+
+Other dictionary functions:
+
+```python
 # pop()
 assert stash.pop(df_key) == "cat"
 assert df_key not in stash
@@ -217,38 +266,27 @@ another_stash = HashStash(engine='memory').clear()
 another_stash[[1,2,3]] = "cat"
 stash.update(another_stash)
 assert stash[[1,2,3]] == "cat"
-
 ```
-
-↓
-
-    Key #1: {'good', 'bad'} (set)
-    Key #2: <function func_key at 0x116acdd80> (function)
-    Key #3: {'goodness': 'bad'} (dict)
-    Key #4: bad (str)
-    Key #5:   name goodness
-    0  cat      bad (DataFrame)
-    Key #6: ('bad', 'good') (tuple)
-    Key #7: ['bad', 'good'] (list)
-    Key #8: <function <lambda> at 0x12008e710> (function)
 
 #### Under the hood
 
-HashStash adds dictionary-like methods to the base `MutableMapping` interface, including:
+You can also iterate the keys and values as actually exist in the data store, i.e. serialized encoded:
 
 - `_keys()`: Return an iterator over the encoded keys
 
 - `_values()`: Return an iterator over the encoded values
 
-- `_items()`: Return an iterator over the encoded key-value pairs
+- `_items()`: Return an iterator over the encoded key-value pai
+
+These methods are used internally and not necessary to use.
 
 ```python
-print('\nIterating over items:')
+print('\nIterating over .items():')
 for orig_key,orig_value in stash.items():
     print(orig_key, 'is the original (un-encoded, un-compressed, un-serialized) key for the original value of', orig_value)
     break
 
-print('Iterating over encoded items:')
+print('\nIterating over ._items():')
 for encoded_key,encoded_value in stash._items():
     print(encoded_key, 'is the serialized, compressed, and encoded key for', encoded_value)
     decoded_key = stash.decode_key(encoded_key)
@@ -263,9 +301,10 @@ assert orig_value == decoded_value
 ↓
 
     
-    Iterating over items:
+    Iterating over .items():
     {'good', 'bad'} is the original (un-encoded, un-compressed, un-serialized) key for the original value of cat
-    Iterating over encoded items:
+    
+    Iterating over ._items():
     b'NwAAAPETeyJfX3B5X18iOiAiYnVpbHRpbnMuc2V0IiwgIl9fZGF0YRwA8AFbImdvb2QiLCAiYmFkIl19' is the serialized, compressed, and encoded key for b'BQAAAFAiY2F0Ig=='
     {'good', 'bad'} is the decoded, uncompressed, and deserialized key for cat
 
@@ -336,12 +375,12 @@ def expensive_computation2(names, goodnesses=['good']):
     return expensive_computation(names, goodnesses=goodnesses)
 
 # will run once
-expensive_computation2(names, goodnesses=goodnesses)
+stashed_result4 = expensive_computation2(names, goodnesses=goodnesses)
 
 # then cached even when calling it normally
-stashed_result3 = expensive_computation2(names, goodnesses=goodnesses)
-stashed_result4 = expensive_computation2(names, goodnesses=goodnesses)
-assert stashed_result3 == stashed_result4
+stashed_result5 = expensive_computation2(names, goodnesses=goodnesses)
+stashed_result6 = expensive_computation2(names, goodnesses=goodnesses)
+assert stashed_result4 == stashed_result5 == stashed_result6
 ```
 
 ↓
@@ -356,207 +395,143 @@ Once a function is stashed via either the methods above you can access its stash
 func_stash = expensive_computation.stash
 func_stash2 = expensive_computation2.stash
 assert len(func_stash) == len(func_stash2)
-print(f'Function results cached in {func_stash}')
+print(f'Function results cached in {func_stash}\n')
 
 # can iterate over its results normally. Keys are: (args as tuple, kwargs as dict)
+func_stash = func_stash2
 for key, value in func_stash.items():
     args, kwargs = key
     print(f'Stashed key = {key}')
     print(f'Called args: {args}')
     print(f'Called kwargs: {kwargs}')
-    print(f'Stashed value = {value}')
+    print(f'\nStashed value = {value}')
 
 # you can get result via normal get
-stashed_result5 = func_stash.get(((names,), {'goodnesses':goodnesses}))
+stashed_result7 = func_stash.get(((names,), {'goodnesses':goodnesses}))
 
 # or via special get_func function which accepts function call syntax
-stashed_result6 = func_stash.get_func(names, goodnesses=goodnesses)
+stashed_result8 = func_stash.get_func(names, goodnesses=goodnesses)
 
-assert stashed_result5 == stashed_result6 == stashed_result2 == stashed_result1
+assert stashed_result7 == stashed_result8 == stashed_result5 == stashed_result6
 ```
 
 ↓
 
     Function results cached in LMDBHashStash(~/.cache/hashstash/functions_stash/lmdb.hashstash.lz4/stashed_result/__main__.expensive_computation/lmdb.hashstash.lz4/data.db)
+    
     Stashed key = ((['cat', 'dog'],), {'goodnesses': ['good', 'bad']})
     Called args: (['cat', 'dog'],)
     Called kwargs: {'goodnesses': ['good', 'bad']}
-    Stashed value = [{'name': 'cat', 'goodness': 'bad', 'random': 0.4937376541904154}, {'name': 'cat', 'goodness': 'bad', 'random': 0.7268348058953994}, {'name': 'cat', 'goodness': 'good', 'random': 0.35729538077994716}, {'name': 'cat', 'goodness': 'good', 'random': 0.725394281859107}, {'name': 'dog', 'goodness': 'bad', 'random': 0.06812236424848028}, {'name': 'cat', 'goodness': 'bad', 'random': 0.7554594874500936}, {'name': 'cat', 'goodness': 'good', 'random': 0.38011863168892035}, {'name': 'cat', 'goodness': 'bad', 'random': 0.2614406849947434}, {'name': 'cat', 'goodness': 'bad', 'random': 0.5981626433377101}, {'name': 'dog', 'goodness': 'bad', 'random': 0.6349477055444926}]
+    
+    Stashed value = [{'name': 'cat', 'goodness': 'good', 'random': 0.4350219261592535}, {'name': 'dog', 'goodness': 'good', 'random': 0.7659333060747278}, {'name': 'dog', 'goodness': 'bad', 'random': 0.5152636914538098}, {'name': 'dog', 'goodness': 'bad', 'random': 0.9924983865174573}, {'name': 'dog', 'goodness': 'good', 'random': 0.38754896264631844}, {'name': 'dog', 'goodness': 'good', 'random': 0.49452414823672763}, {'name': 'dog', 'goodness': 'good', 'random': 0.42872730564044637}, {'name': 'dog', 'goodness': 'bad', 'random': 0.14795796506301928}, {'name': 'cat', 'goodness': 'good', 'random': 0.3824381897140925}, {'name': 'dog', 'goodness': 'bad', 'random': 0.9625988668661972}]
 
 ### Assembling DataFrames
 
-HashStash can assemble DataFrames from cached contents, even nested ones:
+HashStash can assemble DataFrames from cached contents, even nested ones. First, examples from earlier:
 
 ```python
 # assemble list of flattened dictionaries from cached contents
-func_stash.ld         # or stash.assemble_ld()
+func_stash.ld                # or stash.assemble_ld()
 
 # assemble dataframe from flattened dictionaries of cached contents
-func_stash.df         # or stash.assemble_df()
+print(func_stash.df)         # or stash.assemble_df()
 ```
 
-<div>
+↓
 
-<table border="1" class="dataframe">
-  <thead>
-    <tr style="text-align: right;">
-      <th></th>
-      <th>name</th>
-      <th>goodness</th>
-      <th>random</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th>0</th>
-      <td>cat</td>
-      <td>bad</td>
-      <td>0.493738</td>
-    </tr>
-    <tr>
-      <th>1</th>
-      <td>cat</td>
-      <td>bad</td>
-      <td>0.726835</td>
-    </tr>
-    <tr>
-      <th>2</th>
-      <td>cat</td>
-      <td>good</td>
-      <td>0.357295</td>
-    </tr>
-    <tr>
-      <th>3</th>
-      <td>cat</td>
-      <td>good</td>
-      <td>0.725394</td>
-    </tr>
-    <tr>
-      <th>4</th>
-      <td>dog</td>
-      <td>bad</td>
-      <td>0.068122</td>
-    </tr>
-    <tr>
-      <th>5</th>
-      <td>cat</td>
-      <td>bad</td>
-      <td>0.755459</td>
-    </tr>
-    <tr>
-      <th>6</th>
-      <td>cat</td>
-      <td>good</td>
-      <td>0.380119</td>
-    </tr>
-    <tr>
-      <th>7</th>
-      <td>cat</td>
-      <td>bad</td>
-      <td>0.261441</td>
-    </tr>
-    <tr>
-      <th>8</th>
-      <td>cat</td>
-      <td>bad</td>
-      <td>0.598163</td>
-    </tr>
-    <tr>
-      <th>9</th>
-      <td>dog</td>
-      <td>bad</td>
-      <td>0.634948</td>
-    </tr>
-  </tbody>
-</table>
-</div>
+      name goodness    random
+    0  cat     good  0.435022
+    1  dog     good  0.765933
+    2  dog      bad  0.515264
+    3  dog      bad  0.992498
+    4  dog     good  0.387549
+    5  dog     good  0.494524
+    6  dog     good  0.428727
+    7  dog      bad  0.147958
+    8  cat     good  0.382438
+    9  dog      bad  0.962599
+
+Nested data flattening:
+
+```python
+# can also work with nested data
+nested_data_stash = HashStash(engine='memory', dbname='assembling_dfs')
+
+# populate stash with random animals
+import random
+for n in range(100):
+    nested_data_stash[f'Animal {n+1}'] = {
+        'name': (cat_or_dog := random.choice(['cat', 'dog'])), 
+        'goodness': (goodness := random.choice(['good', 'bad'])),
+        'etc': {
+            'age': random.randint(1, 10),
+            'goes_to':{
+                'heaven':cat_or_dog=='dog' or goodness=='good',
+            }
+        }
+    }
+
+# assemble dataframe from flattened dictionaries of cached contents
+print(nested_data_stash.df)         # or stash.assemble_df()
+```
+
+↓
+
+               name goodness  etc.age  etc.goes_to.heaven
+    _key                                                 
+    Animal 1    dog      bad        2                True
+    Animal 2    cat      bad        6               False
+    Animal 3    cat     good        2                True
+    Animal 4    dog     good        6                True
+    Animal 5    dog      bad        3                True
+    ...         ...      ...      ...                 ...
+    Animal 96   cat      bad        4               False
+    Animal 97   cat     good        4                True
+    Animal 98   cat      bad        4               False
+    Animal 99   cat     good        4                True
+    Animal 100  cat      bad        7               False
+    
+    [100 rows x 4 columns]
 
 ### Append mode
 
 Keep track of all versions of a key/value pair. All engines can track version number; "pairtree" tracks timestamp as well.
 
 ```python
-stash = HashStash("readme_append_mode", engine='pairtree', append_mode=True).clear()
-stash["cat"] = {"goodness": "good"}
-stash["cat"] = {"goodness": "bad"}
-stash.get_all("cat")
+append_stash = HashStash("readme_append_mode", engine='pairtree', append_mode=True, clear=True)
+key = {"name":"cat"}
+append_stash[key] = {"goodness": "good"}
+append_stash[key] = {"goodness": "bad"}
+
+print(f'Latest value: {append_stash.get(key)}')
+print(f'All values: {append_stash.get_all(key)}')
+print(f'All values with metadata: {append_stash.get_all(key, with_metadata=True)}')
 ```
 
 ↓
 
-    [{'goodness': 'good'}, {'goodness': 'bad'}]
+    Latest value: {'goodness': 'bad'}
+    All values: [{'goodness': 'good'}, {'goodness': 'bad'}]
+    All values with metadata: [{'_version': 1, '_timestamp': 1725645512.889014, '_value': {'goodness': 'good'}}, {'_version': 2, '_timestamp': 1725645512.88932, '_value': {'goodness': 'bad'}}]
 
-`.get()` will always return latest version:
+Can also get metadata on dataframe:
 
 ```python
-stash.get("cat")
+print(append_stash.assemble_df(with_metadata=True))
 ```
 
 ↓
 
-    {'goodness': 'bad'}
-
-`with_metadata=True` will include version number, and timestamp if using pairtree engine:
-
-```python
-stash.get_all("cat", with_metadata=True)
-```
-
-↓
-
-    [{'_version': 1,
-      '_timestamp': 1725645080.660893,
-      '_value': {'goodness': 'good'}},
-     {'_version': 2,
-      '_timestamp': 1725645080.661101,
-      '_value': {'goodness': 'bad'}}]
-
-You can also include metadata in the assembled dataframe:
-
-```python
-stash.assemble_df(with_metadata=True)
-```
-
-<div>
-
-<table border="1" class="dataframe">
-  <thead>
-    <tr style="text-align: right;">
-      <th></th>
-      <th></th>
-      <th></th>
-      <th>goodness</th>
-    </tr>
-    <tr>
-      <th>_key</th>
-      <th>_version</th>
-      <th>_timestamp</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th rowspan="2" valign="top">cat</th>
-      <th>1</th>
-      <th>1.725645e+09</th>
-      <td>good</td>
-    </tr>
-    <tr>
-      <th>2</th>
-      <th>1.725645e+09</th>
-      <td>bad</td>
-    </tr>
-  </tbody>
-</table>
-</div>
+                          name goodness
+    _version _timestamp                
+    1        1.725646e+09  cat     good
+    2        1.725646e+09  cat      bad
 
 ### Temporary Caches
 
 HashStash provides a `tmp` method for creating temporary caches that are automatically cleaned up. The temporary cache is automatically cleared and removed after the with block:
 
 ```python
-stash = HashStash()
-
 with stash.tmp() as tmp_stash:
     tmp_stash["key"] = "value"
     print("key" in tmp_stash)
