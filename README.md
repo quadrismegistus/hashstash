@@ -5,7 +5,7 @@ HashStash is a versatile caching library for Python that supports multiple stora
 ## Features
 
 ### Convenient usage
-- Dictionary interface: but absolutely anything can be either a key or value (even functions, dataframes, etc)
+- Dictionary-like interface, except absolutely anything can be either a key or value (even unhashable entities like sets or unpicklable entities like lambdas, local functions, etc)
 
 - Multiprocessing support: connection pooling, multiprocessing locks, etc
 
@@ -105,9 +105,9 @@ stash = HashStash()
 # or customize:
 stash = HashStash(
     # naming
-    root_dir="project_cache",    # root directory of the stash (default: default_stash)
+    root_dir="project_stash",    # root directory of the stash (default: default_stash)
                                  # if not an absolute path, will be ~/.cache/hashstash/[root_dir]
-    dbname="sub_cache",          # name of "database" or subfolder (default: main)
+    dbname="sub_stash",          # name of "database" or subfolder (default: main)
     
     # engines
     engine="pairtree",           # or lmdb, sqlite, diskcache, redis, mongo, or memory
@@ -203,33 +203,6 @@ There are also extra dictionary-like functions for convenience:
 
 - `items_l()`: Return a list of all key-value pairs in the cache
 
-### Append mode
-
-```python
-# Append mode
-stash = HashStash(engine="memory", append_mode=True).clear()
-
-stash["cat"] = "good"
-stash["cat"] = "bad"
-stash.get_all("cat")
-```
-
-↓
-
-    ['good', 'bad']
-
-```python
-# Not append mode
-stash = HashStash(engine="memory", append_mode=False)
-stash["cat"] = "good"
-stash["cat"] = "bad"
-stash.get_all("cat")
-```
-
-↓
-
-    ['bad']
-
 ### Function decorators
 
 HashStash provides a `@stashed_result` decorator for caching the results of function calls.
@@ -237,12 +210,12 @@ HashStash provides a `@stashed_result` decorator for caching the results of func
 ```python
 from hashstash import stashed_result
 
-@stashed_result(engine="memory")          # or @my_stash.stashed_result
+@stashed_result                 # or @my_stash.stashed_result; or @stashed_result(**stash_config)
 def expensive_computation(x):
-    print('performing some time consuming calculation')
+    print('I am now performing some time consuming calculation')
     return x * 2
 
-# you can now access the stash directly as an attribute of the function
+# as soon as function is decorated, you can access its stash as an attribute of the function
 expensive_computation.stash
 
 # clear it for this readme
@@ -256,13 +229,228 @@ expensive_computation(5)
 
 # you can iterate over results like any other stash
 for key,value in expensive_computation.stash.items():
-    print(f'KEY: {key} >>> VALUE: {value}')
+    print(f'{key} >>> {value}')
+
+# you can get the results using *args, **kwargs using .get_func
+(
+    expensive_computation.stash.get_func(5) 
+    == expensive_computation.stash.get({'args': (5,), 'kwargs': {}})
+    == expensive_computation(5)
+)
 ```
 
 ↓
 
-    performing some time consuming calculation
-    KEY: {'args': (5,), 'kwargs': {}} >>> VALUE: 10
+    I am now performing some time consuming calculation
+    {'args': (5,), 'kwargs': {}} >>> 10
+
+    True
+
+### Assembling DataFrames
+
+HashStash can assemble DataFrames from cached contents, even nested ones:
+
+```python
+stash = HashStash(engine='memory', dbname='assembling_dfs').clear()
+
+# populate stash with random animals
+import random
+for n in range(100):
+    stash[f'Animal {n+1}'] = {
+        'name': (cat_or_dog := random.choice(['cat', 'dog'])), 
+        'goodness': (goodness := random.choice(['good', 'bad'])),
+        'etc': {
+            'age': random.randint(1, 10),
+            'goes_to':{
+                'heaven':cat_or_dog=='dog' or goodness=='good',
+            }
+        }
+    }
+
+# assemble list of flattened dictionaries from cached contents
+stash.ld         # or stash.assemble_ld()
+
+# assemble dataframe from flattened dictionaries of cached contents
+stash.df         # or stash.assemble_df()
+```
+
+<div>
+
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>name</th>
+      <th>goodness</th>
+      <th>etc.age</th>
+      <th>etc.goes_to.heaven</th>
+    </tr>
+    <tr>
+      <th>_key</th>
+      <th></th>
+      <th></th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>Animal 1</th>
+      <td>cat</td>
+      <td>good</td>
+      <td>5</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>Animal 2</th>
+      <td>dog</td>
+      <td>bad</td>
+      <td>9</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>Animal 3</th>
+      <td>cat</td>
+      <td>bad</td>
+      <td>9</td>
+      <td>False</td>
+    </tr>
+    <tr>
+      <th>Animal 4</th>
+      <td>cat</td>
+      <td>bad</td>
+      <td>2</td>
+      <td>False</td>
+    </tr>
+    <tr>
+      <th>Animal 5</th>
+      <td>cat</td>
+      <td>bad</td>
+      <td>9</td>
+      <td>False</td>
+    </tr>
+    <tr>
+      <th>...</th>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+    </tr>
+    <tr>
+      <th>Animal 96</th>
+      <td>dog</td>
+      <td>good</td>
+      <td>3</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>Animal 97</th>
+      <td>cat</td>
+      <td>bad</td>
+      <td>4</td>
+      <td>False</td>
+    </tr>
+    <tr>
+      <th>Animal 98</th>
+      <td>dog</td>
+      <td>bad</td>
+      <td>3</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>Animal 99</th>
+      <td>cat</td>
+      <td>good</td>
+      <td>6</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>Animal 100</th>
+      <td>cat</td>
+      <td>good</td>
+      <td>6</td>
+      <td>True</td>
+    </tr>
+  </tbody>
+</table>
+<p>100 rows × 4 columns</p>
+</div>
+
+### Append mode
+
+Keep track of all versions of a key/value pair. All engines can track version number; "pairtree" tracks timestamp as well.
+
+```python
+stash = HashStash("readme_append_mode", engine='pairtree', append_mode=True).clear()
+stash["cat"] = {"goodness": "good"}
+stash["cat"] = {"goodness": "bad"}
+stash.get_all("cat")
+```
+
+↓
+
+    [{'goodness': 'good'}, {'goodness': 'bad'}]
+
+```python
+# .get() will always return latest version
+stash.get("cat")
+```
+
+↓
+
+    {'goodness': 'bad'}
+
+```python
+# Include version number (and timestamp if pairtree engine)
+stash.get_all("cat", with_metadata=True)
+```
+
+↓
+
+    [{'_version': 1,
+      '_timestamp': 1725618315.274457,
+      '_value': {'goodness': 'good'}},
+     {'_version': 2,
+      '_timestamp': 1725618315.274704,
+      '_value': {'goodness': 'bad'}}]
+
+```python
+# Include metadata in assembled dataframe
+stash.assemble_df(with_metadata=True)
+```
+
+<div>
+
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th></th>
+      <th></th>
+      <th>goodness</th>
+    </tr>
+    <tr>
+      <th>_key</th>
+      <th>_version</th>
+      <th>_timestamp</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th rowspan="2" valign="top">cat</th>
+      <th>1</th>
+      <th>1.725618e+09</th>
+      <td>good</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <th>1.725618e+09</th>
+      <td>bad</td>
+    </tr>
+  </tbody>
+</table>
+</div>
 
 ### Temporary Caches
 
@@ -295,22 +483,9 @@ HashStash supports multiple serialization methods:
 ```python
 from hashstash import serialize, deserialize
 
-data = pd.DataFrame({"name": ["kitty", "doggy"], "goodness": ["good", "bad"]})
-serialized_data = serialize(data)
-deserialized_data = deserialize(serialized_data)
-
-data.equals(deserialized_data)
-```
-
-↓
-
-    True
-
-You can also specify the serializer. The custom "hashstash" serializer is the default, but you can also use "jsonpickle" or "pickle":
-
-```python
-serialized_data = serialize(data, serializer="jsonpickle")
-deserialized_data = deserialize(serialized_data, serializer="jsonpickle")
+data = pd.DataFrame({"name": ["cat", "dog"], "goodness": ["good", "bad"]})
+serialized_data = serialize(data, serializer="hashstash") # or jsonpickle or pickle
+deserialized_data = deserialize(serialized_data, serializer="hashstash")
 
 data.equals(deserialized_data)
 ```
