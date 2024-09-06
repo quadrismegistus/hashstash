@@ -2,6 +2,8 @@
 
 HashStash is a versatile caching library for Python that supports multiple storage engines, serializers, and encoding options. It provides a simple dictionary-like interface for caching data with various backend options. HashStash is designed to be easy to use, flexible, and efficient.
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/quadrismegistus/hashstash/blob/main/README.ipynb)
+
 ## Features
 
 ### Convenient usage
@@ -89,6 +91,10 @@ HashStash requires no dependencies by default, but you can install optional depe
     - For development: `pip install hashstash[dev]`
 
 Note: You can combine multiple optional dependencies, e.g., `pip install hashstash[dataframe,filebased]`
+
+```python
+!pip install -qU hashstash[best]
+```
 
 ## Usage
 
@@ -239,10 +245,10 @@ for i, (key, value) in enumerate(stash.items()):
     ['bad', 'good'] >>> cat
     
     Item #7:
-    <function func_key at 0x10625feb0> >>> cat
+    <function func_key at 0x110022a70> >>> cat
     
     Item #8:
-    <function <lambda> at 0x13295a7a0> >>> cat
+    <function <lambda> at 0x12546a680> >>> cat
     
 
 Other dictionary functions:
@@ -423,7 +429,7 @@ assert stashed_result7 == stashed_result8 == stashed_result5 == stashed_result6
     Called args: (['cat', 'dog'],)
     Called kwargs: {'goodnesses': ['good', 'bad']}
     
-    Stashed value = [{'name': 'cat', 'goodness': 'good', 'random': 0.4350219261592535}, {'name': 'dog', 'goodness': 'good', 'random': 0.7659333060747278}, {'name': 'dog', 'goodness': 'bad', 'random': 0.5152636914538098}, {'name': 'dog', 'goodness': 'bad', 'random': 0.9924983865174573}, {'name': 'dog', 'goodness': 'good', 'random': 0.38754896264631844}, {'name': 'dog', 'goodness': 'good', 'random': 0.49452414823672763}, {'name': 'dog', 'goodness': 'good', 'random': 0.42872730564044637}, {'name': 'dog', 'goodness': 'bad', 'random': 0.14795796506301928}, {'name': 'cat', 'goodness': 'good', 'random': 0.3824381897140925}, {'name': 'dog', 'goodness': 'bad', 'random': 0.9625988668661972}]
+    Stashed value = [{'name': 'dog', 'goodness': 'good', 'random': 0.25762423037748594}, {'name': 'dog', 'goodness': 'good', 'random': 0.29385673877094953}, {'name': 'cat', 'goodness': 'bad', 'random': 0.5878139714240894}, {'name': 'dog', 'goodness': 'bad', 'random': 0.1936244273282528}, {'name': 'dog', 'goodness': 'good', 'random': 0.5884200909803989}, {'name': 'cat', 'goodness': 'good', 'random': 0.31725362322880646}, {'name': 'cat', 'goodness': 'good', 'random': 0.9938326430071288}, {'name': 'cat', 'goodness': 'bad', 'random': 0.20807352833935855}, {'name': 'dog', 'goodness': 'good', 'random': 0.4892373539721653}, {'name': 'cat', 'goodness': 'good', 'random': 0.9858799354889001}]
 
 ### Assembling DataFrames
 
@@ -440,16 +446,16 @@ print(func_stash.df)         # or stash.assemble_df()
 ↓
 
       name goodness    random
-    0  cat     good  0.435022
-    1  dog     good  0.765933
-    2  dog      bad  0.515264
-    3  dog      bad  0.992498
-    4  dog     good  0.387549
-    5  dog     good  0.494524
-    6  dog     good  0.428727
-    7  dog      bad  0.147958
-    8  cat     good  0.382438
-    9  dog      bad  0.962599
+    0  dog     good  0.257624
+    1  dog     good  0.293857
+    2  cat      bad  0.587814
+    3  dog      bad  0.193624
+    4  dog     good  0.588420
+    5  cat     good  0.317254
+    6  cat     good  0.993833
+    7  cat      bad  0.208074
+    8  dog     good  0.489237
+    9  cat     good  0.985880
 
 Nested data flattening:
 
@@ -479,17 +485,17 @@ print(nested_data_stash.df)         # or stash.assemble_df()
 
                name goodness  etc.age  etc.goes_to.heaven
     _key                                                 
-    Animal 1    dog      bad        2                True
-    Animal 2    cat      bad        6               False
-    Animal 3    cat     good        2                True
-    Animal 4    dog     good        6                True
-    Animal 5    dog      bad        3                True
+    Animal 1    cat      bad        5               False
+    Animal 2    dog     good       10                True
+    Animal 3    cat     good        8                True
+    Animal 4    cat     good        6                True
+    Animal 5    cat      bad        6               False
     ...         ...      ...      ...                 ...
-    Animal 96   cat      bad        4               False
-    Animal 97   cat     good        4                True
-    Animal 98   cat      bad        4               False
-    Animal 99   cat     good        4                True
-    Animal 100  cat      bad        7               False
+    Animal 96   cat      bad        9               False
+    Animal 97   dog      bad        5                True
+    Animal 98   dog     good        3                True
+    Animal 99   dog     good        8                True
+    Animal 100  cat     good        9                True
     
     [100 rows x 4 columns]
 
@@ -512,7 +518,7 @@ print(f'All values with metadata: {append_stash.get_all(key, with_metadata=True)
 
     Latest value: {'goodness': 'bad'}
     All values: [{'goodness': 'good'}, {'goodness': 'bad'}]
-    All values with metadata: [{'_version': 1, '_timestamp': 1725645512.889014, '_value': {'goodness': 'good'}}, {'_version': 2, '_timestamp': 1725645512.88932, '_value': {'goodness': 'bad'}}]
+    All values with metadata: [{'_version': 1, '_timestamp': 1725646207.325359, '_value': {'goodness': 'good'}}, {'_version': 2, '_timestamp': 1725646207.325587, '_value': {'goodness': 'bad'}}]
 
 Can also get metadata on dataframe:
 
