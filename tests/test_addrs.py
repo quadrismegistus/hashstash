@@ -50,3 +50,19 @@ def test_can_import_object():
     assert can_import_object('os.path.join') == True
     assert can_import_object('non_existent_module.function') == False
     assert can_import_object(get_obj_addr) == True
+
+
+def test_lambda_src():
+    l1 = lambda x: x
+    l2 = lambda x: (x+1)*x
+    l3 = lambda x: ([x]*x)+1
+    [(l4:=lambda x: ([x]))]
+    [(l5:=lambda x: ([x])+1)]
+    l6=[lambda x: [[x*2]]]
+
+    assert get_lambda_src(l1) == 'lambda x: x'
+    assert get_lambda_src(l2) == 'lambda x: (x+1)*x'
+    assert get_lambda_src(l3) == 'lambda x: ([x]*x)+1'
+    assert get_lambda_src(l4) == 'lambda x: ([x])'
+    assert get_lambda_src(l5) == 'lambda x: ([x])+1'
+    assert get_lambda_src(l6[0]) == 'lambda x: [[x*2]]'

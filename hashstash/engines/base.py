@@ -77,6 +77,7 @@ class BaseHashStash(MutableMapping):
         is_function_stash=None,
         is_tmp=None,
         append_mode: bool = False,
+        clear: bool = False,
         **kwargs,
     ) -> None:
         config = Config()
@@ -108,29 +109,15 @@ class BaseHashStash(MutableMapping):
         self.is_tmp = is_tmp if is_tmp is not None else self.is_tmp
         self._tmp = None
         self.append_mode = append_mode if append_mode is not None else self.append_mode
-        encstr = "+".join(
-            filter(
-                None,
-                [
-                    self.compress if self.compress else "raw",
-                    "b64" if self.b64 else None,
-                ],
-            )
-        )
-        subnames = [f"{self.engine}", self.serializer]
-        if encstr:
-            subnames.append(encstr)
-        if self.filename_ext:
-            subnames.append(get_fn_ext(self.filename_ext))
-        self.filename = ".".join(subnames)
-        self.path = os.path.expanduser(os.path.join(
-            self.root_dir,
-            self.dbname,
-            self.filename,
-        ))
-        self.path_dirname = (
-            self.path if self.filename_is_dir else os.path.dirname(self.path)
-        )
+        # get folders
+        folders = [self.root_dir]
+        if self.dbname: folders.append(self.dbname)
+        param_folder_name = f"{self.engine}.{self.serializer}.{get_encoding_str(self.compress, self.b64)}"
+        folders.append(param_folder_name)
+        self.path_dirname = os.path.join(*folders)
+        self.path = os.path.join(self.path_dirname, self.filename)
+        if clear:
+            self.clear()
 
     @staticmethod
     def _remove_dir(dir_path):
@@ -551,10 +538,11 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def new_function_key(self, *args, store_args=True, **kwargs):
-        key = {
-            "args": args,
-            "kwargs": kwargs,
-        }
+        # key = {
+        #     "args": args,
+        #     "kwargs": kwargs,
+        # }
+        key = (args,kwargs)
         return encode_hash(self.serialize(key)) if not store_args else key
 
     @log.debug
@@ -644,14 +632,11 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def clear(self) -> "BaseHashStash":
+        for sub in self.children:
+            sub.clear()
+        
         self.close()
-        self._remove_dir(
-            self.root_dir
-            if str(self.root_dir).startswith("/var/")
-            or str(self.root_dir).startswith("/private/var/")
-            else self.path
-        )
-
+        self._remove_dir(self.path_dirname)
         return self
 
     @log.debug
@@ -740,23 +725,18 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def update(self, other=None, **kwargs):
-        if other is not None:
-            if hasattr(other, "keys"):
-                for key in other:
-                    self[key] = other[key]
-            else:
-                for key, value in other:
-                    self[key] = value
+        if hasattr(other, "items"):
+            for key, value in other.items():
+                self[key] = value
         for key, value in kwargs.items():
             self[key] = value
 
     @log.debug
     def setdefault(self, key, default=None):
-        try:
-            return self[key]
-        except KeyError:
-            self[key] = default
-            return default
+        val = self.get(key,default=None)
+        if val is not None: return val
+        self.set(key,default)
+        return default
 
     @log.debug
     def pop(self, unencoded_key, default=object):
@@ -773,7 +753,7 @@ class BaseHashStash(MutableMapping):
     def popitem(self):
         key, value = next(iter(self.items()))
         del self[key]
-        return value
+        return (key,value)
 
     @log.debug
     def hash(self, data: bytes) -> str:
@@ -782,6 +762,10 @@ class BaseHashStash(MutableMapping):
     @property
     def stashed_result(self):
         return stashed_result(stash=self)
+    
+    @property
+    def stashed(self):
+        return self.stashed_result
 
     @property
     def stashed_dataframe(self):
@@ -798,10 +782,14 @@ class BaseHashStash(MutableMapping):
         return self.profiler.profile
 
     @log.debug
-    def sub(self, root_dir:str=None, **kwargs):
-        kwargs = {**self.to_dict(), **kwargs, "parent": self}
-        if root_dir:
-            kwargs['root_dir'] = os.path.join(self.root_dir, root_dir) if not os.path.isabs(root_dir) else root_dir
+    def sub(self, root_dir:str=None, dbname=DEFAULT_SUB_DBNAME, **kwargs):
+        kwargs = {
+            **self.to_dict(), 
+            **kwargs, 
+            "parent": self,
+            'root_dir': root_dir if root_dir is not None else self.path_dirname,
+            'dbname': dbname
+        }
         new_instance = self.__class__(**kwargs)
         self.children.append(new_instance)
         return new_instance
@@ -913,7 +901,12 @@ class BaseHashStash(MutableMapping):
         if progress:
             iterr = progress_bar(iterr, desc='Assembling cached contents')
         for key, value_d in iterr:
-            key_d = {"_key": key} if not isinstance(key, dict) else key
+            if self.is_function_stash:
+                args,kwargs = key
+                key_d = {f'_arg{n+1}':arg for n,arg in enumerate(args)}
+                key_d.update({f'_{k}':v for k,v in kwargs.items()})
+            else:
+                key_d = {"_key": key} if not isinstance(key, dict) else key
             if flatten:
                 value = value_d.pop("_value")
                 value_ld = flatten_ld(value)

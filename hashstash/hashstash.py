@@ -5,6 +5,7 @@ from .constants import *
 import multiprocessing as mp
 mp.set_start_method('fork')
 from multiprocessing import freeze_support, Manager
+import ast
 import atexit
 import uuid
 import tempfile

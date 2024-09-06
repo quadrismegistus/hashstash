@@ -29,11 +29,12 @@ class MongoHashStash(BaseHashStash):
     string_values = True
 
     def __init__(self, *args, host=None, port=None, **kwargs):
-        super().__init__(*args, **kwargs)
         if host is not None: self.host = host
         if port is not None: self.port = port
         # force b64 True for mongo
         self.b64 = True
+        super().__init__(*args, **kwargs)
+
         
     @log.debug
     def get_db(self):

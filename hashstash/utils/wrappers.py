@@ -62,6 +62,7 @@ def get_dict(obj):
 @log.debug
 def stashed_result(
     _func=None,
+    *stash_args,
     stash: Optional["BaseHashStash"] = None,
     force=False,
     store_args=True,
@@ -75,27 +76,31 @@ def stashed_result(
         nonlocal stash, stash_kwargs
 
         if stash is None:
-            stash = HashStash(**stash_kwargs)
+            stash = HashStash(*stash_args, **stash_kwargs)
 
-        stash.attach_func(func)
         @log.debug
         @wraps(func)
         def wrapper(*args, **kwargs):
-            from .misc import ReusableGenerator 
-            nonlocal force, stash, store_args, func, stash_kwargs, decorator_kwargs
-            if args and get_pytype(args[0]) in {'class','instance'}:
+            nonlocal force, stash, store_args, func
+            if args and get_pytype(args[0]) in {'class', 'instance'}:
                 self_obj = args[0]
                 func = getattr(self_obj, func.__name__)
                 args = args[1:]
 
-            return stash.run(func, *args, **kwargs)
+            return stash.run(func, *args, _force=force, _store_args=store_args, **kwargs)
             
+        func_stash = stash.attach_func(func)
+        wrapper.stash = func_stash
         return wrapper
 
-    if _func is None:
+    # Check if _func is a string (root_dir) or a function
+    if isinstance(_func, str):
+        stash_kwargs['root_dir'] = _func
         return decorator
-    else:
+    elif callable(_func):
         return decorator(_func)
+    else:
+        return decorator
 
 
 

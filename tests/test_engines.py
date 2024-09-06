@@ -420,7 +420,8 @@ class TestHashStash:
         result = test_func(5)
         assert test_func.stash.is_function_stash
         func_key = test_func.stash.new_function_key(5)
-        assert func_key == {'args': (5,), 'kwargs': {}}
+        # assert func_key == {'args': (5,), 'kwargs': {}}
+        assert func_key == ((5,),{})
         assert test_func.stash.get_func(5) == result
         assert test_func.stash.get(func_key) == result
         assert test_func.stash.keys_l() == [func_key]
