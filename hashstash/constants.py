@@ -35,7 +35,7 @@ DEFAULT_LOG_LEVEL = logging.INFO
 # Default settings
 OPTIMAL_COMPRESS = 'lz4'
 DEFAULT_COMPRESS = RAW_NO_COMPRESS
-DEFAULT_B64 = False
+DEFAULT_B64 = True
 
 COMPRESSERS = ['zlib','lz4','blosc','gzip','bz2']
 

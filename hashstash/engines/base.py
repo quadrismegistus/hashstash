@@ -423,6 +423,7 @@ class BaseHashStash(MutableMapping):
         func,
         *args,
         _force=False,
+        _store_args=True,
         **kwargs,
     ):
         fstash = (
@@ -438,7 +439,7 @@ class BaseHashStash(MutableMapping):
         # func = unwrap_func(func)
         unencoded_key = fstash.new_function_key(
             *args,
-            store_args=kwargs.get("store_args", True),
+            store_args=_store_args,
             **{k: v for k, v in kwargs.items() if k and k[0] != "_"},
         )
         # #pprint(unencoded_key)

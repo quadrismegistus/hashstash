@@ -25,21 +25,33 @@ def serialize_custom(obj: Any) -> str:
     serialized = _serialize_custom(obj)
     return json.dumps(serialized)
 
-def stuff(obj):
-    return _serialize_custom(obj)
+@log.debug
+def serialize_custom(obj: Any) -> str:
+    serialized = _serialize_custom(obj)
+    return json.dumps(serialized)
+
+def stuff(obj, data=None):
+    return _serialize_custom(obj, data=data)
 def unstuff(obj):
     return _deserialize_custom(obj)
 
 @log.debug
-def _serialize_custom(obj: Any) -> Any:
+def _serialize_custom(obj: Any, data:Any=None) -> Any:
     if obj is None:
         return None
     
+    if data is not None:
+        return {
+            '__py__': get_obj_addr(obj),
+            '__data__': _serialize_custom(data)
+        }
+    
+
     if isinstance(obj, (str, int, float, bool)):
         return obj
     
     if isinstance(obj, dict):
-        return {k: _serialize_custom(v) for k, v in obj.items()}
+        return {_serialize_custom(k): _serialize_custom(v) for k, v in obj.items()}
     
     if isinstance(obj, list):
         return [_serialize_custom(v) for v in obj]
@@ -48,6 +60,12 @@ def _serialize_custom(obj: Any) -> Any:
     if addr in CUSTOM_SERIALIZERS:
         return CUSTOM_SERIALIZERS[addr](obj)
 
+    if hasattr(obj, 'to_serialized') and callable(obj.to_serialized) and not inspect.isclass(obj):
+        return {
+            '__py__': addr,
+            '__data__': _serialize_custom(obj.to_serialized())
+        }
+    
     if hasattr(obj, 'to_dict') and callable(obj.to_dict) and not inspect.isclass(obj):
         return {
             '__py__': addr,
@@ -80,6 +98,9 @@ def deserialize_custom(serialized_str: str) -> Any:
     return _deserialize_custom(json.loads(serialized_str))
 
 def _deserialize_object_data(obj, obj_data: Any) -> Any:
+    if hasattr(obj, 'from_serialized') and callable(obj.from_serialized):
+        return obj.from_serialized(obj_data)
+
     if hasattr(obj, 'from_dict') and callable(obj.from_dict):
         return obj.from_dict(obj_data)
     if hasattr(obj, '__setstate__'):
@@ -126,7 +147,7 @@ def _deserialize_custom(data: Any) -> Any:
         if '__py__' in data:
             return flexible_import(data['__py__'])
         
-        return {k: _deserialize_custom(v) for k, v in data.items()}
+        return {_deserialize_custom(k): _deserialize_custom(v) for k, v in data.items()}
     
     return data
 

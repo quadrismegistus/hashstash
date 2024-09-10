@@ -1,4 +1,4 @@
-__version__ = '0.2.10'
+__version__ = '0.2.11'
 from .constants import *
 from .config import *
 from .hashstash import *

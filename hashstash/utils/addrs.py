@@ -1,5 +1,5 @@
 from . import *
-BUILTIN_DECORATORS = {'property', 'classmethod', 'staticmethod'}
+BUILTIN_DECORATORS = {'property', 'classmethod', 'staticmethod', 'cached_property'}
 
 
 def get_obj_module(obj):
@@ -384,7 +384,7 @@ def get_object_from_method(method):
         return method.__self__
     else:
         return None
-    
+
 def call_function_politely(func, *args, **kwargs):
     sig = inspect.signature(func)
     params = sig.parameters
@@ -396,4 +396,5 @@ def call_function_politely(func, *args, **kwargs):
         # Otherwise, filter the kwargs as before
         allowed_params = set(params.keys())
         filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_params}
+        # log.info(f'Calling {func} with {filtered_kwargs}')
         return func(*args, **filtered_kwargs)
