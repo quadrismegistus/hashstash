@@ -76,7 +76,7 @@ def rmtreefn(dir_path):
             os.remove(dir_path)
             # log.info(f'Deleted temporary file: {dir_path}')
         else:
-            log.warning(f"Temporary path does not exist: {dir_path}")
+            log.debug(f"Temporary path does not exist: {dir_path}")
     except Exception as e:
         log.debug(f"Failed to delete temporary path {dir_path}: {e}")
 

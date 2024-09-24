@@ -523,7 +523,7 @@ def set_index(
     except_columns={"_value"},
 ):
     if get_dataframe_engine(df) != "pandas":  # must be pandas
-        log.warning("can only set index on pandas df")
+        log.debug("can only set index on pandas df")
         return df
 
     assert index_columns or prefix_columns

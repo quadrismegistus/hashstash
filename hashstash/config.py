@@ -130,11 +130,11 @@ def get_engine(engine):
         engine = OPTIMAL_ENGINE_TYPE
     if engine not in get_working_engines():
         if engine in ENGINES:
-            log.warning(
+            log.debug(
                 f"Engine {engine} is not installed. Defaulting to {DEFAULT_ENGINE_TYPE}. To install {engine}, run: pip install {engine}"
             )
         else:
-            log.warning(
+            log.debug(
                 f'Engine {engine} is not recognized. Defaulting to {DEFAULT_ENGINE_TYPE}. Choose one of: {", ".join(ENGINES)}'
             )
         engine = DEFAULT_ENGINE_TYPE
@@ -273,9 +273,9 @@ def get_compresser(compress):
         compress = OPTIMAL_COMPRESS
     if not compress in get_working_compressers():
         if compress in COMPRESSERS:
-            log.warning(f'Compression library {compress} is not installed. Defaulting to zlib. To install {compress}, run: pip install {compress}')
+            log.debug(f'Compression library {compress} is not installed. Defaulting to zlib. To install {compress}, run: pip install {compress}')
         else:
-            log.warning(f'Compression library {compress} is not recognized. Defaulting to zlib. Choose one of: {", ".join(COMPRESSERS)}')
+            log.debug(f'Compression library {compress} is not recognized. Defaulting to zlib. Choose one of: {", ".join(COMPRESSERS)}')
         compress = DEFAULT_COMPRESS
     return compress
 
