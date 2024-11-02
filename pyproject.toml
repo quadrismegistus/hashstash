@@ -100,7 +100,7 @@ all = [
   "plotnine",
   "scikit-misc",
 ]
-rec = ["pandas","pyarrow","lmdb","lz4","ultradict"]
+rec = ["pandas","pyarrow","lmdb","lz4","UltraDict"]
 
 [tool.setuptools]
 packages = {find = {}}
