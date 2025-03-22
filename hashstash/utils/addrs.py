@@ -105,7 +105,7 @@ def flexible_import(obj_or_path):
                 current += '.'
             except ImportError:
                 if i == 0:
-                    log.warning(f"Could not import module {current}")
+                    log.debug(f"Could not import module {current}")
                     return None
                 try:
                     obj = getattr(obj, part)
@@ -144,7 +144,7 @@ def get_class_src(cls):
                 lines.extend(func_lines)
                 lines.append("")  # Add an empty line after each method
             except OSError:
-                log.warning(f"Could not get source for method {name}")
+                log.debug(f"Could not get source for method {name}")
     
     src = "\n".join(lines)
     out = reformat_python_source(src)

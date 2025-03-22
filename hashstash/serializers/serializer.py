@@ -52,7 +52,7 @@ def deserialize(data, serializer: SERIALIZER_TYPES = None):
         log.trace(f"Deserialized with {deserializer_func.__name__}")
         return odata
     except Exception as e:
-        log.warning(f"Deserialization failed with {deserializer_func.__name__}: {str(e)}")
+        log.debug(f"Deserialization failed with {deserializer_func.__name__}: {str(e)}")
         raise e
 
 

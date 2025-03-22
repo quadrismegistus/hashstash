@@ -88,7 +88,7 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
     if hasattr(obj, '__reduce__'):
         return ReducerSerializer.serialize(obj)
     
-    log.warning(f"Unsupported object type: {type(obj)}")
+    log.debug(f"Unsupported object type: {type(obj)}")
     return obj
 
 
@@ -343,7 +343,7 @@ class ReducerSerializer(CustomSerializer):
                 result['__state_setter__'] = get_obj_addr(reduced[5])
             return result
         except Exception as e:
-            log.warning(f"Error using __reduce__ for {type(obj)}: {e}")
+            log.debug(f"Error using __reduce__ for {type(obj)}: {e}")
             return None
 
     @staticmethod
@@ -374,7 +374,7 @@ class ReducerSerializer(CustomSerializer):
 
             return obj
         except Exception as e:
-            log.warning(f"Error using safe_unreduce: {e}")
+            log.debug(f"Error using safe_unreduce: {e}")
             return None
         
 class BytesSerializer(CustomSerializer):
@@ -763,7 +763,7 @@ def get_function_closure(func):
                 else:
                     closure_dict[name] = _serialize_custom(cell.cell_contents)
             except ValueError:
-                log.warning(f"Empty cell encountered for {name} in function {obj.__name__}")
+                log.debug(f"Empty cell encountered for {name} in function {obj.__name__}")
                 closure_dict[name] = None
     return closure_dict if closure_dict else None
 

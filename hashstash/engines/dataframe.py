@@ -120,7 +120,7 @@ class DataFrameHashStash(PairtreeHashStash):
                 return super().decode_value_from_filepath(filepath)
             return MetaDataFrame.read(filepath, df_engine=self.df_engine, compression=self.compress)
         except Exception as e:
-            log.warning(f'error reading dataframe from {filepath}: {e}')
+            log.debug(f'error reading dataframe from {filepath}: {e}')
             return None
 
     @log.debug
@@ -136,7 +136,7 @@ class DataFrameHashStash(PairtreeHashStash):
                 **kwargs,
             )
             if vals is None:
-                log.warning(f'empty values returned for {key}')
+                log.debug(f'empty values returned for {key}')
             else:
                 if as_dataframe:
                     yield key, vals

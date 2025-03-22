@@ -92,7 +92,7 @@ class StashMap(UserList):
         self.stash_runs = stash_runs
         self.stash_map = stash_map
         self._force = _force
-
+        self._needed_computing = None
         self.progress_bar = None
         if self.progress:
             from .misc import progress_bar
@@ -190,6 +190,8 @@ class StashMap(UserList):
     def compute(self):
         for res in self:
             res.compute()
+            if res._needed_computing:
+                self._needed_computing = True
 
     def __iter__(self):
         for res in self._results:
@@ -203,13 +205,7 @@ class StashMap(UserList):
 
     @cached_property
     def results(self):
-        self.compute()
-        resl = [res.result for res in self]
-        if self.stash_map and type(self) is StashMap and self.stash is not None:
-            self.stash.set(self.stash_key, self)
-        if self.progress_bar:
-            self.progress_bar.close()
-        return resl
+        return list(self.results_iter())
     
     def items(self):
         for res in self:
@@ -229,7 +225,17 @@ class StashMap(UserList):
 
     def results_iter(self):
         self.compute()
-        yield from (res.result for res in self)
+        for res in self:
+            yield res.result
+            if res._needed_computing:
+                self._needed_computing = True
+        if self.progress_bar:
+            self.progress_bar.close()
+        if self._needed_computing and self.stash_map and type(self) is StashMap and self.stash is not None:
+            log.info(f"Saving {self.total} results to stash")
+            self.stash.set(self.stash_key, self)
+            log.info(f"Saved {self.total} results to stash")
+        
 
 
     def __del__(self):
@@ -406,6 +412,7 @@ class StashMapRun:
         self._preloaded = False
         self._preloading_started = False
         self._precompute = _precompute
+        self._needed_computing = None
         if self._preload:
             self.preload()
         elif self._precompute:
@@ -466,7 +473,9 @@ class StashMapRun:
             result = future_or_result
         if result is not None:
             self._set_computed(result)
+            self._needed_computing = False
         else:
+            self._needed_computing = True
             self.compute()
 
     def _start_processing(self):
@@ -491,6 +500,7 @@ class StashMapRun:
                     self._result = future_or_result.result()
                 except Exception as e:
                     log.error(e)
+                    raise e
             else:
                 self._result = future_or_result
         if self._pmap_instance.progress_bar:

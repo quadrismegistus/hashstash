@@ -491,8 +491,10 @@ class BaseHashStash(MutableMapping):
         self.attach_func(func)
         key = StashMap.get_stash_key(func, objects, options, total=total)
         #pprint(key)
-        if not _force:
+        if stash_map and not _force and self.has(key):
+            log.info(f"Stash hit for {func.__name__} in {self}. Returning stashed StashMap")
             pmap = self.get(key)
+            log.info(f"Returned stashed StashMap")
 
         if pmap is None:
             return StashMap(
