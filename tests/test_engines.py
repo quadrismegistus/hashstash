@@ -13,6 +13,7 @@ logger.setLevel(logging.CRITICAL+1)
 
 start_redis_server() # run at beginning of tests
 start_mongo_server() # run at beginning of tests
+start_neo4j_server() # run at beginning of tests
 
 TEST_CLASSES = [
     # DataFrameHashStash,
@@ -24,6 +25,7 @@ TEST_CLASSES = [
     DiskCacheHashStash,
     LMDBHashStash,
     MongoHashStash,
+    Neo4jHashStash,
 ]
 
 

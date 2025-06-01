@@ -6,6 +6,7 @@ from .shelve import *
 from .diskcache import *
 from .redis import *
 from .mongo import *
+from .neo4j import *
 from .sqlite import *
 from .lmdb import *
 from .dataframe import *

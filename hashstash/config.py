@@ -114,6 +114,13 @@ def get_working_engines():
         pass
 
     try:
+        import neo4j
+
+        working_engines.add("neo4j")
+    except ImportError:
+        pass
+
+    try:
         import pandas as pd
         import numpy as np
 

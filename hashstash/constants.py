@@ -50,6 +50,7 @@ ENGINE_TYPES = Literal[
     "diskcache", 
     "redis", 
     "mongo",
+    "neo4j",
 ]
 ENGINES = ENGINE_TYPES.__args__
 BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve']
@@ -106,4 +107,13 @@ DEFAULT_DATA_TYPE = 'pandas_df'
 ## objects
 from functools import lru_cache
 fcache = lru_cache(maxsize=None)
+
+DEFAULT_NEO4J_DIR = os.path.join(DEFAULT_ROOT_DIR, ".neo4j")
+
+# Neo4j settings
+NEO4J_HOST = "localhost"
+NEO4J_PORT = 7687
+NEO4J_HTTP_PORT = 7474
+NEO4J_USERNAME = "neo4j"
+NEO4J_PASSWORD = "hashstash"
 
