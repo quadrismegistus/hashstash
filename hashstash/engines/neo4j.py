@@ -379,7 +379,7 @@ def start_neo4j_server(host='localhost', port=DEFAULT_NEO4J_PORT, http_port=DEFA
             logger.info(f"Neo4j Docker container started with ID: {_container_id}")
 
         # Wait for Neo4j to be ready
-        max_retries = 60  # Neo4j takes longer to start than MongoDB
+        max_retries = 60 * 3  # Neo4j takes longer to start than MongoDB
         for _ in range(max_retries):
             try:
                 from neo4j import GraphDatabase
