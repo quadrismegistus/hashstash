@@ -1055,6 +1055,13 @@ def HashStash(
             cls = DataFrameHashStash
         except ImportError:
             pass
+    elif engine == "jsonl":
+        try:
+            from ..engines.jsonl import JSONLHashStash
+
+            cls = JSONLHashStash
+        except ImportError:
+            pass
     else:
         raise ValueError(
             f"\n\nInvalid HashStash engine: {engine}.\n\nOptions available given current install: {', '.join(get_working_engines())}\nAll options: {', '.join(ENGINES)}"
