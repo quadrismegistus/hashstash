@@ -122,6 +122,84 @@ def slow_concat(*dfs):
     return pd.DataFrame([d for df in dfs for d in df.to_dict(orient="records")])
 
 
+class OrderedSet:
+    """A set that preserves insertion order."""
+    
+    def __init__(self, iterable=None):
+        self._dict = {}
+        if iterable:
+            for item in iterable:
+                self.add(item)
+    
+    def add(self, item):
+        """Add an item to the set."""
+        self._dict[item] = None
+    
+    def discard(self, item):
+        """Remove an item from the set if it exists."""
+        self._dict.pop(item, None)
+    
+    def remove(self, item):
+        """Remove an item from the set. Raises KeyError if not found."""
+        del self._dict[item]
+    
+    def __contains__(self, item):
+        return item in self._dict
+    
+    def __iter__(self):
+        return iter(self._dict)
+    
+    def __len__(self):
+        return len(self._dict)
+    
+    def __bool__(self):
+        return bool(self._dict)
+    
+    def __repr__(self):
+        return f"OrderedSet({list(self._dict.keys())})"
+    
+    def __eq__(self, other):
+        if isinstance(other, OrderedSet):
+            return list(self._dict.keys()) == list(other._dict.keys())
+        elif isinstance(other, set):
+            return set(self._dict.keys()) == other
+        return False
+    
+    def clear(self):
+        """Remove all items from the set."""
+        self._dict.clear()
+    
+    def copy(self):
+        """Return a shallow copy of the set."""
+        return OrderedSet(self._dict.keys())
+    
+    def union(self, *others):
+        """Return a new OrderedSet with items from this set and all others."""
+        result = self.copy()
+        for other in others:
+            for item in other:
+                result.add(item)
+        return result
+    
+    def intersection(self, *others):
+        """Return a new OrderedSet with items common to this set and all others."""
+        result = OrderedSet()
+        for item in self:
+            if all(item in other for other in others):
+                result.add(item)
+        return result
+    
+    def difference(self, *others):
+        """Return a new OrderedSet with items in this set but not in others."""
+        result = self.copy()
+        for other in others:
+            for item in other:
+                result.discard(item)
+        return result
+
+
+
+
 def is_nan(x):
     import numpy as np
 

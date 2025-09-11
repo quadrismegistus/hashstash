@@ -88,6 +88,9 @@ class BaseHashStash(MutableMapping):
             compress if compress is not None else config.compress
         )
         self.b64 = b64 if b64 is not None else config.b64
+        if self.string_keys or self.string_values:
+            self.b64 = True
+        
         if self.compress not in {False, None, RAW_NO_COMPRESS} and (self.string_keys or self.string_values):
             self.b64 = True
         self.serializer = serializer if serializer is not None else config.serializer
@@ -916,7 +919,7 @@ class BaseHashStash(MutableMapping):
         progress=False,
     ):
         ld = []
-        iterr = self.items(
+        iterr = self.items_l(
             all_results=self._all_results(all_results),
             with_metadata=True,
         )

@@ -14,7 +14,10 @@ class SqliteHashStash(BaseHashStash):
         log.debug(f'Directory exists: {os.path.exists(self.path_dirname)}\nDirectory: {self.path_dirname}')
         
         # Ensure the directory exists
-        os.makedirs(self.path_dirname, exist_ok=True)
+        try:
+            os.makedirs(self.path_dirname, exist_ok=True)
+        except Exception as e:
+            pass
         
         from sqlitedict import SqliteDict
         
