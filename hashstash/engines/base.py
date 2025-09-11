@@ -4,6 +4,7 @@ import threading
 from contextlib import contextmanager
 from multiprocessing import Manager, Lock as mp_Lock
 from multiprocessing.managers import SyncManager
+from pathlib import Path
 from ..serializers import serialize, deserialize
 
 _manager = Manager()
@@ -74,28 +75,23 @@ class BaseHashStash(MutableMapping):
         serializer: SERIALIZER_TYPES = None,
         parent: "BaseHashStash" = None,
         children: List["BaseHashStash"] = None,
-        is_function_stash=None,
-        is_tmp=None,
+        is_function_stash:bool=None,
+        is_tmp:bool=None,
         append_mode: bool = False,
         clear: bool = False,
         **kwargs,
     ) -> None:
         config = Config()
         # self.name = name if name is not None else self.name
-        if root_dir is None: 
-            self.root_dir = os.path.join(config.root_dir,DEFAULT_NAME)
-        elif not os.path.isabs(root_dir):
-            self.root_dir = os.path.join(config.root_dir, root_dir)
-        else:
-            self.root_dir = root_dir
-
-        self.root_dir = os.path.expanduser(self.root_dir)
         
         self.compress = get_compresser(
             compress if compress is not None else config.compress
         )
         self.b64 = b64 if b64 is not None else config.b64
-        if self.compress and (self.string_keys or self.string_values):
+        if self.string_keys or self.string_values:
+            self.b64 = True
+        
+        if self.compress not in {False, None, RAW_NO_COMPRESS} and (self.string_keys or self.string_values):
             self.b64 = True
         self.serializer = serializer if serializer is not None else config.serializer
         self.dbname = dbname if dbname is not None else self.dbname
@@ -109,13 +105,31 @@ class BaseHashStash(MutableMapping):
         self.is_tmp = is_tmp if is_tmp is not None else self.is_tmp
         self._tmp = None
         self.append_mode = append_mode if append_mode is not None else self.append_mode
-        # get folders
-        folders = [self.root_dir]
-        if self.dbname: folders.append(self.dbname)
-        param_folder_name = f"{self.engine}.{self.serializer}.{get_encoding_str(self.compress, self.b64)}"
-        folders.append(param_folder_name)
-        self.path_dirname = os.path.join(*folders)
-        self.path = os.path.join(self.path_dirname, self.filename)
+
+
+
+        if root_dir is None or is_dir(root_dir):
+            if root_dir is None:
+                self.root_dir = os.path.join(config.root_dir,DEFAULT_NAME)
+            elif not os.path.isabs(root_dir):
+                self.root_dir = os.path.join(config.root_dir, root_dir)
+            else:
+                self.root_dir = os.path.expanduser(root_dir)
+
+            folders = [self.root_dir]
+            if self.dbname: folders.append(self.dbname)
+            param_folder_name = f"{self.engine}.{self.serializer}.{get_encoding_str(self.compress, self.b64)}"
+            folders.append(param_folder_name)
+            self.path_dirname = os.path.join(*folders)
+            self.path = os.path.join(self.path_dirname, self.filename)
+        else:
+            path = Path(root_dir).expanduser().resolve()
+            self.root_dir = str(path.parent)
+            self.filename = str(path.name)
+            self.path_dirname = str(path.parent)
+            self.path = str(path)
+        
+        
         if clear:
             self.clear()
 
@@ -605,7 +619,8 @@ class BaseHashStash(MutableMapping):
     def decode_key(self, encoded_key: Any, as_string=False) -> Union[str, bytes]:
         decoded_key = self.decode(
             encoded_key,
-            # compress=False,
+            b64=(self.b64 or self.string_keys),
+            compress=self.compress,
         )
         return (
             self.deserialize(decoded_key)
@@ -620,7 +635,11 @@ class BaseHashStash(MutableMapping):
         as_string=False,
     ) -> Union[str, bytes, dict, list]:
         log.debug("Decoding value")
-        decoded_value = self.decode(encoded_value)
+        decoded_value = self.decode(
+            encoded_value,
+            b64=self.b64,
+            compress=self.compress,
+        )
         log.debug(f"Decoded value of {len(decoded_value):,}B")
         return (
             self.deserialize(decoded_value)
@@ -649,6 +668,9 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __delitem__(self, unencoded_key: str) -> None:
+        self.delete(unencoded_key)
+    
+    def delete(self, unencoded_key: str) -> None:
         if not self.has(unencoded_key):
             raise KeyError(unencoded_key)
         self._del(self.encode_key(unencoded_key))
@@ -897,7 +919,7 @@ class BaseHashStash(MutableMapping):
         progress=False,
     ):
         ld = []
-        iterr = self.items(
+        iterr = self.items_l(
             all_results=self._all_results(all_results),
             with_metadata=True,
         )
@@ -1053,6 +1075,13 @@ def HashStash(
             from .dataframe import DataFrameHashStash
 
             cls = DataFrameHashStash
+        except ImportError:
+            pass
+    elif engine == "jsonl":
+        try:
+            from ..engines.jsonl import JSONLHashStash
+
+            cls = JSONLHashStash
         except ImportError:
             pass
     else:

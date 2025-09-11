@@ -121,6 +121,9 @@ def get_working_engines():
     except ImportError:
         pass
 
+    # jsonl uses only stdlib
+    working_engines.add("jsonl")
+
     return working_engines
 
 

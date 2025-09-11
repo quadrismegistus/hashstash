@@ -50,6 +50,7 @@ ENGINE_TYPES = Literal[
     "diskcache", 
     "redis", 
     "mongo",
+    "jsonl",
 ]
 ENGINES = ENGINE_TYPES.__args__
 BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve']
