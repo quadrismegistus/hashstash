@@ -8,6 +8,9 @@ def iter_jsonl(path):
         except ImportError:
             with open(path, "r") as f:
                 for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
                     try:
                         yield json.loads(line)
                     except Exception:

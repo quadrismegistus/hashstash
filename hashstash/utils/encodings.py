@@ -12,13 +12,9 @@ def encode(data: Union[str, bytes], b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, 
     print(f"As string: {as_string}")
     if not isinstance(data, (str, bytes)):
         raise ValueError("Input data must be either a string or bytes.")
-    if b64 or compress not in {False, None, RAW_NO_COMPRESS} or not as_string:
-        data_b = data.encode() if isinstance(data, str) else data
-    else:
-        data_b = data
-    
+    data_b = data.encode('utf-8') if isinstance(data, str) else data
     print(f"Data b: {data_b}")
-    return _encode(data_b, b64=b64 or as_string, compress=compress, as_string=as_string)
+    return _encode(data_b, b64=b64, compress=compress, as_string=as_string)
 
 def _encode(data_b: bytes, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
     if compress not in {False, None, RAW_NO_COMPRESS}:
@@ -29,14 +25,22 @@ def _encode(data_b: bytes, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string
 
 @log.debug
 def decode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
-    data_b = data.encode() if isinstance(data, str) else data
+    print(f"Decoding data: {repr(data)}")
+    print(f"B64: {b64}")
+    print(f"Compress: {compress}")
+    print(f"As string: {as_string}")
+
+    data_b = data.encode('utf-8') if isinstance(data, str) else data
+    print(f"Decoding data b: {repr(data_b)}")
+
     data_b = _decode(data_b, b64=b64, compress=compress)
+    print(f"Decoded data b: {repr(data_b)}")
     return data_b.decode('utf-8') if as_string else data_b
 
 def _decode(data_b, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS):
     if b64:
         data_b = decode_b64(data_b)
-    if compress:
+    if compress not in {False, None, RAW_NO_COMPRESS}:
         data_b = decode_compressed(data_b, compress)
     return data_b
 
@@ -99,8 +103,16 @@ def encode_b64(data):
         return data
 
 def decode_b64(data):
+    # Accept either str or bytes; verify input is actually base64 to avoid corrupting plain strings
+    s = data.encode('ascii', 'ignore') if isinstance(data, str) else data
+    if not isinstance(s, (bytes, bytearray)):
+        return data
     try:
-        return base64.b64decode(data)
+        # Validate and round-trip to confirm it's truly base64 (handles padding variations)
+        decoded = base64.b64decode(s, validate=True)
+        if base64.b64encode(decoded).rstrip(b'=') != (s.strip().rstrip(b'=')):
+            return data
+        return decoded
     except Exception as e:
         log.debug(f"Base64 decoding error: {e}")
         return data

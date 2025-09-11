@@ -634,7 +634,7 @@ class BaseHashStash(MutableMapping):
         log.debug("Decoding value")
         decoded_value = self.decode(
             encoded_value,
-            b64=(self.b64 or self.string_values),
+            b64=self.b64,
             compress=self.compress,
         )
         log.debug(f"Decoded value of {len(decoded_value):,}B")
@@ -665,6 +665,9 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __delitem__(self, unencoded_key: str) -> None:
+        self.delete(unencoded_key)
+    
+    def delete(self, unencoded_key: str) -> None:
         if not self.has(unencoded_key):
             raise KeyError(unencoded_key)
         self._del(self.encode_key(unencoded_key))
