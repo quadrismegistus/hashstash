@@ -1,5 +1,17 @@
 from . import *
 
+def iter_jsonl(path):
+    if os.path.exists(path):
+        try:
+            import orjsonl
+            yield from orjsonl.stream(path)
+        except ImportError:
+            with open(path, "r") as f:
+                for line in f:
+                    try:
+                        yield json.loads(line)
+                    except Exception:
+                        continue
 
 def is_jsonable(obj):
     return isinstance(obj, (dict, list, str, int, float, bool, type(None)))

@@ -6,17 +6,26 @@ import hashlib
 
 @log.debug
 def encode(data: Union[str, bytes], b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
+    print(f"Encoding data: {data}")
+    print(f"B64: {b64}")
+    print(f"Compress: {compress}")
+    print(f"As string: {as_string}")
     if not isinstance(data, (str, bytes)):
         raise ValueError("Input data must be either a string or bytes.")
-    data_b = data.encode() if isinstance(data, str) else data
+    if b64 or compress not in {False, None, RAW_NO_COMPRESS} or not as_string:
+        data_b = data.encode() if isinstance(data, str) else data
+    else:
+        data_b = data
+    
+    print(f"Data b: {data_b}")
     return _encode(data_b, b64=b64 or as_string, compress=compress, as_string=as_string)
 
 def _encode(data_b: bytes, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
-    if compress:
+    if compress not in {False, None, RAW_NO_COMPRESS}:
         data_b = encode_compressed(data_b, compress)
     if b64:
         data_b = encode_b64(data_b)
-    return data_b if not as_string else data_b.decode('utf-8')
+    return data_b if not as_string else (data_b.decode('utf-8') if isinstance(data_b, bytes) else data_b)
 
 @log.debug
 def decode(data, b64=DEFAULT_B64, compress=DEFAULT_COMPRESS, as_string=False):
