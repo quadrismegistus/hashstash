@@ -1,8 +1,6 @@
 import warnings
 warnings.filterwarnings('ignore')
 import sys
-
-sys.path.insert(0, "/Users/ryan/github/prosodic")
 import logging
 from typing import *
 import os

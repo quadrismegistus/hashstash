@@ -12,19 +12,30 @@ from hashstash.engines.jsonl import JSONLHashStash
 # logger.setLevel(logging.DEBUG)
 logger.setLevel(logging.CRITICAL+1)
 
-start_redis_server() # run at beginning of tests
-start_mongo_server() # run at beginning of tests
+try:
+    start_redis_server()
+    REDIS_AVAILABLE = True
+    REDIS_SKIP_REASON = ""
+except Exception as e:
+    REDIS_AVAILABLE = False
+    REDIS_SKIP_REASON = f"Redis server unavailable (Docker required): {e}"
+
+try:
+    start_mongo_server()
+    MONGO_AVAILABLE = True
+    MONGO_SKIP_REASON = ""
+except Exception as e:
+    MONGO_AVAILABLE = False
+    MONGO_SKIP_REASON = f"Mongo server unavailable (Docker required): {e}"
 
 TEST_CLASSES = [
-    # DataFrameHashStash,
     PairtreeHashStash,
     SqliteHashStash,
     MemoryHashStash,
-    # ShelveHashStash,
-    RedisHashStash,
+    pytest.param(RedisHashStash, marks=pytest.mark.skipif(not REDIS_AVAILABLE, reason=REDIS_SKIP_REASON)),
     DiskCacheHashStash,
     LMDBHashStash,
-    MongoHashStash,
+    pytest.param(MongoHashStash, marks=pytest.mark.skipif(not MONGO_AVAILABLE, reason=MONGO_SKIP_REASON)),
     JSONLHashStash,
 ]
 

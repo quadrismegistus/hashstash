@@ -977,23 +977,57 @@ class BaseHashStash(MutableMapping):
     def filesize(self):
         """
         Get the total size of self.path in bytes, whether it's a file or directory.
-        
+
         Returns:
             int: Total size in bytes
         """
         if not os.path.exists(self.path):
             return 0
-        
+
         if os.path.isfile(self.path):
             return os.path.getsize(self.path)
-        
+
         total_size = 0
         for dirpath, dirnames, filenames in os.walk(self.path):
             for filename in filenames:
                 file_path = os.path.join(dirpath, filename)
                 total_size += os.path.getsize(file_path)
-        
+
         return total_size
+
+    def size_bytes(self):
+        """Alias for filesize — total on-disk bytes used by this stash."""
+        return self.filesize
+
+    def last_modified(self):
+        """Most recent modification time (unix timestamp) across this stash's files, or None if empty/missing."""
+        if not os.path.exists(self.path):
+            return None
+        if os.path.isfile(self.path):
+            return os.path.getmtime(self.path)
+        latest = None
+        for dirpath, _, filenames in os.walk(self.path):
+            for filename in filenames:
+                mtime = os.path.getmtime(os.path.join(dirpath, filename))
+                if latest is None or mtime > latest:
+                    latest = mtime
+        return latest
+
+    def filter(self, predicate):
+        """Yield (key, value) pairs where predicate(key) is truthy. Keys are iterated lazily and values
+        are only decoded for matches, so this skips value-decode cost for non-matches."""
+        for key in self.keys():
+            if predicate(key):
+                yield key, self[key]
+
+    def migrate(self, dest=None, **kwargs):
+        """Copy every entry from this stash into dest. If dest is None, kwargs are forwarded to
+        HashStash() to construct a new stash (e.g. engine='jsonl'). Returns the destination stash."""
+        if dest is None:
+            dest = HashStash(**kwargs)
+        for key, value in self.items():
+            dest[key] = value
+        return dest
 
 
 # @fcache

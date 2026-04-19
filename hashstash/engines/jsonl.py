@@ -83,23 +83,12 @@ class JSONLHashStash(BaseHashStash):
             except Exception as e:
                 pass
 
-    # def encode_key(self, unencoded_key: Any) -> Union[str, bytes]:
-    #     return json.dumps(super().encode_key(unencoded_key))
-
-    # def encode_value(self, unencoded_value: Any) -> Union[str, bytes]:
-    #     return json.dumps(super().encode_value(unencoded_value))
-
-    # def decode_key(self, encoded_key: Any, as_string=False) -> Union[str, bytes]:
-    #     return super().decode_key(json.loads(encoded_key), as_string=as_string)
-
-    # def decode_value(self, encoded_value: Any, as_string=False) -> Union[str, bytes]:
-    #     return super().decode_value(json.loads(encoded_value), as_string=as_string)
-
     @log.debug
     def _set(self, encoded_key: str, encoded_value: str) -> None:
         obj = {self.key_name: encoded_key, self.value_name: encoded_value}
-        self._append_line(obj)
-        self._keyset.add(encoded_key)
+        with self:
+            self._append_line(obj)
+            self._keyset.add(encoded_key)
 
     def _has(self, encoded_key: Any) -> bool:
         self._ensure_keyset_loaded()
@@ -111,8 +100,9 @@ class JSONLHashStash(BaseHashStash):
     
     def _del(self, encoded_key: Any) -> None:
         obj = {self.key_name: encoded_key, self.value_name: None, self.delete_name: True}
-        self._append_line(obj)
-        self._keyset.remove(encoded_key)
+        with self:
+            self._append_line(obj)
+            self._keyset.remove(encoded_key)
 
     def new_unencoded_value(self, unencoded_value: Any, **kwargs):
         return unencoded_value
