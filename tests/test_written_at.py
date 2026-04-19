@@ -163,6 +163,21 @@ class TestPrune:
         count = stash.prune(older_than=timedelta(hours=1), dry_run=True)
         assert count == 0
 
+    def test_prune_requires_age_filter(self, stash):
+        stash["k"] = "v"
+        with pytest.raises(ValueError, match="older_than"):
+            stash.prune()
+        # cache untouched
+        assert "k" in stash
+
+    def test_prune_logs_summary(self, stash, caplog):
+        stash["k1"] = 1
+        stash["k2"] = 2
+        hashstash_logger.setLevel(logging.INFO)
+        with caplog.at_level(logging.INFO):
+            stash.prune(older_than=timedelta(days=365), dry_run=True)
+        assert any("prune" in r.message and "matched" in r.message for r in caplog.records)
+
 
 class TestCoerceTimestamp:
     def test_float_passthrough(self):

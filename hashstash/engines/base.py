@@ -54,13 +54,14 @@ def _wrap_envelope(values, timestamps):
 
 
 def _filter_by_time(values, timestamps, before=None, after=None):
-    """Keep only (value, timestamp) pairs with after < t < before. Missing timestamps (0.0)
-    count as epoch — included by `before=...`, excluded by `after=...`."""
+    """Keep only (value, timestamp) pairs with after <= t <= before (inclusive on both sides,
+    matching pandas.Series.between and SQL BETWEEN). Missing timestamps (0.0) count as epoch —
+    included by ``before=...``, excluded by ``after=...`` (when after > 0)."""
     if before is None and after is None:
         return values, timestamps
     before_ts = _coerce_timestamp(before) if before is not None else float("inf")
     after_ts = _coerce_timestamp(after) if after is not None else float("-inf")
-    kept = [(v, t) for v, t in zip(values, timestamps) if after_ts < t < before_ts]
+    kept = [(v, t) for v, t in zip(values, timestamps) if after_ts <= t <= before_ts]
     if not kept:
         return [], []
     vs, ts = zip(*kept)
@@ -1097,7 +1098,7 @@ class BaseHashStash(MutableMapping):
             dest[key] = value
         return dest
 
-    def prune(self, older_than, dry_run=True):
+    def prune(self, older_than=None, dry_run=True):
         """Delete entries where the latest-write timestamp is older than ``older_than`` (a
         ``datetime`` or ``timedelta``; a timedelta is interpreted as "older than now - delta").
 
@@ -1105,21 +1106,36 @@ class BaseHashStash(MutableMapping):
         what we can't date.
 
         Returns the count of entries matched. When ``dry_run=True`` (the default) nothing is
-        actually deleted — use ``dry_run=False`` to perform the deletion."""
+        actually deleted — use ``dry_run=False`` to perform the deletion.
+
+        ``older_than`` is required: calling ``prune()`` with no age filter raises ``ValueError``
+        to prevent accidentally nuking the whole cache."""
+        if older_than is None:
+            raise ValueError(
+                "prune() requires older_than= (a datetime or timedelta). Refusing to run "
+                "without an age filter — pass older_than=timedelta(days=0) if you really want "
+                "to delete everything stamped."
+            )
         if isinstance(older_than, timedelta):
             cutoff = time.time() - older_than.total_seconds()
         else:
             cutoff = _coerce_timestamp(older_than)
         matched = []
+        total = 0
         for key in list(self.keys()):
+            total += 1
             entries = self.get_all(key, default=None, with_metadata=True, all_results=True)
             if not entries:
                 continue
             latest_ts = entries[-1].get("_written_at", 0.0)
             if latest_ts <= 0:
                 continue  # unstamped — skip
-            if latest_ts < cutoff:
+            if latest_ts <= cutoff:
                 matched.append(key)
+        mode = "dry_run" if dry_run else "delete"
+        log.info(
+            f"prune(older_than={older_than!r}, dry_run={dry_run}): matched {len(matched)} / {total} entries [{mode}]"
+        )
         if not dry_run:
             for key in matched:
                 del self[key]
