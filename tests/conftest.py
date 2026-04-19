@@ -6,6 +6,10 @@ import tempfile
 import pytest
 
 
+CI = os.environ.get("CI") == "true"
+SKIP_CI_REASON = "Known LMDB env-handle issue on CI — see issue #9"
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _isolate_default_cache():
     tmpdir = tempfile.mkdtemp(prefix="hashstash-test-")
