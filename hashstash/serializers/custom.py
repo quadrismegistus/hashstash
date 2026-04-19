@@ -104,10 +104,19 @@ def _deserialize_object_data(obj, obj_data: Any) -> Any:
     if hasattr(obj, 'from_dict') and callable(obj.from_dict):
         return obj.from_dict(obj_data)
     if hasattr(obj, '__setstate__'):
-        obj.__setstate__(obj_data)
+        _invoke_setstate(obj, obj_data)
     else:
         obj.__dict__.update(obj_data)
     return obj
+
+
+def _invoke_setstate(obj, state):
+    # pandas 3.x made NDFrame.__setstate__ require the `state` arg by keyword.
+    # Older versions accept positional. Try positional first, fall back to kw.
+    try:
+        obj.__setstate__(state)
+    except TypeError:
+        obj.__setstate__(state=state)
             
 
 
@@ -362,7 +371,7 @@ class ReducerSerializer(CustomSerializer):
                 if state_setter:
                     state_setter(obj, state)
                 elif hasattr(obj, '__setstate__'):
-                    obj.__setstate__(state)
+                    _invoke_setstate(obj, state)
                 else:
                     obj.__dict__.update(state)
 
