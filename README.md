@@ -156,6 +156,54 @@ The JSONL engine writes every entry as a JSON line appended to a single file. Co
 
 Also note: deletes and overwrites append tombstones / new versions rather than rewriting the file, so the file grows over time. A periodic rewrite (read all live entries, write to a fresh file) is a reasonable compaction strategy if space matters.
 
+## TypedStash: schema-aware view over a stash
+
+`TypedStash` is a thin wrapper that applies a loader (and optional dumper) on the way in/out of an underlying stash. It's generic — works with pydantic, dataclasses, msgspec, or any callable that turns a raw value into your domain type.
+
+```python
+from hashstash import HashStash, TypedStash
+from pydantic import BaseModel
+
+class Response(BaseModel):
+    text: str
+    tokens: int
+
+stash = HashStash(engine="jsonl", dbname="llm_responses")
+typed = TypedStash(
+    stash,
+    loader=Response.model_validate,       # raw dict → Response on read
+    dumper=lambda r: r.model_dump(),      # Response → raw dict on write (optional)
+)
+
+typed["k"] = Response(text="hi", tokens=12)   # dumper runs
+r = typed["k"]                                 # loader runs; r is a Response
+```
+
+**Per-call error policy** — because real caches accumulate bad rows over time:
+
+```python
+# Iteration defaults to 'skip': log a warning, keep going
+for key, response in typed.items():
+    ...
+
+# Single-item get defaults to 'raise': bugs propagate instead of silently returning None
+r = typed.get("key")                        # raises if loader fails
+
+# Other modes: 'raise' on iteration, 'skip' on get, or 'return' to get the Exception back
+for key, result in typed.items(on_error="return"):
+    if isinstance(result, Exception):
+        ...
+```
+
+**`filter(predicate)`** runs the predicate on raw keys and only calls the loader for matches — so a selective filter over a 40k cache doesn't pay the parse cost on rows you discard:
+
+```python
+for key, response in typed.filter(lambda k: "claude-sonnet-4-6" in k):
+    analyze(response)
+```
+
+Multiple `TypedStash` views can wrap the same underlying stash — useful for schema migrations, where you read through an old loader and write through a new one.
+
 ## Usage
 
 Here's a quick example of how to use HashStash. 

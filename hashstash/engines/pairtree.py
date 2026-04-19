@@ -1,4 +1,5 @@
 from . import *
+from .base import _filter_by_time
 
 
 class PairtreeHashStash(BaseHashStash):
@@ -6,7 +7,7 @@ class PairtreeHashStash(BaseHashStash):
     filename_is_dir = True
     key_filename = ".key"
     valtype_filename = ".valtype"
-    metadata_cols = ["_version", "_timestamp"]
+    metadata_cols = ["_version", "_written_at"]
     needs_lock = False
 
     def connect(self):
@@ -87,6 +88,8 @@ class PairtreeHashStash(BaseHashStash):
         default: Any = None,
         with_metadata=None,
         all_results=True,
+        before=None,
+        after=None,
         **kwargs,
     ) -> Any:
         paths_ld = self.get_path_values(
@@ -94,6 +97,9 @@ class PairtreeHashStash(BaseHashStash):
             all_results=self._all_results(all_results),
             with_metadata=True,
         )
+        if before is not None or after is not None:
+            timestamps = [p["_written_at"] for p in paths_ld]
+            paths_ld, _ = _filter_by_time(paths_ld, timestamps, before=before, after=after)
         out = []
         for path_d in paths_ld:
             path = path_d.pop("_path")
@@ -181,7 +187,7 @@ class PairtreeHashStash(BaseHashStash):
             {
                 **({"_path": vpath} if incl_path else {}),
                 "_version": vi + 1,
-                "_timestamp": float(os.path.splitext(os.path.basename(vpath))[0]) / 1_000_000,
+                "_written_at": float(os.path.splitext(os.path.basename(vpath))[0]) / 1_000_000,
             }
             for vi, vpath in enumerate(path_values)
         ]

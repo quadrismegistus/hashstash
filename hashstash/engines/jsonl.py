@@ -1,5 +1,6 @@
 from . import *
 from collections import defaultdict
+from .base import _filter_by_time
 
 class JSONLHashStash(BaseHashStash):
     engine = "jsonl"
@@ -10,6 +11,7 @@ class JSONLHashStash(BaseHashStash):
     key_name = "__key__"
     value_name = "__value__"
     delete_name = "__delete__"
+    written_at_name = "__written_at__"
 
     @log.debug
     def __init__(self, *args, compress=RAW_NO_COMPRESS, b64=False, **kwargs):
@@ -33,34 +35,46 @@ class JSONLHashStash(BaseHashStash):
         default: Any = None,
         with_metadata: bool = None,
         all_results: bool = True,
+        before=None,
+        after=None,
         **kwargs,
     ) -> Any:
         if not os.path.exists(self.path):
             return default
-    
+
         self._ensure_keyset_loaded()
-        
+
         encoded_key = self.encode_key(unencoded_key)
         if encoded_key not in self._keyset:
             return default
-        
+
         encoded_values = []
+        timestamps = []
         for row in iter_jsonl(self.path):
             if row[self.key_name] == encoded_key:
                 if row.get(self.delete_name):
                     encoded_values = []
+                    timestamps = []
                 else:
                     encoded_values.append(row[self.value_name])
-        
-        decoded_values = [self.decode_value(encoded_value) for encoded_value in encoded_values]
+                    timestamps.append(row.get(self.written_at_name, 0.0))
+
+        encoded_values, timestamps = _filter_by_time(
+            encoded_values, timestamps, before=before, after=after
+        )
+        if not encoded_values:
+            return default
+
+        decoded_values = [self.decode_value(ev) for ev in encoded_values]
 
         if with_metadata:
             decoded_values = [
-                {"_version": vi + 1, "_value": value} for vi, value in enumerate(decoded_values)
+                {"_version": vi + 1, "_value": v, "_written_at": t}
+                for vi, (v, t) in enumerate(zip(decoded_values, timestamps))
             ]
         if not self._all_results(all_results):
             decoded_values = decoded_values[-1:]
-        
+
         return decoded_values
 
 
@@ -85,7 +99,11 @@ class JSONLHashStash(BaseHashStash):
 
     @log.debug
     def _set(self, encoded_key: str, encoded_value: str) -> None:
-        obj = {self.key_name: encoded_key, self.value_name: encoded_value}
+        obj = {
+            self.key_name: encoded_key,
+            self.value_name: encoded_value,
+            self.written_at_name: time.time(),
+        }
         with self:
             self._append_line(obj)
             self._keyset.add(encoded_key)
@@ -99,7 +117,12 @@ class JSONLHashStash(BaseHashStash):
         return len(self._keyset)
     
     def _del(self, encoded_key: Any) -> None:
-        obj = {self.key_name: encoded_key, self.value_name: None, self.delete_name: True}
+        obj = {
+            self.key_name: encoded_key,
+            self.value_name: None,
+            self.delete_name: True,
+            self.written_at_name: time.time(),
+        }
         with self:
             self._append_line(obj)
             self._keyset.remove(encoded_key)
@@ -124,36 +147,35 @@ class JSONLHashStash(BaseHashStash):
                 yield row[self.key_name], row[self.value_name]
     
     @log.debug
-    def items(self, all_results=None, with_metadata=False, **kwargs):
-        key_counts = Counter()
-        for _key,_val in self._items():
-            key_counts[_key] += 1
-            key = self.decode_key(_key)
-            val = self.decode_value(_val)
-
-            if with_metadata:
-                yield key, {"_version": key_counts[_key], "_value": val}
-            else:
-                yield key, val
-
-    def items_l(self, all_results=None, with_metadata=None, **kwargs):
-        key2vals = defaultdict(list)
+    def items(self, all_results=None, with_metadata=False, before=None, after=None, **kwargs):
+        key2entries = defaultdict(list)  # encoded_key -> [(encoded_val, timestamp), ...]
         for row in iter_jsonl(self.path):
             _key = row[self.key_name]
-            _val = row[self.value_name]
-            _delete = row.get(self.delete_name)
-            if _delete:
-                key2vals[_key] = []
+            if row.get(self.delete_name):
+                key2entries[_key] = []
             else:
-                key2vals[_key].append(_val)
-        
-        o = []
-        for _key, _vals in key2vals.items():
+                key2entries[_key].append((row[self.value_name], row.get(self.written_at_name, 0.0)))
+
+        for _key, entries in key2entries.items():
+            if not entries:
+                continue
+            encoded_vals, timestamps = zip(*entries)
+            encoded_vals, timestamps = _filter_by_time(
+                list(encoded_vals), list(timestamps), before=before, after=after
+            )
+            if not encoded_vals:
+                continue
             key = self.decode_key(_key)
-            for vi, _val in enumerate(_vals):
+            for vi, (_val, t) in enumerate(zip(encoded_vals, timestamps)):
                 val = self.decode_value(_val)
                 if with_metadata:
-                    val = {"_version": vi + 1, "_value": val}
-                o.append((key, val))
-        return o
+                    yield key, {"_version": vi + 1, "_value": val, "_written_at": t}
+                else:
+                    yield key, val
+
+    def items_l(self, all_results=None, with_metadata=None, before=None, after=None, **kwargs):
+        return list(self.items(
+            all_results=all_results, with_metadata=with_metadata,
+            before=before, after=after, **kwargs,
+        ))
 

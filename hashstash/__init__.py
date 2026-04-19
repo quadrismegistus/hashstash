@@ -5,3 +5,4 @@ from .hashstash import *
 from .utils import *
 from .serializers import *
 from .engines import *
+from .typed import TypedStash

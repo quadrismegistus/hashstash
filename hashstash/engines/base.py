@@ -2,6 +2,7 @@ from . import *
 import time
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timezone, timedelta
 from multiprocessing import Manager, Lock as mp_Lock
 from multiprocessing.managers import SyncManager
 from pathlib import Path
@@ -11,6 +12,59 @@ _manager = Manager()
 _connection_lock = _manager.dict()
 _connection_pool = {}
 _last_used = {}
+
+ENVELOPE_MARKER = "__hs_v1__"
+
+
+def _coerce_timestamp(dt):
+    """Normalize a datetime or unix timestamp to a float unix timestamp (UTC)."""
+    if dt is None:
+        return None
+    if isinstance(dt, (int, float)):
+        return float(dt)
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            log.warning(f"naive datetime {dt!r} passed to hashstash; interpreting as UTC")
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    raise TypeError(
+        f"before/after must be a datetime or unix timestamp, got {type(dt).__name__}"
+    )
+
+
+def _unwrap_envelope(decoded):
+    """Return (values, timestamps). Pre-envelope (legacy) entries read as timestamp=0."""
+    if isinstance(decoded, dict) and decoded.get(ENVELOPE_MARKER) is True:
+        values = decoded.get("_values", [])
+        timestamps = decoded.get("_written_at", [])
+        if len(timestamps) < len(values):
+            timestamps = list(timestamps) + [0.0] * (len(values) - len(timestamps))
+        return list(values), list(timestamps)
+    if isinstance(decoded, list):
+        return list(decoded), [0.0] * len(decoded)
+    return [decoded], [0.0]
+
+
+def _wrap_envelope(values, timestamps):
+    return {
+        ENVELOPE_MARKER: True,
+        "_values": list(values),
+        "_written_at": list(timestamps),
+    }
+
+
+def _filter_by_time(values, timestamps, before=None, after=None):
+    """Keep only (value, timestamp) pairs with after < t < before. Missing timestamps (0.0)
+    count as epoch — included by `before=...`, excluded by `after=...`."""
+    if before is None and after is None:
+        return values, timestamps
+    before_ts = _coerce_timestamp(before) if before is not None else float("inf")
+    after_ts = _coerce_timestamp(after) if after is not None else float("-inf")
+    kept = [(v, t) for v, t in zip(values, timestamps) if after_ts < t < before_ts]
+    if not kept:
+        return [], []
+    vs, ts = zip(*kept)
+    return list(vs), list(ts)
 
 
 def get_manager():
@@ -57,7 +111,7 @@ class BaseHashStash(MutableMapping):
         "is_function_stash",
         "is_tmp",
     ]
-    metadata_cols = ["_version"]
+    metadata_cols = ["_version", "_written_at"]
     CONNECTION_TIMEOUT = 60  # Close connections after 60 seconds of inactivity
     append_mode = DEFAULT_APPEND_MODE
     is_tmp = False
@@ -402,6 +456,8 @@ class BaseHashStash(MutableMapping):
         default: Any = None,
         with_metadata: bool = None,
         all_results: bool = True,
+        before=None,
+        after=None,
         **kwargs,
     ) -> Any:
         encoded_key = self.encode_key(unencoded_key)
@@ -409,10 +465,15 @@ class BaseHashStash(MutableMapping):
         if encoded_value is None:
             return default
 
-        values = self.decode_value(encoded_value)
+        decoded = self.decode_value(encoded_value)
+        values, timestamps = _unwrap_envelope(decoded)
+        values, timestamps = _filter_by_time(values, timestamps, before=before, after=after)
+        if not values:
+            return default
         if with_metadata:
             values = [
-                {"_version": vi + 1, "_value": value} for vi, value in enumerate(values)
+                {"_version": vi + 1, "_value": v, "_written_at": t}
+                for vi, (v, t) in enumerate(zip(values, timestamps))
             ]
         if not self._all_results(all_results):
             values = values[-1:]
@@ -569,14 +630,21 @@ class BaseHashStash(MutableMapping):
         unencoded_key=None,
         append=None,
     ):
+        now_ts = time.time()
         if (append or self.append_mode) and unencoded_key is not None:
-            oldvals = self.get_all(
-                unencoded_key, all_results=True, default=[], with_metadata=False
-            )
-            new_unencoded_value = oldvals + [unencoded_value]
+            encoded_key = self.encode_key(unencoded_key)
+            encoded_value = self._get(encoded_key)
+            if encoded_value is not None:
+                decoded = self.decode_value(encoded_value)
+                oldvals, oldts = _unwrap_envelope(decoded)
+            else:
+                oldvals, oldts = [], []
+            values = oldvals + [unencoded_value]
+            timestamps = oldts + [now_ts]
         else:
-            new_unencoded_value = [unencoded_value]
-        return new_unencoded_value
+            values = [unencoded_value]
+            timestamps = [now_ts]
+        return _wrap_envelope(values, timestamps)
 
     @log.debug
     def _get(self, encoded_key: str, default: Any = None) -> Any:
@@ -1028,6 +1096,34 @@ class BaseHashStash(MutableMapping):
         for key, value in self.items():
             dest[key] = value
         return dest
+
+    def prune(self, older_than, dry_run=True):
+        """Delete entries where the latest-write timestamp is older than ``older_than`` (a
+        ``datetime`` or ``timedelta``; a timedelta is interpreted as "older than now - delta").
+
+        Entries without a recorded timestamp (pre-feature data) are left alone — we don't delete
+        what we can't date.
+
+        Returns the count of entries matched. When ``dry_run=True`` (the default) nothing is
+        actually deleted — use ``dry_run=False`` to perform the deletion."""
+        if isinstance(older_than, timedelta):
+            cutoff = time.time() - older_than.total_seconds()
+        else:
+            cutoff = _coerce_timestamp(older_than)
+        matched = []
+        for key in list(self.keys()):
+            entries = self.get_all(key, default=None, with_metadata=True, all_results=True)
+            if not entries:
+                continue
+            latest_ts = entries[-1].get("_written_at", 0.0)
+            if latest_ts <= 0:
+                continue  # unstamped — skip
+            if latest_ts < cutoff:
+                matched.append(key)
+        if not dry_run:
+            for key in matched:
+                del self[key]
+        return len(matched)
 
 
 # @fcache
