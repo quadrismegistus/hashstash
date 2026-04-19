@@ -97,7 +97,7 @@ HashStash requires no dependencies by default, but you can install optional depe
 
 * Default installation (no dependencies): `pip install hashstash`
 
-* Installation with only the recommended/optimal settings (lmdb engine, lz4 compression, and pyarrow dataframe serialization): `pip install hashstash[rec]`
+* Installation with only the recommended/optimal settings (pairtree engine is built-in; adds lz4 compression, pyarrow dataframe serialization, and the ultradict memory engine): `pip install hashstash[rec]`
 
 * Full installation with all optional dependencies: `pip install hashstash[all]`
 
