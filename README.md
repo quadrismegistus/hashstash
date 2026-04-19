@@ -50,10 +50,11 @@ HashStash is a versatile caching library for Python that supports multiple stora
 ### Multiple storage engines
 
 - File-based
-    - "__pairtree__" (no dependencies, no database; just organized folder and file structure; very fast)
+    - "__pairtree__" (no dependencies, no database; just organized folder and file structure; very fast; safe for concurrent writers)
     - "__[lmdb](https://pypi.org/project/lmdb/)__" (single file, very efficient, slightly faster than pairtree)
     - "__[diskcache](https://pypi.org/project/diskcache/)__" (similar to pairtree, but slower)
     - "__sqlite__" (using [sqlitedict](https://pypi.org/project/sqlitedict/))
+    - "__jsonl__" (no dependencies; single human-readable append-only log; best for read-heavy or inspectable caches — see note on concurrent writes below)
 
 - Server-based
     - "__redis__" (using [redis-py](https://pypi.org/project/redis/))
@@ -96,7 +97,7 @@ HashStash requires no dependencies by default, but you can install optional depe
 
 * Default installation (no dependencies): `pip install hashstash`
 
-* Installation with only the recommended/optimal settings (lmdb engine, lz4 compression, and pyarrow dataframe serialization): `pip install hashstash[rec]`
+* Installation with only the recommended/optimal settings (pairtree engine is built-in; adds lz4 compression, pyarrow dataframe serialization, and the ultradict memory engine): `pip install hashstash[rec]`
 
 * Full installation with all optional dependencies: `pip install hashstash[all]`
 
@@ -107,6 +108,101 @@ For all options see [pyproject.toml](./pyproject.toml) under [project.optional-d
 ```python
 !pip install -qU hashstash[rec]
 ```
+
+## Engines & semantics
+
+### Choosing an engine
+
+| Use case | Recommended engine |
+|---|---|
+| General-purpose cache, zero deps | `pairtree` |
+| Maximum throughput, single-process | `lmdb` |
+| Many concurrent writers (e.g. `task.map` workers) | `pairtree` (one file per entry — naturally collision-free) |
+| Large cache (>10K entries), indexed queries | `sqlite` or `lmdb` |
+| Human-inspectable log you want to `grep` / `jq` / `rsync` as one file | `jsonl` |
+| Shared across processes without a server | `pairtree`, `lmdb`, `sqlite`, `jsonl` |
+| Networked / multi-host | `redis`, `mongo` |
+| Ephemeral in-process | `memory` |
+
+### `append_mode`
+
+By default, setting the same key twice overwrites the old value. With `append_mode=True`, every write is retained as a new version and the key's history is queryable:
+
+```python
+stash = HashStash(engine="pairtree", append_mode=True)
+stash["k"] = "v1"
+stash["k"] = "v2"
+stash["k"]            # -> "v2"  (latest)
+stash.get_all("k")    # -> ["v1", "v2"]  (full history)
+```
+
+Use `append_mode=True` when you want reproducibility or audit history (e.g. caching LLM responses across prompt revisions). Leave it off for ordinary overwrite semantics.
+
+### `items()`, `keys()`, and `values()` are lazy
+
+All three are generators — they yield as they read, so you can iterate a multi-GB stash without loading it into memory:
+
+```python
+for key in stash.keys():              # lazy, no values loaded
+    if matches_filter(key):
+        value = stash[key]            # only decode values you actually need
+```
+
+If you want an eager list, call `stash.keys_l()` / `values_l()` / `items_l()` (the `_l` suffix means "list").
+
+### JSONL engine: tradeoffs to know
+
+The JSONL engine writes every entry as a JSON line appended to a single file. Concurrent writes are serialized through the standard multiprocessing lock (same one other engines use), so the log stays consistent under `stash.map` with `num_proc>1`. The main tradeoff is read cost: resolving any single key requires scanning the file, so JSONL is best for write-once / iterate-many workloads (exports, analysis caches, human-inspectable logs). For write-heavy or low-latency random-access workloads, prefer `pairtree` (no shared file) or `lmdb` (indexed).
+
+Also note: deletes and overwrites append tombstones / new versions rather than rewriting the file, so the file grows over time. A periodic rewrite (read all live entries, write to a fresh file) is a reasonable compaction strategy if space matters.
+
+## TypedStash: schema-aware view over a stash
+
+`TypedStash` is a thin wrapper that applies a loader (and optional dumper) on the way in/out of an underlying stash. It's generic — works with pydantic, dataclasses, msgspec, or any callable that turns a raw value into your domain type.
+
+```python
+from hashstash import HashStash, TypedStash
+from pydantic import BaseModel
+
+class Response(BaseModel):
+    text: str
+    tokens: int
+
+stash = HashStash(engine="jsonl", dbname="llm_responses")
+typed = TypedStash(
+    stash,
+    loader=Response.model_validate,       # raw dict → Response on read
+    dumper=lambda r: r.model_dump(),      # Response → raw dict on write (optional)
+)
+
+typed["k"] = Response(text="hi", tokens=12)   # dumper runs
+r = typed["k"]                                 # loader runs; r is a Response
+```
+
+**Per-call error policy** — because real caches accumulate bad rows over time:
+
+```python
+# Iteration defaults to 'skip': log a warning, keep going
+for key, response in typed.items():
+    ...
+
+# Single-item get defaults to 'raise': bugs propagate instead of silently returning None
+r = typed.get("key")                        # raises if loader fails
+
+# Other modes: 'raise' on iteration, 'skip' on get, or 'return' to get the Exception back
+for key, result in typed.items(on_error="return"):
+    if isinstance(result, Exception):
+        ...
+```
+
+**`filter(predicate)`** runs the predicate on raw keys and only calls the loader for matches — so a selective filter over a 40k cache doesn't pay the parse cost on rows you discard:
+
+```python
+for key, response in typed.filter(lambda k: "claude-sonnet-4-6" in k):
+    analyze(response)
+```
+
+Multiple `TypedStash` views can wrap the same underlying stash — useful for schema migrations, where you read through an old loader and write through a new one.
 
 ## Usage
 

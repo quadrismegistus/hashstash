@@ -371,13 +371,3 @@ def print_md(*args):
     display(Markdown(' '.join(str(x) for x in args)))
 
 
-def get_encoding_str(compress,b64):
-    return "+".join(
-            filter(
-                None,
-                [
-                    compress if compress else "raw",
-                    "b64" if b64 else None,
-                ],
-            )
-        )
