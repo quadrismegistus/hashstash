@@ -141,7 +141,10 @@ class MetaDataFrame:
 
     def applymap(self, func):
         if self.is_pandas:
-            return MetaDataFrame(self.df.applymap(func), self.df_engine)
+            # pandas 2.1+ renamed DataFrame.applymap to DataFrame.map;
+            # older versions only have applymap. Support both.
+            mapper = getattr(self.df, "map", None) or self.df.applymap
+            return MetaDataFrame(mapper(func), self.df_engine)
         else:
             import polars as pl
 
@@ -570,8 +573,16 @@ def has_index(df):
 def reinfer_types(df):
     import pandas as pd
 
-    # Infer types for pandas DataFrame
+    # Infer types for pandas DataFrame. errors='ignore' was removed from to_numeric/to_datetime
+    # in pandas 3.0; catch explicitly to preserve the "leave column alone if conversion fails"
+    # semantics across pandas versions.
     for column in df.columns:
-        df[column] = pd.to_numeric(df[column], errors="ignore")
+        try:
+            df[column] = pd.to_numeric(df[column])
+        except (ValueError, TypeError):
+            pass
         if df[column].dtype == "object":
-            df[column] = pd.to_datetime(df[column], errors="ignore")
+            try:
+                df[column] = pd.to_datetime(df[column])
+            except (ValueError, TypeError):
+                pass
