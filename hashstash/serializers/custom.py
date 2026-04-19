@@ -103,6 +103,16 @@ def _deserialize_object_data(obj, obj_data: Any) -> Any:
 
     if hasattr(obj, 'from_dict') and callable(obj.from_dict):
         return obj.from_dict(obj_data)
+    # If obj is a class, instantiate a bare object first (skipping __init__), then apply state
+    # to the instance. Pandas 3.0 removed Series.from_dict and made NDFrame.__setstate__ strict,
+    # so the class-passed-to-__setstate__ pattern breaks.
+    if isinstance(obj, type):
+        inst = obj.__new__(obj)
+        if hasattr(inst, '__setstate__'):
+            _invoke_setstate(inst, obj_data)
+        else:
+            inst.__dict__.update(obj_data)
+        return inst
     if hasattr(obj, '__setstate__'):
         _invoke_setstate(obj, obj_data)
     else:
@@ -829,6 +839,9 @@ class PmapResultSerializer(CustomSerializer):
 CUSTOM_SERIALIZERS = {
     'pandas.core.frame.DataFrame': PandasDataFrameSerializer.serialize,
     'pandas.core.series.Series': PandasSeriesSerializer.serialize,
+    # pandas 3.x reports __module__ as 'pandas' (top-level) instead of internal paths
+    'pandas.DataFrame': PandasDataFrameSerializer.serialize,
+    'pandas.Series': PandasSeriesSerializer.serialize,
     'numpy.ndarray': NumpySerializer.serialize,
     'builtins.set': IterableSerializer.serialize,
     'builtins.tuple': IterableSerializer.serialize,
@@ -850,6 +863,9 @@ CUSTOM_SERIALIZERS = {
 CUSTOM_DESERIALIZERS = {
     'pandas.core.frame.DataFrame': PandasDataFrameSerializer.deserialize,
     'pandas.core.series.Series': PandasSeriesSerializer.deserialize,
+    # pandas 3.x reports __module__ as 'pandas' (top-level) instead of internal paths
+    'pandas.DataFrame': PandasDataFrameSerializer.deserialize,
+    'pandas.Series': PandasSeriesSerializer.deserialize,
     'numpy.ndarray': NumpySerializer.deserialize,
     'builtins.set': IterableSerializer.deserialize,
     'builtins.tuple': IterableSerializer.deserialize,
