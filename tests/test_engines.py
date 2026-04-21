@@ -666,5 +666,108 @@ def test_encode_path():
     cache = HashStash(engine='pairtree')
     assert os.path.isabs(cache.get_path_key('unencoded_key'))
 
+
+class TestJSONLB64False:
+    def test_b64_false_honored(self, tmp_path):
+        stash = JSONLHashStash(str(tmp_path), b64=False)
+        assert stash.b64 == False
+
+    def test_directory_name_no_b64_suffix(self, tmp_path):
+        stash = JSONLHashStash(str(tmp_path), b64=False)
+        assert "+b64" not in stash.path_dirname
+
+    def test_roundtrip(self, tmp_path):
+        stash = JSONLHashStash(str(tmp_path), b64=False)
+        stash["item_a"] = {"field1": True, "val": "hello"}
+        assert stash["item_a"] == {"field1": True, "val": "hello"}
+
+    def test_jsonl_file_is_not_base64(self, tmp_path):
+        # b64=False now implies flat=True, so dict values are inlined (no __value__ field)
+        stash = JSONLHashStash(str(tmp_path), b64=False)
+        stash["item_a"] = {"field1": True, "val": "hello"}
+        with open(stash.path) as f:
+            line = json.loads(f.readline())
+        key_raw = line[stash.key_name]
+        import base64
+        def looks_like_b64(s):
+            if not isinstance(s, str):
+                return False
+            try:
+                decoded = base64.b64decode(s.encode(), validate=True)
+                return base64.b64encode(decoded).decode() == s
+            except Exception:
+                return False
+        assert not looks_like_b64(key_raw), f"key looks like base64: {key_raw!r}"
+        # flat mode: dict fields are inlined directly, no __value__ wrapper
+        assert stash.flat == True
+        assert "__value__" not in line
+        assert line["field1"] == True
+
+class TestJSONLFlat:
+    def test_flat_sets_b64_false(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        assert s.flat == True
+        assert s.b64 == False
+        assert s.compress == "raw"
+
+    def test_dict_value_inlined(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        s["doc_1"] = {"field1": True, "val": "hello"}
+        with open(s.path) as f:
+            row = json.loads(f.readline())
+        assert row["__key__"] == "doc_1"
+        assert row["field1"] == True
+        assert row["val"] == "hello"
+        assert "__value__" not in row
+
+    def test_roundtrip_dict(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        s["k"] = {"a": 1, "b": [1, 2, 3]}
+        assert s["k"] == {"a": 1, "b": [1, 2, 3]}
+
+    def test_roundtrip_dict_key(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        s[{"id": "doc_001"}] = {"label": "drama"}
+        assert s[{"id": "doc_001"}] == {"label": "drama"}
+
+    def test_roundtrip_tuple_key(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        s[("a", 1)] = {"note": "x"}
+        assert s[("a", 1)] == {"note": "x"}
+
+    def test_non_dict_fallback_to_value_field(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        s["scalar"] = "just a string"
+        with open(s.path) as f:
+            row = json.loads(f.readline())
+        assert "__value__" in row
+        assert s["scalar"] == "just a string"
+
+    def test_delete(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        s["k"] = {"x": 1}
+        del s["k"]
+        assert "k" not in s
+        assert len(s) == 0
+
+    def test_reserved_field_raises(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        with pytest.raises(ValueError, match="reserved field names"):
+            s["k"] = {"__key__": "bad"}
+
+    def test_items(self, tmp_path):
+        s = JSONLHashStash(str(tmp_path), flat=True)
+        s["a"] = {"x": 1}
+        s["b"] = {"x": 2}
+        result = dict(s.items())
+        assert result == {"a": {"x": 1}, "b": {"x": 2}}
+
+    def test_factory_flat(self, tmp_path):
+        s = HashStash(root_dir=str(tmp_path), engine="jsonl", flat=True)
+        s["k"] = {"v": 42}
+        assert s["k"] == {"v": 42}
+        assert s.flat == True
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
