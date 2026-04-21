@@ -143,10 +143,7 @@ class BaseHashStash(MutableMapping):
             compress if compress is not None else config.compress
         )
         self.b64 = b64 if b64 is not None else config.b64
-        if self.string_keys or self.string_values:
-            self.b64 = True
-        
-        if self.compress not in {False, None, RAW_NO_COMPRESS} and (self.string_keys or self.string_values):
+        if b64 is None and (self.string_keys or self.string_values):
             self.b64 = True
         self.serializer = serializer if serializer is not None else config.serializer
         self.dbname = dbname if dbname is not None else self.dbname
@@ -688,7 +685,7 @@ class BaseHashStash(MutableMapping):
     def decode_key(self, encoded_key: Any, as_string=False) -> Union[str, bytes]:
         decoded_key = self.decode(
             encoded_key,
-            b64=(self.b64 or self.string_keys),
+            b64=self.b64,
             compress=self.compress,
         )
         return (
