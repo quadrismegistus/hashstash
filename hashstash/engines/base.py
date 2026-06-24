@@ -4,12 +4,11 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from multiprocessing import Manager, Lock as mp_Lock
-from multiprocessing.managers import SyncManager
 from pathlib import Path
 from ..serializers import serialize, deserialize
 
-_manager = Manager()
-_connection_lock = _manager.dict()
+_manager = None
+_connection_lock = None
 _connection_pool = {}
 _last_used = {}
 
@@ -71,8 +70,7 @@ def _filter_by_time(values, timestamps, before=None, after=None):
 def get_manager():
     global _manager, _connection_lock
     if _manager is None:
-        _manager = SyncManager()
-        _manager.start()
+        _manager = Manager()
         _connection_lock = _manager.dict()
     return _manager
 
