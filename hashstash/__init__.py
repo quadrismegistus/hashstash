@@ -6,3 +6,4 @@ from .utils import *
 from .serializers import *
 from .engines import *
 from .typed import TypedStash
+from .graph import GraphStash

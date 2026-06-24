@@ -883,6 +883,10 @@ class BaseHashStash(MutableMapping):
         self.children.append(new_instance)
         return new_instance
 
+    def graph(self, name="graph"):
+        from ..graph import GraphStash
+        return GraphStash(self, name=name)
+
     @contextmanager
     def tmp(self, use_tempfile=True, dbname=None, **kwargs):
         kwargs = {

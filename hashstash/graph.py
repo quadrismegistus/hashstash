@@ -1,0 +1,413 @@
+from collections import defaultdict, deque
+
+_OPS = {
+    "eq": lambda a, b: a == b,
+    "ne": lambda a, b: a != b,
+    "gt": lambda a, b: a > b,
+    "lt": lambda a, b: a < b,
+    "gte": lambda a, b: a >= b,
+    "lte": lambda a, b: a <= b,
+    "contains": lambda a, b: b in a,
+    "in": lambda a, b: a in b,
+    "startswith": lambda a, b: isinstance(a, str) and a.startswith(b),
+    "endswith": lambda a, b: isinstance(a, str) and a.endswith(b),
+}
+
+
+def _parse_predicate(key):
+    parts = key.split("__")
+    if parts[0] == "source":
+        scope = "source"
+        parts = parts[1:]
+    elif parts[0] == "target":
+        scope = "target"
+        parts = parts[1:]
+    else:
+        scope = "edge"
+    if len(parts) >= 2 and parts[-1] in _OPS:
+        field = "__".join(parts[:-1])
+        op = parts[-1]
+    else:
+        field = "__".join(parts)
+        op = "eq"
+    return scope, field, op
+
+
+def _match(src_props, dst_props, edge_rel, edge_props, predicates):
+    for key, value in predicates.items():
+        scope, field, op = _parse_predicate(key)
+        if scope == "source":
+            obj = src_props
+        elif scope == "target":
+            obj = dst_props
+        elif field == "rel":
+            if not _OPS[op](edge_rel, value):
+                return False
+            continue
+        else:
+            obj = edge_props
+        actual = obj.get(field) if isinstance(obj, dict) else None
+        if actual is None or not _OPS[op](actual, value):
+            return False
+    return True
+
+
+class GraphStash:
+    """Directed property graph backed by HashStash sub-stashes.
+
+    Storage: three sub-stashes (all append_mode=False):
+        _nodes: node_id -> {**props}
+        _out:   node_id -> [(dst, rel, {edge_props}), ...]
+        _in:    node_id -> [(src, rel, {edge_props}), ...]
+
+    Multigraph: multiple edges between the same (src, dst, rel) are
+    allowed, distinguished by their properties.
+
+    Read caching: adjacency lists and node props are cached in memory
+    after first read. Writes invalidate affected cache entries. Call
+    preload() after bulk loading to warm the cache for fast queries.
+    """
+
+    def __init__(self, stash, name="graph"):
+        self._stash = stash
+        self._name = name
+        prefix = f"{stash.dbname}/{name}" if stash.dbname else name
+        self._nodes_stash = stash.sub(root_dir=stash.root_dir, dbname=f"{prefix}/_nodes", append_mode=False)
+        self._out_stash = stash.sub(root_dir=stash.root_dir, dbname=f"{prefix}/_out", append_mode=False)
+        self._in_stash = stash.sub(root_dir=stash.root_dir, dbname=f"{prefix}/_in", append_mode=False)
+        self._cache_nodes = {}
+        self._cache_out = {}
+        self._cache_in = {}
+        self._cache_node_keys = None
+        self._cache_out_keys = None
+
+    def _invalidate(self, node_id=None):
+        if node_id is None:
+            self._cache_nodes.clear()
+            self._cache_out.clear()
+            self._cache_in.clear()
+            self._cache_node_keys = None
+            self._cache_out_keys = None
+        else:
+            self._cache_nodes.pop(node_id, None)
+            self._cache_out.pop(node_id, None)
+            self._cache_in.pop(node_id, None)
+            self._cache_node_keys = None
+            self._cache_out_keys = None
+
+    def _get_node_props(self, node_id):
+        if node_id not in self._cache_nodes:
+            self._cache_nodes[node_id] = self._nodes_stash.get(node_id, default=None)
+        return self._cache_nodes[node_id]
+
+    def _get_out(self, node_id):
+        if node_id not in self._cache_out:
+            self._cache_out[node_id] = self._out_stash.get(node_id, default=[])
+        return self._cache_out[node_id]
+
+    def _get_in(self, node_id):
+        if node_id not in self._cache_in:
+            self._cache_in[node_id] = self._in_stash.get(node_id, default=[])
+        return self._cache_in[node_id]
+
+    def _node_keys(self):
+        if self._cache_node_keys is None:
+            self._cache_node_keys = list(self._nodes_stash.keys())
+        return self._cache_node_keys
+
+    def _out_keys(self):
+        if self._cache_out_keys is None:
+            self._cache_out_keys = list(self._out_stash.keys())
+        return self._cache_out_keys
+
+    def preload(self):
+        """Warm the in-memory cache by reading all data from disk.
+        Call after bulk loading for fastest query performance."""
+        for nid in self._node_keys():
+            self._get_node_props(nid)
+        for nid in self._out_keys():
+            self._get_out(nid)
+            self._get_in(nid)
+
+    # -- Nodes --
+
+    def add_node(self, node_id, **props):
+        existing = self._get_node_props(node_id)
+        if existing is not None:
+            existing.update(props)
+            self._nodes_stash[node_id] = existing
+        else:
+            self._nodes_stash[node_id] = props
+        self._invalidate(node_id)
+
+    def node(self, node_id):
+        props = self._get_node_props(node_id)
+        if props is None:
+            raise KeyError(node_id)
+        return props
+
+    def has_node(self, node_id):
+        return self._get_node_props(node_id) is not None
+
+    def remove_node(self, node_id):
+        if not self.has_node(node_id):
+            raise KeyError(node_id)
+
+        for dst, rel, _ in self._get_out(node_id):
+            in_list = self._get_in(dst)
+            in_list = [e for e in in_list if not (e[0] == node_id and e[1] == rel)]
+            if in_list:
+                self._in_stash[dst] = in_list
+            elif self._in_stash.has(dst):
+                del self._in_stash[dst]
+            self._cache_in.pop(dst, None)
+
+        for src, rel, _ in self._get_in(node_id):
+            out_list = self._get_out(src)
+            out_list = [e for e in out_list if not (e[0] == node_id and e[1] == rel)]
+            if out_list:
+                self._out_stash[src] = out_list
+            elif self._out_stash.has(src):
+                del self._out_stash[src]
+            self._cache_out.pop(src, None)
+
+        if self._out_stash.has(node_id):
+            del self._out_stash[node_id]
+        if self._in_stash.has(node_id):
+            del self._in_stash[node_id]
+        del self._nodes_stash[node_id]
+        self._invalidate(node_id)
+
+    @property
+    def nodes(self):
+        return self._node_keys()
+
+    # -- Edges --
+
+    def add_edge(self, src, dst, rel=None, **edge_props):
+        if not self.has_node(src):
+            self.add_node(src)
+        if not self.has_node(dst):
+            self.add_node(dst)
+
+        out_list = list(self._get_out(src))
+        out_list.append((dst, rel, edge_props))
+        self._out_stash[src] = out_list
+
+        in_list = list(self._get_in(dst))
+        in_list.append((src, rel, edge_props))
+        self._in_stash[dst] = in_list
+
+        self._invalidate(src)
+        self._invalidate(dst)
+
+    def edge(self, src, dst, rel=None):
+        for d, r, props in self._get_out(src):
+            if d == dst and r == rel:
+                return props
+        raise KeyError((src, dst, rel))
+
+    def has_edge(self, src, dst, rel=None):
+        for d, r, _ in self._get_out(src):
+            if d == dst and r == rel:
+                return True
+        return False
+
+    def _edge_matches(self, entry, target, rel, match):
+        if entry[0] != target or entry[1] != rel:
+            return False
+        if match:
+            props = entry[2] if len(entry) > 2 else {}
+            return all(props.get(k) == v for k, v in match.items())
+        return True
+
+    def remove_edge(self, src, dst, rel=None, **match):
+        """Remove edges matching (src, dst, rel). With **match kwargs,
+        only edges whose properties also match are removed."""
+        out_list = self._get_out(src)
+        new_out = [e for e in out_list if not self._edge_matches(e, dst, rel, match)]
+        if len(new_out) == len(out_list):
+            raise KeyError((src, dst, rel))
+
+        if new_out:
+            self._out_stash[src] = new_out
+        elif self._out_stash.has(src):
+            del self._out_stash[src]
+
+        in_list = self._get_in(dst)
+        new_in = [e for e in in_list if not self._edge_matches(e, src, rel, match)]
+        if new_in:
+            self._in_stash[dst] = new_in
+        elif self._in_stash.has(dst):
+            del self._in_stash[dst]
+
+        self._invalidate(src)
+        self._invalidate(dst)
+
+    def edges_of(self, node_id, direction="out"):
+        results = []
+        if direction in ("out", "both"):
+            results.extend(self._get_out(node_id))
+        if direction in ("in", "both"):
+            results.extend(self._get_in(node_id))
+        return results
+
+    @property
+    def edges(self):
+        result = []
+        for src in self._out_keys():
+            for dst, rel, props in self._get_out(src):
+                result.append((src, dst, rel, props))
+        return result
+
+    # -- Query --
+
+    def edges_where(self, rel=None, **kwargs):
+        """Filter edges by Django-style predicates.
+
+        Operators: __gt, __lt, __gte, __lte, __ne, __contains, __in,
+                   __startswith, __endswith (no suffix = equality).
+        Prefixes: source__ / target__ for node props, rel / rel__op for
+                  the relationship string, bare name for edge props.
+
+        Returns list of (src, dst, rel, props) tuples.
+        """
+        if rel is not None:
+            kwargs["rel"] = rel
+        results = []
+        for src in self._out_keys():
+            src_props = None
+            for dst, edge_rel, props in self._get_out(src):
+                if src_props is None:
+                    src_props = self._get_node_props(src) or {}
+                dst_props = self._get_node_props(dst) or {}
+                if _match(src_props, dst_props, edge_rel, props, kwargs):
+                    results.append((src, dst, edge_rel, props))
+        return results
+
+    def add_edges_bulk(self, edges):
+        """Add edges in batch, minimizing read-modify-write cycles.
+
+        Args:
+            edges: iterable of (src, dst, rel, props_dict) tuples
+        """
+        out_new = defaultdict(list)
+        in_new = defaultdict(list)
+        nodes_seen = set()
+
+        for src, dst, rel, props in edges:
+            if src not in nodes_seen:
+                if not self.has_node(src):
+                    self.add_node(src)
+                nodes_seen.add(src)
+            if dst not in nodes_seen:
+                if not self.has_node(dst):
+                    self.add_node(dst)
+                nodes_seen.add(dst)
+            out_new[src].append((dst, rel, props))
+            in_new[dst].append((src, rel, props))
+
+        for src, new_entries in out_new.items():
+            out_list = list(self._get_out(src))
+            out_list.extend(new_entries)
+            self._out_stash[src] = out_list
+
+        for dst, new_entries in in_new.items():
+            in_list = list(self._get_in(dst))
+            in_list.extend(new_entries)
+            self._in_stash[dst] = in_list
+
+        self._invalidate()
+
+    # -- Neighbors --
+
+    def neighbors(self, node_id, rel=None, direction="out"):
+        edges = self.edges_of(node_id, direction=direction)
+        seen = set()
+        result = []
+        for entry in edges:
+            other = entry[0]
+            edge_rel = entry[1]
+            if rel is not None and edge_rel != rel:
+                continue
+            if other not in seen:
+                seen.add(other)
+                result.append(other)
+        return result
+
+    # -- Traversal --
+
+    def traverse(self, start, depth=1, rel=None, direction="out"):
+        if not self.has_node(start):
+            raise KeyError(start)
+
+        visited = {start}
+        levels = {0: [start]}
+        frontier = [start]
+
+        for level in range(1, depth + 1):
+            next_frontier = []
+            for node_id in frontier:
+                for nbr in self.neighbors(node_id, rel=rel, direction=direction):
+                    if nbr not in visited:
+                        visited.add(nbr)
+                        next_frontier.append(nbr)
+            if not next_frontier:
+                break
+            levels[level] = next_frontier
+            frontier = next_frontier
+
+        return levels
+
+    def shortest_path(self, src, dst, rel=None, direction="out"):
+        if not self.has_node(src):
+            raise KeyError(src)
+        if not self.has_node(dst):
+            raise KeyError(dst)
+        if src == dst:
+            return [src]
+
+        visited = {src}
+        parent = {src: None}
+        queue = deque([src])
+
+        while queue:
+            current = queue.popleft()
+            for nbr in self.neighbors(current, rel=rel, direction=direction):
+                if nbr not in visited:
+                    visited.add(nbr)
+                    parent[nbr] = current
+                    if nbr == dst:
+                        path = []
+                        node = dst
+                        while node is not None:
+                            path.append(node)
+                            node = parent[node]
+                        return list(reversed(path))
+                    queue.append(nbr)
+
+        return None
+
+    # -- Utility --
+
+    @property
+    def num_edges(self):
+        count = 0
+        for node_id in self._out_keys():
+            count += len(self._get_out(node_id))
+        return count
+
+    def clear(self):
+        self._nodes_stash.clear()
+        self._out_stash.clear()
+        self._in_stash.clear()
+        self._invalidate()
+
+    def __len__(self):
+        return len(self._nodes_stash)
+
+    def __contains__(self, node_id):
+        return self.has_node(node_id)
+
+    def __repr__(self):
+        return f"GraphStash({self._name!r}, nodes={len(self)}, edges={self.num_edges})"
