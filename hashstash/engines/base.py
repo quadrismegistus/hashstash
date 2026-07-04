@@ -686,7 +686,7 @@ class BaseHashStash(MutableMapping):
         found = values is not None and (not isinstance(values, list) or bool(values))
         self._stats["hits" if found else "misses"] += 1
         value = values[-1] if values else default
-        return self.serialize(value) if as_string else value
+        return self.serialize(value, as_string=True) if as_string else value
 
     @log.debug
     def get_all(

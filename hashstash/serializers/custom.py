@@ -87,12 +87,62 @@ SAFE_REDUCER_CONSTRUCTORS = frozenset({
 })
 
 
+# orjson accelerates the VALUE serialization path (dumps/loads of the already
+# JSON-safe structure _serialize_custom produces). It is NEVER used for cache
+# KEYS: those must stay stdlib-json canonical (sort_keys=True) so a key hashes
+# to the same bytes whether or not orjson happens to be installed. orjson also
+# rejects a few things stdlib json accepts (ints beyond 64 bits), so value
+# serialization falls back to stdlib json on any orjson error.
+_orjson = None
+_orjson_checked = False
+
+
+def _get_orjson():
+    global _orjson, _orjson_checked
+    if not _orjson_checked:
+        _orjson_checked = True
+        try:
+            import orjson
+            _orjson = orjson
+        except ImportError:
+            _orjson = None
+    return _orjson
+
+
+def _dumps_value(structure):
+    """Serialize a JSON-safe structure for a VALUE (non-canonical). orjson when
+    available (returns bytes), else stdlib json (str); falls back to json for
+    inputs orjson rejects."""
+    oj = _get_orjson()
+    if oj is not None:
+        try:
+            return oj.dumps(structure)
+        except (TypeError, ValueError):
+            pass  # e.g. int > 64-bit — stdlib json handles it
+    return json.dumps(structure)
+
+
+def _loads_any(data):
+    """Parse JSON produced by either orjson or stdlib json (str or bytes).
+
+    Deliberately uses stdlib json.loads, NOT orjson.loads: orjson.loads
+    silently coerces integers beyond 64 bits to float (lossy), and stdlib
+    json.loads is both correct and C-accelerated. orjson's speed win is on the
+    write (dumps) side, where correctness is preserved by the big-int fallback."""
+    if isinstance(data, (bytes, bytearray)):
+        data = data.decode("utf-8")
+    return json.loads(data)
+
+
 @log.debug
 def serialize_custom(obj: Any, sort_keys: bool = False) -> str:
     serialized = _serialize_custom(obj)
-    # sort_keys=True gives canonical bytes: equal dicts (and equal kwargs) always
-    # serialize identically regardless of insertion order. Used for cache keys.
-    return json.dumps(serialized, sort_keys=sort_keys)
+    if sort_keys:
+        # canonical KEY path: stdlib json with sorted keys so equal keys hash
+        # identically regardless of insertion order OR whether orjson is present
+        return json.dumps(serialized, sort_keys=True)
+    # VALUE path: orjson-accelerated when available
+    return _dumps_value(serialized)
 
 def stuff(obj, data=None):
     return _serialize_custom(obj, data=data)
@@ -173,7 +223,7 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
 ### Deserializing
 
 def deserialize_custom(serialized_str: str) -> Any:
-    return _deserialize_custom(json.loads(serialized_str))
+    return _deserialize_custom(_loads_any(serialized_str))
 
 def _deserialize_object_data(obj, obj_data: Any) -> Any:
     if _safe_mode_active():

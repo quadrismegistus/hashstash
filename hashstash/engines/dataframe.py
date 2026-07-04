@@ -125,7 +125,7 @@ class DataFrameHashStash(PairtreeHashStash):
         if values is None: return default
         if is_dataframe(values): return values
         value = values[-1] if values else default
-        return self.serialize(value) if as_string else value
+        return self.serialize(value, as_string=True) if as_string else value
         # if values is None:
         #     return default
         
