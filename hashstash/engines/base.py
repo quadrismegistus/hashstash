@@ -228,6 +228,7 @@ class BaseHashStash(MutableMapping):
         "is_function_stash",
         "is_tmp",
         "ttl",
+        "safe",
         "_root_is_dir",
     ]
     metadata_cols = ["_version", "_written_at"]
@@ -253,6 +254,7 @@ class BaseHashStash(MutableMapping):
         append_mode: bool = False,
         clear: bool = False,
         ttl: Union[int, float, timedelta] = None,
+        safe: bool = None,
         _root_is_dir: bool = None,
         **kwargs,
     ) -> None:
@@ -276,6 +278,15 @@ class BaseHashStash(MutableMapping):
         if ttl is not None and ttl <= 0:
             raise ValueError(f"ttl must be positive, got {ttl!r}")
         self.ttl = ttl
+        # safe mode: deserialization refuses payloads that would execute code
+        # (see serializers.custom.safe_deserialization); HASHSTASH_SAFE=1 makes
+        # it the default for every stash in the process
+        self.safe = safe if safe is not None else bool(os.environ.get("HASHSTASH_SAFE"))
+        if self.safe and self.serializer != "hashstash":
+            raise ValueError(
+                f"safe=True requires the 'hashstash' serializer; "
+                f"{self.serializer!r} deserialization can always execute code"
+            )
         self.is_function_stash = (
             is_function_stash
             if is_function_stash is not None
@@ -361,6 +372,7 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def deserialize(self, *args, **kwargs):
+        kwargs.setdefault("safe", self.safe)
         return deserialize(*args, serializer=self.serializer, **kwargs)
 
     @log.debug

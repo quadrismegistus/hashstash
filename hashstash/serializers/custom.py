@@ -4,7 +4,9 @@
 # differently). Never rely on the star-chain for stdlib names.
 import importlib
 import inspect
+import os
 import types
+from contextlib import contextmanager
 
 from . import *
 from ..utils.logs import *
@@ -19,6 +21,70 @@ PANDAS_EXTENSION_ACTIVATED = True
 # Plain dicts containing any of these keys must round-trip through the tagged
 # '__pytype__: dict' form, or the deserializer would misread them as object markers.
 RESERVED_DICT_KEYS = frozenset({'__py__', '__pytype__', '__data__'})
+
+
+# --- safe deserialization mode ------------------------------------------------
+#
+# Deserializing a hashstash payload can execute code: functions/classes are
+# rebuilt with exec, reducers invoke an importable callable chosen by the
+# payload ('os.system' qualifies), and instance state is applied blindly.
+# Safe mode restricts round-trips to DATA: primitives, containers, bytes,
+# paths, the vetted CUSTOM_DESERIALIZERS table (numpy/pandas), and a small
+# allowlist of value-type constructors. Everything else raises
+# SafeDeserializationError instead of running.
+#
+# Enable per stash with HashStash(safe=True), globally with HASHSTASH_SAFE=1,
+# or around any deserialize call with the safe_deserialization() context.
+
+import contextvars
+
+_SAFE_CTX = contextvars.ContextVar("hashstash_safe", default=None)
+
+
+class SafeDeserializationError(Exception):
+    """Raised in safe mode when a payload would execute code on load."""
+
+
+def _safe_mode_active():
+    ctx = _SAFE_CTX.get()
+    if ctx is not None:
+        return ctx
+    return bool(os.environ.get("HASHSTASH_SAFE"))
+
+
+@contextmanager
+def safe_deserialization(enabled=True):
+    token = _SAFE_CTX.set(enabled)
+    try:
+        yield
+    finally:
+        _SAFE_CTX.reset(token)
+
+
+def _refuse_unsafe(what):
+    raise SafeDeserializationError(
+        f"safe mode refused to deserialize {what}: it would execute code on "
+        f"load. Open this stash with safe=False only if you trust its writer."
+    )
+
+
+# value-type constructors a reducer may invoke in safe mode: fixed-arity
+# builtins/stdlib types whose construction runs no user code
+SAFE_REDUCER_CONSTRUCTORS = frozenset({
+    "datetime.datetime",
+    "datetime.date",
+    "datetime.time",
+    "datetime.timedelta",
+    "datetime.timezone",
+    "builtins.complex",
+    "complex",
+    "decimal.Decimal",
+    "fractions.Fraction",
+    "uuid.UUID",
+    "collections.OrderedDict",
+    "collections.Counter",
+    "collections.deque",
+})
 
 
 @log.debug
@@ -110,6 +176,10 @@ def deserialize_custom(serialized_str: str) -> Any:
     return _deserialize_custom(json.loads(serialized_str))
 
 def _deserialize_object_data(obj, obj_data: Any) -> Any:
+    if _safe_mode_active():
+        # from_serialized/from_dict/__setstate__ on a payload-chosen importable
+        # class is arbitrary code execution
+        _refuse_unsafe(f"object reconstruction via {get_obj_addr(obj)!r}")
     if hasattr(obj, 'from_serialized') and callable(obj.from_serialized):
         return obj.from_serialized(obj_data)
 
@@ -160,24 +230,39 @@ def _deserialize_custom(data: Any) -> Any:
             }
 
         if pytype == 'instance':
+            if _safe_mode_active():
+                _refuse_unsafe(f"an instance of {addr!r}")
             return InstanceSerializer.deserialize(data)
 
         if addr and addr in CUSTOM_DESERIALIZERS:
+            # fixed, vetted dispatch table (numpy/pandas/containers): the code
+            # that runs is ours, not payload-chosen — allowed in safe mode
             return CUSTOM_DESERIALIZERS[addr](data)
 
         if pytype == 'reducer':
             return ReducerSerializer.deserialize(data)
 
         if pytype in {'function', 'classmethod', 'instancemethod'}:
+            if _safe_mode_active():
+                _refuse_unsafe(f"a function ({addr!r})")
             return FunctionSerializer.deserialize(data)
 
         if pytype == 'class':
+            if _safe_mode_active():
+                # a bare reference to an allowlisted value type (no exec-based
+                # reconstruction) is fine — e.g. `complex` inside its own reducer
+                # args. Reconstructing a class from stored bases/methods is not.
+                is_reference = '__bases__' not in data
+                if not (is_reference and addr in SAFE_REDUCER_CONSTRUCTORS):
+                    _refuse_unsafe(f"a class ({addr!r})")
             return ClassSerializer.deserialize(data)
 
         if pytype == 'generator':
             return GeneratorSerializer.deserialize(data)
 
         if pytype == 'module':
+            if _safe_mode_active():
+                _refuse_unsafe(f"a module import ({addr!r})")
             return importlib.import_module(addr)
 
         obj_data = data.get('__data__')
@@ -187,6 +272,8 @@ def _deserialize_custom(data: Any) -> Any:
             return _deserialize_object_data(flexible_import(addr), _deserialize_custom(obj_data))
 
         if addr:
+            if _safe_mode_active():
+                _refuse_unsafe(f"an import reference ({addr!r})")
             return flexible_import(addr)
 
         return {_deserialize_custom(k): _deserialize_custom(v) for k, v in data.items()}
@@ -406,6 +493,8 @@ class ReducerSerializer(CustomSerializer):
 
     @staticmethod
     def deserialize(data):
+        if _safe_mode_active():
+            ReducerSerializer._check_safe(data)
         if data.get('__global__'):
             return flexible_import(data['__global__'])
 
@@ -433,7 +522,27 @@ class ReducerSerializer(CustomSerializer):
             obj.update(dictitems)
 
         return obj
-        
+
+    @staticmethod
+    def _check_safe(data):
+        """In safe mode, a reducer may only invoke allowlisted value-type
+        constructors ('os.system' is an importable constructor too)."""
+        if data.get('__global__'):
+            _refuse_unsafe(f"a reducer global reference ({data['__global__']!r})")
+        addr = data.get('__py__')
+        if addr == 'copyreg.__newobj__':
+            # cls.__new__(cls, *args): the class is the first arg — it must
+            # itself be an allowlisted value type
+            args = data.get('__args__') or []
+            first = args[0] if args else None
+            cls_addr = first.get('__py__') if isinstance(first, dict) else None
+            if cls_addr not in SAFE_REDUCER_CONSTRUCTORS:
+                _refuse_unsafe(f"construction of {cls_addr!r} via __newobj__")
+        elif addr not in SAFE_REDUCER_CONSTRUCTORS:
+            _refuse_unsafe(f"a reducer invoking {addr!r}")
+        if data.get('__state_setter__'):
+            _refuse_unsafe(f"a reducer state setter ({data['__state_setter__']!r})")
+
 class BytesSerializer(CustomSerializer):
     @staticmethod
     def serialize(obj):
