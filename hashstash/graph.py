@@ -108,6 +108,11 @@ class GraphStash:
         self._cache_in = {}
         self._cache_node_keys = None
         self._cache_out_keys = None
+        # when inside a batch(), edge writes accumulate here and each touched
+        # node's adjacency list is persisted ONCE on flush instead of per edge
+        self._batching = False
+        self._dirty_out = set()
+        self._dirty_in = set()
 
     def _invalidate(self, node_id=None):
         if node_id is None:
@@ -221,9 +226,24 @@ class GraphStash:
 
     # -- Edges --
 
+    def batch(self):
+        """Context manager that buffers edge writes and flushes each touched
+        node's adjacency list once on exit.
+
+        Turns an incremental ``add_edge`` loop from O(degree) I/O per edge into
+        O(1) writes per node — the same win as add_edges_bulk, but keeping the
+        natural per-edge call style:
+
+            with g.batch():
+                for u, v in edges:
+                    g.add_edge(u, v, rel="knows")
+        """
+        return _GraphBatch(self)
+
     def add_edge(self, src, dst, rel=None, **edge_props):
-        """Add one edge. NOTE: rewrites both nodes' adjacency lists — O(degree)
-        I/O per call. For bulk loading, add_edges_bulk() is much faster."""
+        """Add one edge. Outside a batch this rewrites both nodes' adjacency
+        lists — O(degree) I/O per call; wrap a bulk load in ``with g.batch():``
+        (or use add_edges_bulk) to persist each node once."""
         if not self.has_node(src):
             self.add_node(src)
         if not self.has_node(dst):
@@ -232,15 +252,29 @@ class GraphStash:
         out_list = list(self._get_out(src))
         had_out = bool(out_list)
         out_list.append((dst, rel, edge_props))
-        self._out_stash[src] = out_list
         self._cache_out[src] = out_list
         if not had_out and self._cache_out_keys is not None:
             self._cache_out_keys.append(src)
 
         in_list = list(self._get_in(dst))
         in_list.append((src, rel, edge_props))
-        self._in_stash[dst] = in_list
         self._cache_in[dst] = in_list
+
+        if self._batching:
+            # defer the writes; flush persists each dirty node once
+            self._dirty_out.add(src)
+            self._dirty_in.add(dst)
+        else:
+            self._out_stash[src] = out_list
+            self._in_stash[dst] = in_list
+
+    def _flush_batch(self):
+        for src in self._dirty_out:
+            self._out_stash[src] = self._cache_out[src]
+        for dst in self._dirty_in:
+            self._in_stash[dst] = self._cache_in[dst]
+        self._dirty_out.clear()
+        self._dirty_in.clear()
 
     def edge(self, src, dst, rel=None):
         """Return the properties of the FIRST edge matching (src, dst, rel).
@@ -472,3 +506,25 @@ class GraphStash:
 
     def __repr__(self):
         return f"GraphStash({self._name!r}, nodes={len(self)}, edges={self.num_edges})"
+
+
+class _GraphBatch:
+    """Buffers edge writes for one GraphStash; flushes on exit (including on
+    exception, so a partial load is still persisted consistently). Not
+    reentrant — nested batches on one graph raise."""
+
+    def __init__(self, graph):
+        self._graph = graph
+
+    def __enter__(self):
+        if self._graph._batching:
+            raise RuntimeError("GraphStash.batch() is not reentrant")
+        self._graph._batching = True
+        return self._graph
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            self._graph._flush_batch()
+        finally:
+            self._graph._batching = False
+        return False
