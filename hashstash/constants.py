@@ -50,6 +50,7 @@ ENGINE_TYPES = Literal[
     "redis",
     "mongo",
     "jsonl",
+    "fsspec",
 ]
 ENGINES = ENGINE_TYPES.__args__
 BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve', 'jsonl']
@@ -63,6 +64,7 @@ ENGINE_INSTALL_HINTS = {
     "lmdb": "lmdb",
     "diskcache": "diskcache",
     "dataframe": "pandas numpy",
+    "fsspec": "fsspec",
 }
 
 # Performance testing constants
@@ -104,6 +106,7 @@ SERIALIZER_TYPES = Literal[
     "hashstash",          # flexible, but not as fast as jsonpickle
     "jsonpickle",      # pretty flexible json replacement for pickle
     "pickle",          # fastest but not platform independent
+    "msgpack",         # fast, compact, data-only (no code); requires msgpack
 ]
 DEFAULT_SERIALIZER = "hashstash"
 OPTIMAL_SERIALIZER = "hashstash"

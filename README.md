@@ -61,13 +61,16 @@ HashStash is a versatile caching library for Python that supports multiple stora
     - "__[lmdb](https://pypi.org/project/lmdb/)__" (single file, very efficient, slightly faster than pairtree)
     - "__[diskcache](https://pypi.org/project/diskcache/)__" (similar to pairtree, but slower)
     - "__sqlite__" (using [sqlitedict](https://pypi.org/project/sqlitedict/))
-    - "__jsonl__" (no dependencies; single human-readable append-only log; best for read-heavy or inspectable caches — see note on concurrent writes below)
+    - "__jsonl__" (no dependencies; single human-readable append-only log; best for read-heavy or inspectable caches — see note on concurrent writes below; call `stash.compact()` to reclaim space from overwritten/deleted rows)
     - "__shelve__" (standard library; simple dbm-backed store)
     - "__dataframe__" (pairtree layout that stores pandas/polars DataFrames natively as feather/parquet/csv files, requires [pandas](https://pypi.org/project/pandas/))
 
 - Server-based
     - "__redis__" (using [redis-py](https://pypi.org/project/redis/))
     - "__mongo__" (using [pymongo](https://pypi.org/project/pymongo/))
+
+- Object storage / remote
+    - "__[fsspec](https://pypi.org/project/fsspec/)__" (the pairtree layout over any fsspec filesystem — S3, GCS, Azure, SFTP, or `memory://` — for a serverless shared cache; `root_dir="s3://bucket/cache"`)
 
 - In-memory
     - "__memory__" (shared across processes when [ultradict](https://pypi.org/project/ultradict/) is installed; otherwise a process-local dict)
@@ -132,6 +135,26 @@ Treat a stash like you treat a pickle file: only read caches written by
 code you trust, and don't point shared/networked engines at databases
 other parties can write to.
 
+### Safe mode
+
+For shared or untrusted caches, open the stash with `safe=True` (or set
+`HASHSTASH_SAFE=1` for the whole process). Safe mode restricts deserialization
+to **data** — primitives, containers, bytes, sets, paths, datetimes, numpy/
+pandas via a vetted table, and an allowlist of value-type constructors — and
+raises `SafeDeserializationError` on anything that would execute code
+(functions, classes, instances, arbitrary reducers):
+
+```python
+stash = HashStash(safe=True)          # requires the 'hashstash' serializer
+stash["data"] = {"user": "alice", "when": datetime.now()}   # fine
+stash["data"]                          # data round-trips normally
+# a function-valued entry written by someone else raises on read
+```
+
+The **`msgpack`** serializer (`serializer="msgpack"`, `pip install
+hashstash[msgpack]`) is data-only by construction — it cannot encode code at
+all — making it a fast, compact, inherently-safe choice for shared caches.
+
 ## Engines & semantics
 
 ### Choosing an engine
@@ -145,6 +168,7 @@ other parties can write to.
 | Human-inspectable log you want to `grep` / `jq` / `rsync` as one file | `jsonl` |
 | Shared across processes without a server | `pairtree`, `lmdb`, `sqlite`, `jsonl` |
 | Networked / multi-host | `redis`, `mongo` |
+| Shared cache on object storage (S3/GCS/Azure), no server | `fsspec` |
 | Ephemeral in-process | `memory` |
 
 ### `append_mode`
@@ -191,6 +215,23 @@ stash.invalidate(key)          # plain-stash form
 ```
 
 Counters are shared by every stash instance pointing at the same path, per process.
+
+### Size-bounded eviction
+
+`HashStash(max_entries=N)` caps the entry count: when a write pushes the total past `N`, the oldest entries (by write time) are evicted down to ~90% of the limit. Eviction is amortized (fires roughly once per `N/10` writes) and scans timestamps when it fires, so it's best on engines with cheap `len` (sqlite/lmdb/redis/mongo/memory) or moderate caches. Combine with `ttl` for "expire after T, and never exceed N entries."
+
+### Async
+
+Every stash exposes `await stash.aget(k)`, `aset`, `ahas`, and `arun(func, ...)`, which run the blocking storage work off the event loop. `@stashed_result` transparently supports `async def` — it awaits the coroutine and caches the *result* (not the coroutine object):
+
+```python
+@stashed_result
+async def fetch(url):
+    return await http_get(url)
+
+await fetch("https://...")   # computes and caches
+await fetch("https://...")   # returns the cached result, no await of the function
+```
 
 ### `items()`, `keys()`, and `values()` are lazy
 
@@ -983,7 +1024,13 @@ g.edges_where(rel="sft_of", resistance__gt=2.0)
 
 GraphStash caches adjacency lists in memory after first read. For write-once-read-many workloads, call `preload()` after bulk loading. Two caveats:
 
-- **Incremental `add_edge` rewrites the node's whole adjacency list per call** — O(degree) I/O per insert, quadratic when building a hub node edge-by-edge. The benchmark numbers below are for `add_edges_bulk`, which groups writes per node; prefer it for any sizeable load.
+- **Incremental `add_edge` rewrites the node's whole adjacency list per call** — O(degree) I/O per insert, quadratic when building a hub node edge-by-edge. Use `add_edges_bulk`, or wrap a normal `add_edge` loop in `with g.batch():` — the batch buffers writes and persists each touched node's adjacency list once on exit, keeping the per-edge call style at bulk speed:
+
+  ```python
+  with g.batch():
+      for u, v in edges:
+          g.add_edge(u, v, rel="knows")
+  ```
 - **One writer at a time.** Adjacency updates are read-modify-write over whole lists, and each `stash.graph()` instance caches its reads: two concurrent writers (or a long-lived reader alongside a writer in another process) can lose edges or serve stale results. Use a single writer instance, and create a fresh instance after another process has written.
 
 Benchmarks on Apple M1:

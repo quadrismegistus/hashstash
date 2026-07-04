@@ -142,6 +142,12 @@ def get_working_engines():
     # jsonl uses only stdlib
     working_engines.add("jsonl")
 
+    try:
+        import fsspec
+        working_engines.add("fsspec")
+    except ImportError:
+        pass
+
     return working_engines
 
 
@@ -173,6 +179,11 @@ def get_working_serializers():
     try:
         import jsonpickle
         working_serializers.append('jsonpickle')
+    except ImportError:
+        pass
+    try:
+        import msgpack
+        working_serializers.append('msgpack')
     except ImportError:
         pass
     return working_serializers

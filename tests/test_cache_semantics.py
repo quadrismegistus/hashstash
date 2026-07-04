@@ -16,12 +16,27 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # --- TTL ---------------------------------------------------------------------
 
 
-def test_ttl_expires_reads(tmp_path):
-    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=0.2)
+# TTL timing note: never assert "still present within a SHORT ttl" — the
+# microsecond set->read gap can stretch on a loaded CI runner, so that direction
+# flakes. Presence checks use a generous ttl (can't expire in the test's
+# lifetime); expiry checks sleep well past a short ttl (the reliable direction).
+
+_LONG_TTL = 3600      # presence: effectively never expires during the test
+_SHORT_TTL = 0.3      # expiry: paired with a >=3x sleep
+_EXPIRE_SLEEP = 1.0
+
+
+def test_ttl_present_within_window(tmp_path):
+    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=_LONG_TTL)
     stash["k"] = "v"
     assert stash["k"] == "v"
     assert "k" in stash
-    time.sleep(0.3)
+
+
+def test_ttl_expires_reads(tmp_path):
+    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=_SHORT_TTL)
+    stash["k"] = "v"
+    time.sleep(_EXPIRE_SLEEP)
     assert stash.get("k") is None
     assert "k" not in stash
     with pytest.raises(KeyError):
@@ -29,11 +44,10 @@ def test_ttl_expires_reads(tmp_path):
 
 
 def test_ttl_accepts_timedelta(tmp_path):
-    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=timedelta(milliseconds=200))
-    assert stash.ttl == pytest.approx(0.2)
+    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=timedelta(milliseconds=300))
+    assert stash.ttl == pytest.approx(0.3)
     stash["k"] = "v"
-    assert stash["k"] == "v"
-    time.sleep(0.3)
+    time.sleep(_EXPIRE_SLEEP)
     assert stash.get("k") is None
 
 
@@ -46,21 +60,31 @@ def test_ttl_rejects_nonpositive(tmp_path):
 def test_ttl_across_engines(engine, tmp_path):
     if engine == "sqlite":
         pytest.importorskip("sqlitedict")
-    stash = HashStash(engine=engine, root_dir=str(tmp_path / engine), ttl=0.2)
-    stash["k"] = {"payload": 1}
-    assert stash["k"] == {"payload": 1}
-    time.sleep(0.3)
-    assert stash.get("k") is None
-    assert "k" not in stash
+    # presence via a generous-ttl stash, expiry via a short-ttl stash — both
+    # robust directions, both exercising this engine
+    present = HashStash(engine=engine, root_dir=str(tmp_path / f"{engine}_p"), ttl=_LONG_TTL)
+    present["k"] = {"payload": 1}
+    assert present["k"] == {"payload": 1}
+
+    expiring = HashStash(engine=engine, root_dir=str(tmp_path / f"{engine}_e"), ttl=_SHORT_TTL)
+    expiring["k"] = {"payload": 1}
+    time.sleep(_EXPIRE_SLEEP)
+    assert expiring.get("k") is None
+    assert "k" not in expiring
 
 
 def test_ttl_refreshes_on_rewrite(tmp_path):
-    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=0.4)
+    # append_mode so both versions coexist; a fresh write must restart the clock.
+    # generous margins: v1 written at 0, v2 at ~1.0s; read at ~1.5s with ttl=1.0
+    # -> v1 (age 1.5) expired, v2 (age 0.5) present.
+    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=1.0, append_mode=True)
     stash["k"] = "v1"
-    time.sleep(0.25)
+    time.sleep(1.0)
     stash["k"] = "v2"  # fresh write restarts the clock
-    time.sleep(0.25)   # v1 would be expired by now; v2 is not
+    time.sleep(0.5)
     assert stash["k"] == "v2"
+    # only the fresh version survives the ttl window
+    assert stash.get_all("k") == ["v2"]
 
 
 def _tick(x):
@@ -73,19 +97,19 @@ _tick.calls = []
 
 def test_ttl_run_recomputes_after_expiry(tmp_path):
     _tick.calls = []
-    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=0.2)
+    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=1.0)
     assert stash.run(_tick, 5) == 1
-    assert stash.run(_tick, 5) == 1  # cached
-    time.sleep(0.3)
+    assert stash.run(_tick, 5) == 1  # cached (back-to-back, well within ttl)
+    time.sleep(1.5)
     assert stash.run(_tick, 5) == 2  # expired -> recomputed
     assert len(_tick.calls) == 2
 
 
 def test_ttl_prune_still_sees_expired(tmp_path):
-    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=0.1)
+    stash = HashStash(root_dir=str(tmp_path / "c"), ttl=0.3)
     stash["k1"] = 1
     stash["k2"] = 2
-    time.sleep(0.2)
+    time.sleep(0.6)
     # reads say absent...
     assert stash.get("k1") is None
     # ...but prune can still find and reclaim the expired entries

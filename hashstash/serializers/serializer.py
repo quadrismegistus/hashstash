@@ -6,8 +6,9 @@ def get_serializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
         "hashstash": serialize_custom,
         "jsonpickle": serialize_jsonpickle,
         "pickle": serialize_pickle,
+        "msgpack": serialize_msgpack,
     }
-    
+
     return serializer_dict.get(serializer)
 
 def get_deserializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
@@ -15,8 +16,9 @@ def get_deserializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
         "hashstash": deserialize_custom,
         "jsonpickle": deserialize_jsonpickle,
         "pickle": deserialize_pickle,
+        "msgpack": deserialize_msgpack,
     }
-    
+
     return deserializer_dict.get(serializer)
 
 @log.debug
@@ -44,16 +46,26 @@ def serialize(obj, serializer: SERIALIZER_TYPES = None, as_string=False, sort_ke
         raise e
 
 @log.debug
-def deserialize(data, serializer: SERIALIZER_TYPES = None):
+def deserialize(data, serializer: SERIALIZER_TYPES = None, safe: bool = None):
     if serializer is None:
         serializer = Config().serializer
     deserializer_func = get_deserializer(serializer)
     if deserializer_func is None:
         raise ValueError(f"Invalid deserializer: {serializer}")
-    
+
+    if safe and serializer != "hashstash":
+        raise SafeDeserializationError(
+            f"safe mode requires the 'hashstash' serializer; {serializer!r} "
+            f"deserialization can always execute code"
+        )
+
     log.debug(f"Attempting to deserialize with {deserializer_func.__name__}")
     try:
-        odata = deserializer_func(data)
+        if safe is not None:
+            with safe_deserialization(safe):
+                odata = deserializer_func(data)
+        else:
+            odata = deserializer_func(data)
         log.trace(f"Deserialized with {deserializer_func.__name__}")
         return odata
     except Exception as e:

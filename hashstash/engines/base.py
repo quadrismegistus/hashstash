@@ -228,6 +228,8 @@ class BaseHashStash(MutableMapping):
         "is_function_stash",
         "is_tmp",
         "ttl",
+        "safe",
+        "max_entries",
         "_root_is_dir",
     ]
     metadata_cols = ["_version", "_written_at"]
@@ -253,6 +255,8 @@ class BaseHashStash(MutableMapping):
         append_mode: bool = False,
         clear: bool = False,
         ttl: Union[int, float, timedelta] = None,
+        safe: bool = None,
+        max_entries: int = None,
         _root_is_dir: bool = None,
         **kwargs,
     ) -> None:
@@ -276,6 +280,19 @@ class BaseHashStash(MutableMapping):
         if ttl is not None and ttl <= 0:
             raise ValueError(f"ttl must be positive, got {ttl!r}")
         self.ttl = ttl
+        # safe mode: deserialization refuses payloads that would execute code
+        # (see serializers.custom.safe_deserialization); HASHSTASH_SAFE=1 makes
+        # it the default for every stash in the process
+        self.safe = safe if safe is not None else bool(os.environ.get("HASHSTASH_SAFE"))
+        if self.safe and self.serializer != "hashstash":
+            raise ValueError(
+                f"safe=True requires the 'hashstash' serializer; "
+                f"{self.serializer!r} deserialization can always execute code"
+            )
+        # max_entries: soft cap; oldest entries are evicted (LRS) when exceeded
+        if max_entries is not None and max_entries < 1:
+            raise ValueError(f"max_entries must be >= 1, got {max_entries!r}")
+        self.max_entries = max_entries
         self.is_function_stash = (
             is_function_stash
             if is_function_stash is not None
@@ -300,7 +317,11 @@ class BaseHashStash(MutableMapping):
                 self.root_dir = os.path.join(config.root_dir,DEFAULT_NAME)
             else:
                 root_dir = str(root_dir)
-                if os.path.isabs(root_dir) or root_dir.startswith("~"):
+                if "://" in root_dir:
+                    # an fsspec URL (s3://bucket/x, memory://cache): already
+                    # absolute, and abspath would mangle the protocol
+                    self.root_dir = root_dir
+                elif os.path.isabs(root_dir) or root_dir.startswith("~"):
                     self.root_dir = os.path.expanduser(root_dir)
                 elif os.sep in root_dir or "/" in root_dir or root_dir.startswith("."):
                     # a relative *path* (contains separators or leading dot):
@@ -361,6 +382,7 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def deserialize(self, *args, **kwargs):
+        kwargs.setdefault("safe", self.safe)
         return deserialize(*args, serializer=self.serializer, **kwargs)
 
     @log.debug
@@ -638,6 +660,48 @@ class BaseHashStash(MutableMapping):
             encoded_value = self.encode_value(new_unencoded_value)
             self._set(encoded_key, encoded_value)
         self._stats["sets"] += 1
+        if self.max_entries is not None:
+            self._enforce_max_entries()
+
+    def _enforce_max_entries(self):
+        """Evict oldest entries (by latest write time) when over capacity.
+
+        Amortized: eviction only fires when len exceeds max_entries, and then
+        trims down to ~90% of the limit, so it runs about once every
+        max_entries/10 writes rather than on every write. Enforcement scans all
+        keys' timestamps (O(n)) when it fires — best for engines with cheap
+        len (sqlite/lmdb/redis/mongo/memory) or moderate caches."""
+        try:
+            n = len(self)
+        except Exception:
+            return
+        if n <= self.max_entries:
+            return
+        target = max(1, int(self.max_entries * 0.9))
+        to_evict = n - target
+        # (key, latest_ts) without decoding values where possible
+        aged = self._entries_by_age()
+        for key, _ts in aged[:to_evict]:
+            try:
+                self.delete(key)
+            except KeyError:
+                pass
+
+    def _entries_by_age(self):
+        """List of (key, latest_written_at) sorted oldest-first. Default
+        implementation reads metadata via get_all; engines with timestamped
+        filenames (pairtree) can override to avoid decoding values."""
+        aged = []
+        for key in list(self.keys()):
+            entries = self.get_all(
+                key, default=None, with_metadata=True, all_results=True,
+                as_dataframe=False, as_list=True, apply_ttl=False,
+            )
+            if not entries:
+                continue
+            aged.append((key, entries[-1].get("_written_at", 0.0)))
+        aged.sort(key=lambda kt: kt[1])
+        return aged
 
     @log.debug
     def run(
@@ -701,6 +765,49 @@ class BaseHashStash(MutableMapping):
             f"Caching result for {func.__name__} under {serialize(unencoded_key)}"
         )
         fstash.set(unencoded_key, result)
+        return result
+
+    # --- async API ---------------------------------------------------------
+    # Storage engines are synchronous; these run the blocking work in a thread
+    # so an event loop isn't stalled. arun additionally awaits coroutine
+    # functions (caching the awaited result, not the coroutine object) — this
+    # is what @stashed_result uses to wrap `async def`.
+
+    async def aget(self, *args, **kwargs):
+        import asyncio
+        return await asyncio.to_thread(self.get, *args, **kwargs)
+
+    async def aset(self, *args, **kwargs):
+        import asyncio
+        return await asyncio.to_thread(self.set, *args, **kwargs)
+
+    async def ahas(self, *args, **kwargs):
+        import asyncio
+        return await asyncio.to_thread(self.has, *args, **kwargs)
+
+    async def arun(self, func, *args, _force=False, _store_args=True, **kwargs):
+        import asyncio
+
+        funcx = unwrap_func(func)
+        if not asyncio.iscoroutinefunction(funcx):
+            # plain callable: just run() off-thread
+            return await asyncio.to_thread(
+                self.run, func, *args,
+                _force=_force, _store_args=_store_args, **kwargs,
+            )
+
+        fstash = self.attach_func(func)
+        func_kwargs = {k: v for k, v in kwargs.items() if k and k[0] != "_"}
+        unencoded_key = fstash.new_function_key(
+            *list(args), store_args=_store_args, **func_kwargs
+        )
+        if not _force:
+            res = await asyncio.to_thread(fstash.get, unencoded_key, default=_MISSING)
+            if res is not _MISSING:
+                return res
+        # await the coroutine, then store its result off-thread
+        result = await funcx(*args, **func_kwargs)
+        await asyncio.to_thread(fstash.set, unencoded_key, result)
         return result
 
     def map(
@@ -1448,6 +1555,7 @@ def HashStash(
         "mongo": ("hashstash.engines.mongo", "MongoHashStash"),
         "dataframe": ("hashstash.engines.dataframe", "DataFrameHashStash"),
         "jsonl": ("hashstash.engines.jsonl", "JSONLHashStash"),
+        "fsspec": ("hashstash.engines.fsspec", "FsspecHashStash"),
     }
     module_name, class_name = engine_registry[engine]
     try:

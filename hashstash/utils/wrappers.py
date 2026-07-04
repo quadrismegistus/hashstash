@@ -97,6 +97,10 @@ def stashed_result(
             except Exception:
                 return False
 
+        import asyncio
+
+        is_async = asyncio.iscoroutinefunction(unwrap_func(func))
+
         @log.debug
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -110,12 +114,25 @@ def stashed_result(
             kwargs.setdefault('_store_args', _store_args)
 
             return stash.run(call_func, *args, **kwargs)
-            
+
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            call_func = func
+            if args and _is_bound_call(args[0]):
+                call_func = getattr(args[0], func.__name__)
+                args = args[1:]
+            kwargs.setdefault('_force', _force)
+            kwargs.setdefault('_store_args', _store_args)
+            # await the coroutine (or return the cached result) instead of
+            # caching the un-awaited coroutine object
+            return await stash.arun(call_func, *args, **kwargs)
+
+        chosen = async_wrapper if is_async else wrapper
         func_stash = stash.attach_func(func)
-        wrapper.stash = func_stash
+        chosen.stash = func_stash
         # decorated_func.invalidate(*args, **kwargs) drops one cached call signature
-        wrapper.invalidate = func_stash.invalidate
-        return wrapper
+        chosen.invalidate = func_stash.invalidate
+        return chosen
 
     # Check if _func is a string (root_dir) or a function
     if isinstance(_func, str):
