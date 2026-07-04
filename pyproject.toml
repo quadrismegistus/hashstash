@@ -34,6 +34,7 @@ redis = ["redis", "redis_dict"]
 mongo = ["pymongo"]
 msgpack = ["msgpack"]
 fsspec = ["fsspec"]
+duckdb = ["duckdb"]
 best = ["lmdb", "lz4"]
 lmdb = ["lmdb"]
 diskcache = ["diskcache"]
@@ -57,6 +58,7 @@ engines = [
     "redis", "redis_dict",
     "pymongo",
     "ultradict",
+    "duckdb",
 ]
 dev = [
   # engines
@@ -67,6 +69,7 @@ dev = [
   "redis", "redis_dict",
   "pymongo",
   "ultradict",
+  "duckdb",
 
   # serializers
   "jsonpickle",# "numpy", "pandas"
@@ -94,6 +97,7 @@ all = [
   "redis", "redis_dict",
   "pymongo",
   "ultradict",
+  "duckdb",
 
   # serializers
   "jsonpickle",

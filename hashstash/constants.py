@@ -51,6 +51,7 @@ ENGINE_TYPES = Literal[
     "mongo",
     "jsonl",
     "fsspec",
+    "duckdb",
 ]
 ENGINES = ENGINE_TYPES.__args__
 BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve', 'jsonl']
@@ -65,6 +66,7 @@ ENGINE_INSTALL_HINTS = {
     "diskcache": "diskcache",
     "dataframe": "pandas numpy",
     "fsspec": "fsspec",
+    "duckdb": "duckdb",
 }
 
 # Performance testing constants
