@@ -56,6 +56,21 @@ def test_pmap_pool_usable_after_worker_exception():
         list(pmap(failing_function, objects=[2], num_proc=2))
     assert list(pmap(square, objects=[3], num_proc=2)) == [9]
 
+
+def test_worker_exception_replaces_pool():
+    """A worker exception taints the shared spawn pool so the NEXT pmap gets a
+    fresh executor — a reused poisoned pool can deadlock a later call (flaky
+    macOS-CI hang). Verify the pool object is actually replaced."""
+    from hashstash.utils.pmap import get_global_executor
+
+    before = get_global_executor(2)
+    with pytest.raises(ValueError):
+        list(pmap(failing_function, objects=[2], num_proc=2))
+    assert getattr(before, "_hs_tainted", False) is True
+    assert list(pmap(square, objects=[3], num_proc=2)) == [9]
+    after = get_global_executor(2)
+    assert after is not before  # fresh pool handed out
+
 @pytest.fixture
 def mock_log_prefix_str():
     with patch('hashstash.utils.logs.log_prefix_str', return_value='Test') as mock:
