@@ -1,17 +1,17 @@
 name: Test and Coverage
 
-# Run on every push and on every PR. The old filter ['*', '!main'] never
-# matched PRs into main (the branches filter applies to the BASE branch) nor
-# slash-named branches ('*' does not match '/'), so the normal PR flow was
-# never tested.
+# PRs carry branch CI (the old filter ['*', '!main'] never matched PRs into
+# main — the branches filter applies to the BASE branch — so the normal PR
+# flow was never tested). push is limited to main: running both events on a
+# PR branch produced duplicate runs whose cancelled twins cluttered the merge
+# box as "failing" checks. Use workflow_dispatch for ad-hoc branch runs.
 on:
   push:
-    branches: ['**']
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
-# a branch with an open PR triggers both push and pull_request runs of the
-# same commit: keep only the newest run per branch
+# rapid successive pushes to a PR: keep only the newest run
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
@@ -37,7 +37,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install .[dev]
+        pip install -e .[dev]
     - name: Run tests with coverage
       run: pytest --cov=hashstash --cov-report=xml
     - name: Upload results to Codecov
@@ -68,6 +68,6 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install .[dev]
+        pip install -e .[dev]
     - name: Run engine tests against live servers
       run: pytest tests/test_engines.py tests/test_regressions.py tests/test_written_at.py
