@@ -32,7 +32,14 @@ def get_global_executor(num_proc):
     with executor_lock:
         executor = executors.get(key)
         if executor is None or getattr(executor, "_broken", False):
-            executor = executors[key] = ProcessPoolExecutor(max_workers=num_proc)
+            # explicit spawn context: on Linux <= 3.13 the default is fork, and
+            # forking a worker while another thread (future callbacks, logging)
+            # holds a lock deadlocks the child — pmap is inherently multi-threaded.
+            # Workers rehydrate functions via stuff/unstuff, so nothing relies on
+            # fork's memory inheritance.
+            executor = executors[key] = ProcessPoolExecutor(
+                max_workers=num_proc, mp_context=mp.get_context("spawn")
+            )
         return executor
 
 def shutdown_global_executors():
@@ -103,7 +110,9 @@ class StashMap(UserList):
             self.progress_bar = progress_bar(total=self.total, desc=self.desc)
 
         self._executor = get_global_executor(num_proc)
-        self._executor_lock = mp.Lock() if num_proc > 1 else None
+        # only threads in THIS process contend on it: a multiprocessing.Lock here
+        # was pointless overhead and another fork-inheritance hazard
+        self._executor_lock = threading.Lock() if num_proc > 1 else None
 
         if _results is None:
             self._results = [

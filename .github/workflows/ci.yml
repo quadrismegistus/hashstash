@@ -10,6 +10,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# a branch with an open PR triggers both push and pull_request runs of the
+# same commit: keep only the newest run per branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
