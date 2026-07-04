@@ -232,6 +232,12 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
         return obj
 
     if isinstance(obj, dict):
+        if type(obj) is not dict:
+            # a dict SUBCLASS (OrderedDict, Counter, defaultdict, ...): coercing
+            # it to a plain dict would lose its type and behavior. Its reducer
+            # rebuilds the exact type — and these types are on the safe-mode
+            # allowlist, so this round-trips under safe=True too.
+            return ReducerSerializer.serialize(obj)
         if _dict_has_simple_keys(obj):
             return {k: _serialize_custom(v) for k, v in obj.items()}
         # Non-string keys (JSON would coerce them to strings) or reserved marker keys:
@@ -550,6 +556,97 @@ class NumpySerializer(CustomSerializer):
             return np.frombuffer(arr_bytes, dtype=dtype).reshape(shape)
         else:
             return np.array([_deserialize_custom(item) for item in data['__data__']['values']], dtype=dtype).reshape(shape)
+
+
+class NumpyScalarSerializer(CustomSerializer):
+    """numpy scalar types (np.int64, np.float32, np.bool_, np.complex128, ...).
+
+    These are NOT plain-int/float subclasses in modern numpy, so without this
+    they fell through to the generic reducer, whose constructor
+    (numpy's `scalar`) resolves to the wrong address and fails to reconstruct.
+    Stored as dtype + the Python-native value; rebuilt with dtype.type(value)."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'npscalar',
+            '__data__': {'dtype': str(obj.dtype), 'value': _serialize_custom(obj.item())},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        try:
+            import numpy as np
+        except ImportError:
+            raise ImportError("NumPy is required for this deserializer.")
+        d = data['__data__']
+        return np.dtype(d['dtype']).type(_deserialize_custom(d['value']))
+
+
+class PandasTimestampSerializer(CustomSerializer):
+    """pandas.Timestamp — took the generic instance path (rebuild-from-state),
+    which fails on the C-backed type. Stored as ISO 8601 (preserves timezone
+    and nanoseconds) and rebuilt with pd.Timestamp()."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'pd_timestamp',
+            '__data__': {'iso': obj.isoformat()},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("pandas is required for this deserializer.")
+        return pd.Timestamp(data['__data__']['iso'])
+
+
+class PandasTimedeltaSerializer(CustomSerializer):
+    """pandas.Timedelta — same generic-instance failure as Timestamp. Stored as
+    ISO 8601 duration and rebuilt with pd.Timedelta()."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'pd_timedelta',
+            '__data__': {'iso': obj.isoformat()},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("pandas is required for this deserializer.")
+        return pd.Timedelta(data['__data__']['iso'])
+
+
+class PandasNaTSerializer(CustomSerializer):
+    """pandas.NaT — the generic instance path built a broken pseudo-NaT (repr'd
+    as NaT but pd.isna() returned False on it). NaT is a singleton, so store a
+    bare marker and return the real pd.NaT on load."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'pd_nat',
+            '__data__': {},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("pandas is required for this deserializer.")
+        return pd.NaT
 
 class PandasSeriesSerializer(CustomSerializer):
     @staticmethod
@@ -959,3 +1056,38 @@ CUSTOM_DESERIALIZERS = {
     'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.deserialize,
     'hashstash.utils.dataframes.MetaDataFrame': MetaDataFrameSerializer.deserialize,
 }
+
+# pandas scalar types (both the internal and pandas-3.x top-level module paths)
+for _addr in (
+    'pandas._libs.tslibs.timestamps.Timestamp',
+    'pandas.Timestamp',
+):
+    CUSTOM_SERIALIZERS[_addr] = PandasTimestampSerializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = PandasTimestampSerializer.deserialize
+for _addr in (
+    'pandas._libs.tslibs.timedeltas.Timedelta',
+    'pandas.Timedelta',
+):
+    CUSTOM_SERIALIZERS[_addr] = PandasTimedeltaSerializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = PandasTimedeltaSerializer.deserialize
+CUSTOM_SERIALIZERS['pandas._libs.tslibs.nattype.NaTType'] = PandasNaTSerializer.serialize
+CUSTOM_DESERIALIZERS['pandas._libs.tslibs.nattype.NaTType'] = PandasNaTSerializer.deserialize
+
+
+# numpy scalar types registered by ADDRESS STRING so that `import hashstash`
+# never imports numpy (it stays a zero-dependency import); numpy is imported
+# lazily only when a numpy scalar is actually deserialized. Both the old
+# ('numpy.bool_') and new ('numpy.bool') names are covered across versions.
+# numpy.float64 is intentionally excluded: it subclasses float, so it is stored
+# as a plain float (value-preserving) before any custom dispatch sees it.
+for _addr in (
+    'numpy.int8', 'numpy.int16', 'numpy.int32', 'numpy.int64',
+    'numpy.uint8', 'numpy.uint16', 'numpy.uint32', 'numpy.uint64',
+    'numpy.longlong', 'numpy.ulonglong', 'numpy.intc', 'numpy.uintc',
+    'numpy.intp', 'numpy.uintp',
+    'numpy.float16', 'numpy.float32',
+    'numpy.complex64', 'numpy.complex128',
+    'numpy.bool_', 'numpy.bool',
+):
+    CUSTOM_SERIALIZERS[_addr] = NumpyScalarSerializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = NumpyScalarSerializer.deserialize
