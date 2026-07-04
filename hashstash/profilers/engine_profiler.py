@@ -132,8 +132,6 @@ class HashStashProfiler:
             tasks = [{**task} for _ in range(iterations)]
             if operations is not None:
                 tasks[-1]['operations'] = [x for x in operations] + ["Size"]
-            print(tasks[0])
-            print(tasks[-1])
 
             smap = profiler_stash.map(
                 profile_stash_transaction,

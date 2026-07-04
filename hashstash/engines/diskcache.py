@@ -8,4 +8,6 @@ class DiskCacheHashStash(BaseHashStash):
     def get_db(self):
         from diskcache import Cache
         os.makedirs(self.path_dirname, exist_ok=True)
-        return Cache(self.path)
+        # eviction_policy='none' disables diskcache's default 1 GB LRS eviction —
+        # no other engine silently drops entries, so this one must not either
+        return Cache(self.path, eviction_policy="none")

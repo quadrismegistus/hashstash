@@ -66,8 +66,10 @@ def encode_compressed(data, compress_type=DEFAULT_COMPRESS):
         else:
             raise ValueError(f"Unsupported compression type: {compress_type}")
     except Exception as e:
+        # Never fall back to returning the raw input: the entry would be recorded
+        # as compressed but stored uncompressed, making it unreadable on decode.
         log.error(f"Compression error: {e}")
-        return data
+        raise
 
 def decode_compressed(data, compress_type=DEFAULT_COMPRESS):
     compress_type = get_compresser(compress_type)
@@ -92,15 +94,14 @@ def decode_compressed(data, compress_type=DEFAULT_COMPRESS):
             raise ValueError(f"Unsupported compression type: {compress_type}")
     except Exception as e:
         log.error(f"Decompression error: {e}")
-        raise e
-        return data
+        raise
 
 def encode_b64(data):
     try:
         return base64.b64encode(data)
     except Exception as e:
-        log.debug(f"Base64 encoding error: {e}")
-        return data
+        log.error(f"Base64 encoding error: {e}")
+        raise
 
 def decode_b64(data):
     # Accept either str or bytes; verify input is actually base64 to avoid corrupting plain strings

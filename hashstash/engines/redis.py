@@ -40,16 +40,12 @@ class RedisHashStash(BaseHashStash):
         pass # how does one close a redis connection?
 
     def clear(self):
+        # Delete only this stash's namespaced keys. Never flushdb: the numbered db is
+        # md5(dbname) % 16, so unrelated stashes (and any other application data) share it.
+        log.debug(f"Clearing Redis namespace for {self} at {self.host}:{self.port}")
+        with self.db as db:
+            db.clear()
         super().close()
-        import redis
-        log.debug(f"Dropping Redis database at {self.host}:{self.port}")
-        client = redis.Redis(host=self.host, port=self.port, db=get_db_number(self.dbname))
-        # Free up disk space immediately
-        try:
-            client.flushdb()
-            client.save()
-        except Exception as e:
-            pass
         return self
     
     @property

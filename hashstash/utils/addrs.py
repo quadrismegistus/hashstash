@@ -3,8 +3,7 @@ BUILTIN_DECORATORS = {'property', 'classmethod', 'staticmethod', 'cached_propert
 
 
 def get_obj_module(obj):
-    if hasattr(obj,'__name__') and obj.__name__ == '<lambda>': 
-        print(obj,obj.__name__)
+    if hasattr(obj,'__name__') and obj.__name__ == '<lambda>':
         return '__main__'
     if hasattr(obj, "__module__"): return obj.__module__
     if hasattr(obj, "__class__"): return get_obj_module(obj.__class__)

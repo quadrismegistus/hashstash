@@ -230,12 +230,6 @@ class PairtreeHashStash(BaseHashStash):
                 yield self._get_from_filepath(path)
 
     @log.debug
-    # def values(self, all_results=None, **kwargs):
-    #     yield from (
-    #         self.decode_value(value) for value in self._values(all_results=all_results)
-    #     )
-
-    @log.debug
     def _items(self, all_results=None):
         for path_key, path_values in self.paths_items(all_results=all_results):
             encoded_key = self._get_from_filepath(path_key)
@@ -244,31 +238,8 @@ class PairtreeHashStash(BaseHashStash):
                 yield (encoded_key, encoded_value)
 
     @log.debug
-    # def items(self, all_results=None, with_metadata=False, **kwargs):
-    #     for path_key, path_values in self.paths_items(
-    #         all_results=all_results, with_metadata=True
-    #     ):
-    #         encoded_key = self._get_from_filepath(path_key)
-    #         decoded_key = self.decode_key(encoded_key)
-
-    #         for path_value_d in path_values:
-    #             path_value = path_value_d.pop("_path")
-    #             encoded_value = self._get_from_filepath(path_value)
-    #             decoded_value = self.decode_value(encoded_value)
-    #             if not with_metadata:
-    #                 yield (decoded_key, decoded_value)
-    #             else:
-    #                 key = decoded_key
-    #                 value = decoded_value
-    #                 key_d = {"_key": key} if not isinstance(key, dict) else {**key}
-    #                 value_d = {
-    #                     "_value": value
-    #                 }  # if not isinstance(value,dict) else {**value}
-    #                 meta_d = path_value_d
-    #                 yield {**key_d, **meta_d, **value_d}
-
-    def __delitem__(self, unencoded_key: str) -> None:
-        path = self.get_path(unencoded_key)
+    def _del(self, encoded_key: bytes) -> None:
+        path = self._get_path(encoded_key)
         if not os.path.exists(path):
-            raise KeyError(unencoded_key)
+            raise KeyError(encoded_key)
         shutil.rmtree(path, ignore_errors=True)

@@ -172,12 +172,16 @@ class BaseHashStash(MutableMapping):
             folders.append(param_folder_name)
             self.path_dirname = os.path.join(*folders)
             self.path = os.path.join(self.path_dirname, self.filename)
+            self._owns_dir = True
         else:
             path = Path(root_dir).expanduser().resolve()
             self.root_dir = str(path.parent)
             self.filename = str(path.name)
             self.path_dirname = str(path.parent)
             self.path = str(path)
+            # path_dirname is a pre-existing directory we share with other files;
+            # clear() must never remove it (see _owns_dir check there)
+            self._owns_dir = False
         
         
         if clear:
@@ -655,6 +659,7 @@ class BaseHashStash(MutableMapping):
                 db[encoded_key] = encoded_value
         except Exception as e:
             log.error(f"Failed to set key {encoded_key}: {e}")
+            raise
 
     @log.debug
     def __contains__(self, unencoded_key: Any) -> bool:
@@ -720,9 +725,12 @@ class BaseHashStash(MutableMapping):
     def clear(self) -> "BaseHashStash":
         for sub in self.children:
             sub.clear()
-        
+
         self.close()
-        self._remove_dir(self.path_dirname)
+        if getattr(self, "_owns_dir", True):
+            self._remove_dir(self.path_dirname)
+        else:
+            self._remove_dir(self.path)
         return self
 
     @log.debug
