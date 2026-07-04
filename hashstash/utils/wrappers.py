@@ -51,14 +51,6 @@ class DictContext(UserDict):
     def __exit__(self, exc_type, exc_value, traceback):
         pass  # Nothing happens on close
 
-def get_dict(obj):
-    return {
-        k:getattr(obj,k)
-        for k in dir(obj)
-        if k and k[0]=='_'
-        and not isinstance(getattr(obj,k), dict)
-    }
-
 @log.debug
 def stashed_result(
     _func=None,
@@ -78,20 +70,33 @@ def stashed_result(
         if stash is None:
             stash = HashStash(*stash_args, **stash_kwargs)
 
+        from .addrs import unwrap_func
+
+        def _is_bound_call(obj):
+            # A call is a method call only if obj's class actually carries THIS
+            # decorated function under its name — not merely because obj is some
+            # object with a __dict__ (which misclassified plain first arguments)
+            candidate = getattr(type(obj), func.__name__, None)
+            if candidate is None:
+                return False
+            try:
+                return unwrap_func(candidate) is unwrap_func(func)
+            except Exception:
+                return False
+
         @log.debug
         @wraps(func)
         def wrapper(*args, **kwargs):
-            nonlocal _force, stash, _store_args, func
-            if args and get_pytype(args[0]) in {'class', 'instance'}:
-                self_obj = args[0]
-                func = getattr(self_obj, func.__name__)
+            call_func = func
+            if args and _is_bound_call(args[0]):
+                call_func = getattr(args[0], func.__name__)
                 args = args[1:]
 
             # Extract _force from kwargs if present, otherwise use the default force value
             kwargs.setdefault('_force', _force)
             kwargs.setdefault('_store_args', _store_args)
-            
-            return stash.run(func, *args, **kwargs)
+
+            return stash.run(call_func, *args, **kwargs)
             
         func_stash = stash.attach_func(func)
         wrapper.stash = func_stash

@@ -73,7 +73,12 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
     
     if isinstance(obj, type):
         return ClassSerializer.serialize(obj)
-    
+
+    if inspect.ismodule(obj):
+        # serialize modules by reference — recursing into __dict__ would pull in
+        # the world (and blow the recursion limit)
+        return {'__py__': obj.__name__, '__pytype__': 'module'}
+
     if inspect.isgenerator(obj):
         return GeneratorSerializer.serialize(obj)
 
@@ -163,6 +168,9 @@ def _deserialize_custom(data: Any) -> Any:
 
         if pytype == 'generator':
             return GeneratorSerializer.deserialize(data)
+
+        if pytype == 'module':
+            return importlib.import_module(addr)
 
         obj_data = data.get('__data__')
         # 'is not None': an empty-but-valid payload ({}, [], 0, '') must still be

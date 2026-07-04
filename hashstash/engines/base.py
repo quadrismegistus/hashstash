@@ -15,6 +15,19 @@ _last_used = {}
 ENVELOPE_MARKER = "__hs_v1__"
 
 
+class _MissingType:
+    """Sentinel distinguishing 'key absent' from a stored None value."""
+
+    def __repr__(self):
+        return "<MISSING>"
+
+    def __bool__(self):
+        return False
+
+
+_MISSING = _MissingType()
+
+
 def _coerce_timestamp(dt):
     """Normalize a datetime or unix timestamp to a float unix timestamp (UTC)."""
     if dt is None:
@@ -109,6 +122,7 @@ class BaseHashStash(MutableMapping):
         "append_mode",
         "is_function_stash",
         "is_tmp",
+        "_root_is_dir",
     ]
     metadata_cols = ["_version", "_written_at"]
     CONNECTION_TIMEOUT = 60  # Close connections after 60 seconds of inactivity
@@ -132,6 +146,7 @@ class BaseHashStash(MutableMapping):
         is_tmp:bool=None,
         append_mode: bool = False,
         clear: bool = False,
+        _root_is_dir: bool = None,
         **kwargs,
     ) -> None:
         config = Config()
@@ -158,13 +173,28 @@ class BaseHashStash(MutableMapping):
 
 
 
-        if root_dir is None or is_dir(root_dir):
+        # _root_is_dir overrides the name-based heuristic: internal callers (sub())
+        # know their root is a directory even when its name contains dots (the
+        # param folder 'engine.serializer.encoding' always does — the old heuristic
+        # silently collapsed every sub-stash onto its parent's directory)
+        root_is_dir = _root_is_dir if _root_is_dir is not None else (
+            root_dir is None or is_dir(root_dir)
+        )
+        self._root_is_dir = root_is_dir
+        if root_is_dir:
             if root_dir is None:
                 self.root_dir = os.path.join(config.root_dir,DEFAULT_NAME)
-            elif not os.path.isabs(root_dir):
-                self.root_dir = os.path.join(config.root_dir, root_dir)
             else:
-                self.root_dir = os.path.expanduser(root_dir)
+                root_dir = str(root_dir)
+                if os.path.isabs(root_dir) or root_dir.startswith("~"):
+                    self.root_dir = os.path.expanduser(root_dir)
+                elif os.sep in root_dir or "/" in root_dir or root_dir.startswith("."):
+                    # a relative *path* (contains separators or leading dot):
+                    # resolve from the current directory, like any file API would
+                    self.root_dir = os.path.abspath(root_dir)
+                else:
+                    # a bare *name*: nest under the configured cache root
+                    self.root_dir = os.path.join(config.root_dir, root_dir)
 
             folders = [self.root_dir]
             if self.dbname: folders.append(self.dbname)
@@ -374,8 +404,8 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __getitem__(self, unencoded_key: str) -> Any:
-        obj = self.get(unencoded_key)
-        if obj is None:
+        obj = self.get(unencoded_key, default=_MISSING)
+        if obj is _MISSING:
             raise KeyError(unencoded_key)
         return obj
 
@@ -415,17 +445,16 @@ class BaseHashStash(MutableMapping):
         _force=False,
         **kwargs,
     ):
-        unencoded_value = None
+        unencoded_value = _MISSING
         if not _force:
-            unencoded_value = self.get(unencoded_key, default=None, **kwargs)
-        if unencoded_value is None:
+            unencoded_value = self.get(unencoded_key, default=_MISSING, **kwargs)
+        if unencoded_value is _MISSING:
             log.debug("setting")
             unencoded_value = unencoded_value_setter()
-            if unencoded_value is not None:
-                self.set(unencoded_key, unencoded_value)
+            self.set(unencoded_key, unencoded_value)
         else:
             log.debug("getting")
-        return unencoded_value if unencoded_value is not None else default
+        return unencoded_value if unencoded_value is not _MISSING else default
 
     @log.debug
     def get(
@@ -512,31 +541,28 @@ class BaseHashStash(MutableMapping):
         elif get_pytype(func) == "classmethod":
             args = [get_class_from_method(func)] + args
         # func = unwrap_func(func)
+        # underscore-prefixed kwargs are stash-control options: excluded from the
+        # cache key and never passed to the function or to get()
+        func_kwargs = {k: v for k, v in kwargs.items() if k and k[0] != "_"}
         unencoded_key = fstash.new_function_key(
             *args,
             store_args=_store_args,
-            **{k: v for k, v in kwargs.items() if k and k[0] != "_"},
+            **func_kwargs,
         )
-        # #pprint(unencoded_key)
-        # #print('run',meta_kwargs)
         if not _force:
-            res = fstash.get(unencoded_key, default=None, **kwargs)
-            if res is not None:
+            res = fstash.get(unencoded_key, default=_MISSING)
+            if res is not _MISSING:
                 log.debug(
                     f"Stash hit for {func.__name__} in {fstash}. Returning stashed result"
                 )
-                # return unencoded_key
                 return res
 
         # didn't find
         note = "Forced execution" if _force else "Stash miss"
         log.debug(f"{note} for {func.__name__}. Executing function.")
 
-        # call func
-        # args = [obj] + list(args) if obj else list(args)
-        # result = unwrap_func(func)(*args, **kwargs)
         funcx = unwrap_func(func)
-        result = call_function_politely(funcx, *args, **kwargs, _force=_force)
+        result = call_function_politely(funcx, *args, **func_kwargs)
         result = list(result) if is_generator(result) else result
         log.debug(
             f"Caching result for {func.__name__} under {serialize(unencoded_key)}"
@@ -564,7 +590,11 @@ class BaseHashStash(MutableMapping):
     ):
         pmap = None
         self.attach_func(func)
-        key = StashMap.get_stash_key(func, objects, options, total=total)
+        # common_kwargs are merged into every call's options, so they must be part
+        # of the map's identity or maps differing only in kwargs return stale results
+        key = StashMap.get_stash_key(
+            func, objects, options, total=total, **common_kwargs
+        )
         #pprint(key)
         if stash_map and not _force and self.has(key):
             log.info(f"Stash hit for {func.__name__} in {self}. Returning stashed StashMap")
@@ -611,7 +641,11 @@ class BaseHashStash(MutableMapping):
     def attach_func(self, func):
         funcx = unwrap_func(func)
         local_stash = self.sub_function_results(funcx)
-        func.__dict__["stash"] = funcx.__dict__["stash"] = local_stash
+        for f in (func, funcx):
+            try:
+                f.__dict__["stash"] = local_stash
+            except (AttributeError, TypeError):
+                pass  # builtins have no writable __dict__
         return local_stash
 
     @log.debug
@@ -832,8 +866,8 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def setdefault(self, key, default=None):
-        val = self.get(key,default=None)
-        if val is not None: return val
+        val = self.get(key, default=_MISSING)
+        if val is not _MISSING: return val
         self.set(key,default)
         return default
 
@@ -883,12 +917,16 @@ class BaseHashStash(MutableMapping):
     @log.debug
     def sub(self, root_dir:str=None, dbname=DEFAULT_SUB_DBNAME, **kwargs):
         kwargs = {
-            **self.to_dict(), 
-            **kwargs, 
+            **self.to_dict(),
+            **kwargs,
             "parent": self,
             'root_dir': root_dir if root_dir is not None else self.path_dirname,
             'dbname': dbname
         }
+        if root_dir is None:
+            # our own path_dirname is definitionally a directory, even though its
+            # dotted param-folder name would fail the is_dir extension heuristic
+            kwargs['_root_is_dir'] = True
         new_instance = self.__class__(**kwargs)
         self.children.append(new_instance)
         return new_instance
@@ -973,21 +1011,45 @@ class BaseHashStash(MutableMapping):
     def sub_function_results(
         self, func, dbname=None, update_on_src_change=False, **kwargs
     ):
-        # import types
         func_name = get_obj_addr(func).replace("<", "_").replace(">", "_")
-        if update_on_src_change:  # or not can_import_object(func):
-            # logger.info(f'updating on src change because can import object? {can_import_object(func)} --> {func}')
-            func_name += "/" + encode_hash(get_function_src(func))[:10]
-        # new_dbname = f'{self.dbname}/{"stashed_result" if not dbname else dbname}/{func_name}'
+        if update_on_src_change or not self._function_is_stable_identity(func):
+            # closures, lambdas, and non-importable functions can't be identified
+            # by address alone (every lambda is '__main__.<lambda>'; two closures
+            # from one factory share an address): include source + closure values
+            # in the namespace so different functions never share cached results
+            func_name += "/" + encode_hash(self._function_identity_sig(func))[:10]
         new_dbname = f'{"stashed_result" if not dbname else dbname}/{func_name}'
         log.debug(f"Sub-function results stash: {new_dbname}")
         stash = self.sub(
             dbname=new_dbname,
             is_function_stash=True,
         )
-        func.__dict__["stash"] = stash
+        try:
+            func.__dict__["stash"] = stash
+        except (AttributeError, TypeError):
+            pass  # builtins have no writable __dict__
         stash.__dict__["func"] = func
         return stash
+
+    @staticmethod
+    def _function_is_stable_identity(func):
+        """True if the function's import address alone identifies it: importable,
+        not a lambda, and not a closure (whose cell values the address can't see)."""
+        if getattr(func, "__name__", "") == "<lambda>":
+            return False
+        if getattr(unwrap_func(func), "__closure__", None):
+            return False
+        return can_import_object(func)
+
+    @staticmethod
+    def _function_identity_sig(func):
+        from ..serializers.custom import get_function_closure
+
+        sig = get_function_src(func) or getattr(func, "__qualname__", repr(func))
+        closure = get_function_closure(unwrap_func(func))
+        if closure:
+            sig += json.dumps(closure, sort_keys=True, default=str)
+        return sig
 
     def assemble_ld(
         self,

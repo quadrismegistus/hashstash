@@ -339,7 +339,15 @@ def is_classmethod(obj):
     
     return False
 def is_instancemethod(obj):
-    return not is_classmethod(obj) and hasattr(obj,'__self__') and obj.__self__ is not None
+    # builtins like len expose __self__ as their *module*, not an instance
+    if isinstance(obj, types.BuiltinFunctionType):
+        return False
+    return (
+        not is_classmethod(obj)
+        and hasattr(obj, '__self__')
+        and obj.__self__ is not None
+        and not inspect.ismodule(obj.__self__)
+    )
 
 def is_method(func):
     """

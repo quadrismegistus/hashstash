@@ -230,6 +230,130 @@ def test_unserializable_object_raises_not_none():
         serialize(threading.Lock(), serializer="hashstash")
 
 
+# --- Stage 3: None-sentinel, function identity, wrappers/run() --------------
+
+
+def test_stored_none_is_not_a_miss(tmp_path):
+    """Storing None used to make __getitem__ raise KeyError and get_set re-run
+    its setter on every call."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    stash["k"] = None
+    assert "k" in stash
+    assert stash["k"] is None
+
+    calls = []
+
+    def setter():
+        calls.append(1)
+        return None
+
+    assert stash.get_set("none-key", setter) is None
+    assert stash.get_set("none-key", setter) is None
+    assert len(calls) == 1
+
+
+def _returns_none(x):
+    _returns_none.calls.append(x)
+    return None
+
+
+_returns_none.calls = []
+
+
+def test_none_returning_function_cached(tmp_path):
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    assert stash.run(_returns_none, 1) is None
+    assert stash.run(_returns_none, 1) is None
+    assert len(_returns_none.calls) == 1
+
+
+def test_closures_do_not_share_cache(tmp_path):
+    """Closures from the same factory shared one cache key: run(make_adder(100), 5)
+    used to return make_adder(1)'s cached 6."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+
+    def make_adder(n):
+        def adder(x):
+            return x + n
+
+        return adder
+
+    assert stash.run(make_adder(1), 5) == 6
+    assert stash.run(make_adder(100), 5) == 105
+
+
+def test_lambdas_do_not_share_cache(tmp_path):
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    add_one = lambda x: x + 1
+    times_ten = lambda x: x * 10
+    assert stash.run(add_one, 5) == 6
+    assert stash.run(times_ten, 5) == 50
+
+
+class SimplePoint:
+    def __init__(self, x):
+        self.x = x
+
+
+def test_stashed_result_with_object_first_arg(tmp_path):
+    """Any object-valued first argument used to be misclassified as 'self',
+    raising AttributeError and corrupting the decorator's closure."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+
+    @stash.stashed_result
+    def scale(point, factor):
+        return point.x * factor
+
+    assert scale(SimplePoint(2), 3) == 6
+    assert scale(SimplePoint(5), 3) == 15
+
+
+def test_run_with_kwarg_named_default(tmp_path):
+    """User kwargs used to leak into stash.get(), colliding with its parameters."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+
+    def render(x, default="D"):
+        return f"{x}-{default}"
+
+    assert stash.run(render, 1, default="Z") == "1-Z"
+
+
+def test_run_builtin(tmp_path):
+    """run() on builtins used to crash (no writable __dict__)."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    assert stash.run(len, [1, 2, 3]) == 3
+
+
+def _mul(x, y=1):
+    return x * y
+
+
+def test_map_key_includes_common_kwargs(tmp_path):
+    """Two maps differing only in common kwargs used to share one stashed map."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    r1 = list(stash.map(_mul, objects=[1, 2], y=2, num_proc=1, progress=False))
+    r2 = list(stash.map(_mul, objects=[1, 2], y=3, num_proc=1, progress=False))
+    assert [r.result for r in r1] == [2, 4]
+    assert [r.result for r in r2] == [3, 6]
+
+
+def test_relative_dir_path_resolves_from_cwd(tmp_path, monkeypatch):
+    """Directory-style relative paths used to silently nest under
+    ~/.cache/hashstash instead of resolving from the current directory."""
+    monkeypatch.chdir(tmp_path)
+    stash = HashStash(root_dir="./mycache")
+    assert stash.root_dir == str(tmp_path / "mycache")
+    stash2 = HashStash(root_dir=os.path.join("data", "cache"))
+    assert stash2.root_dir == str(tmp_path / "data" / "cache")
+
+
+def test_bare_name_nests_under_config_root():
+    from hashstash.config import Config
+
+    stash = HashStash(root_dir="bare_name_regression")
+    assert stash.root_dir == os.path.join(Config().root_dir, "bare_name_regression")
+
+
 @pytest.mark.skipif(not _redis_available(), reason="no local redis server")
 def test_redis_clear_scoped_to_namespace():
     """clear() used to flushdb() the whole numbered Redis db, wiping other stashes

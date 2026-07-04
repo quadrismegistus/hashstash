@@ -35,6 +35,11 @@ def prune_none_values(data, badkeys=None):
 
 @log.debug
 def is_dir(path):
+    # what exists on disk beats any name-based guess
+    if os.path.isdir(path):
+        return True
+    if os.path.isfile(path):
+        return False
     fn, ext = os.path.splitext(path)
     return not bool(ext)
 
