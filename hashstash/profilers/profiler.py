@@ -59,8 +59,30 @@ def generate_data(
     elif choice == "pandas_df" or choice == "meta_df":
         df = generate_data_dataframe(target_size)
         return MetaDataFrame(df) if choice == "meta_df" else (df.df if isinstance(df, MetaDataFrame) else df)
+    elif choice == "mixed":
+        return generate_mixed(target_size)
     else:
         assert False, f"Invalid data type: {choice}"
+
+
+def generate_mixed(target_size: int) -> Dict[str, Any]:
+    """A payload that deliberately exercises the serializer's FULL path (not the
+    JSON-native fast-path): tuples, sets, bytes, and datetimes alongside a
+    native dict of roughly the target size. Use this to profile realistic
+    non-JSON-shaped values, since generate_dict/generate_primitive only produce
+    JSON-native data (which the fast-path handles)."""
+    # local import: the package's star-import chain rebinds a top-level
+    # `datetime` to the class, shadowing the module — import the class explicitly
+    from datetime import datetime as _dt
+
+    base = generate_dict(target_size)
+    base["_tuple"] = tuple(generate_primitive() for _ in range(8))
+    base["_set"] = set(range(20))
+    base["_frozenset"] = frozenset(("a", "b", "c"))
+    base["_bytes"] = bytes(range(64))
+    base["_datetime"] = _dt(2020, 1, 1, 12, 30, 15)
+    base["_nested"] = [(i, {i, i + 1}, b"x" * 4) for i in range(8)]
+    return base
 
 
 @stashed_dataframe(append_mode=False)

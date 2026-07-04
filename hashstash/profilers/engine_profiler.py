@@ -291,6 +291,72 @@ class HashStashProfiler:
         return cls.get_profile_data(**{**opts_serializers, **opts})
 
     @classmethod
+    def compare_serializers(
+        cls,
+        serializers=None,
+        sizes=(10_000,),
+        iterations=20,
+        data_types=("dict", "mixed"),
+        engine="memory",
+    ):
+        """Clean per-serializer comparison: for each (serializer, size, data_type)
+        it times serialize + deserialize and records output size, returning a tidy
+        DataFrame with one row per iteration (columns include Serializer, Data
+        Type, Size (B), Serialize/Deserialize Time (s), Serialized Size (B)).
+
+        Unlike get_profile_data() — whose throughput rollup drops the Serializer
+        identity — this reuses the working single-serializer profile() primitive
+        and keeps every dimension, so the result is directly groupable. Include
+        the 'mixed' data type to exercise the serializer's full (non-fast-path)
+        code, since 'dict'/'primitive' produce only JSON-native data.
+
+        Requires pandas.
+        """
+        import tempfile
+
+        import pandas as pd
+
+        serializers = serializers or get_working_serializers()
+        frames = []
+        for serializer in serializers:
+            for size in sizes:
+                for data_type in data_types:
+                    stash = HashStash(
+                        engine=engine,
+                        serializer=serializer,
+                        compress=False,
+                        b64=True,
+                        root_dir=tempfile.mkdtemp(prefix="hs-bench-"),
+                    )
+                    try:
+                        df = cls(stash).profile(
+                            size=size,
+                            iterations=iterations,
+                            num_proc=1,
+                            data_type=data_type,
+                            operations=["Serialize", "Deserialize"],
+                            progress=False,
+                        )
+                    except Exception as e:
+                        # a data-only serializer (msgpack/cbor2) can't encode the
+                        # 'mixed' payload (sets/tuples/bytes) — a real capability
+                        # difference. Record it and keep going.
+                        log.info(
+                            f"{serializer} cannot serialize data_type={data_type!r}: {e}"
+                        )
+                        frames.append(
+                            pd.DataFrame([{
+                                "Serializer": serializer,
+                                "Data Type": data_type,
+                                "Size (B)": size,
+                                "Unsupported": True,
+                            }])
+                        )
+                        continue
+                    frames.append(df)
+        return pd.concat(frames, ignore_index=True)
+
+    @classmethod
     def profile_engines(cls, **opts):
         return cls.get_profile_data(**{**opts_engines, **opts})
 

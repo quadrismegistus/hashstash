@@ -39,7 +39,18 @@ def get_global_executor(num_proc):
     key = (os.getpid(), num_proc)
     with executor_lock:
         executor = executors.get(key)
-        if executor is None or getattr(executor, "_broken", False):
+        # A worker raising a NORMAL exception does not set _broken, but the
+        # spawn pool can still be left in a state where a LATER pmap deadlocks
+        # (observed as a flaky macOS-CI hang in test_pmap_pool_usable_after_
+        # worker_exception). So we also replace a pool we tainted after a worker
+        # error. Replacement happens here (between pmaps), never mid-pmap, so the
+        # tainting pmap's remaining items still complete on the old pool.
+        if (
+            executor is None
+            or getattr(executor, "_broken", False)
+            or getattr(executor, "_hs_tainted", False)
+        ):
+            old = executor
             # explicit spawn context: on Linux <= 3.13 the default is fork, and
             # forking a worker while another thread (future callbacks, logging)
             # holds a lock deadlocks the child — pmap is inherently multi-threaded.
@@ -48,7 +59,23 @@ def get_global_executor(num_proc):
             executor = executors[key] = ProcessPoolExecutor(
                 max_workers=num_proc, mp_context=mp.get_context("spawn")
             )
+            if old is not None:
+                # don't wait: any still-in-flight futures on the old pool finish,
+                # then its workers exit; we just stop handing it out.
+                old.shutdown(wait=False)
         return executor
+
+
+def taint_global_executor(num_proc):
+    """Mark the cached pool for (pid, num_proc) so the NEXT get_global_executor
+    replaces it. Called when a worker future raises — a normal task exception
+    leaves _broken unset, but the pool may still deadlock a later pmap on spawn."""
+    global executors
+    key = (os.getpid(), num_proc)
+    with executor_lock:
+        executor = executors.get(key)
+        if executor is not None:
+            executor._hs_tainted = True
 
 def shutdown_global_executors():
     global executors
@@ -543,6 +570,11 @@ class StashMapRun:
                     # raising here would be swallowed by add_done_callback:
                     # remember the failure and re-raise when .result is read
                     self._error = e
+                    # taint the shared pool so the next pmap gets a fresh one —
+                    # a worker exception can otherwise leave the spawn pool in a
+                    # state that deadlocks a later call
+                    if self._pmap_instance.num_proc > 1:
+                        taint_global_executor(self._pmap_instance.num_proc)
             else:
                 self._result = future_or_result
         if self._pmap_instance.progress_bar:
