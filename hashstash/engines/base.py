@@ -132,6 +132,24 @@ def _is_remote_fsspec_uri(root_dir):
     scheme = root_dir.split("://", 1)[0].lower()
     return scheme not in ("", "file", "local", "memory")
 
+
+# Explicit version stamped into every value envelope (the "_fv" field). Bump this
+# ONLY when an incompatible change is made to how values are wrapped, and add a
+# branch to _migrate_envelope() for the old version. Envelopes written before
+# versioning existed have no "_fv" and read as version 1; the field is plain data,
+# so it costs a couple of bytes and is ignored by older hashstash versions
+# (forward-compatible). Keys are never versioned — they must stay canonical.
+#
+# Scope: this versions the ENVELOPE used by the key-value engines (sqlite, lmdb,
+# redis, mongo, memory, diskcache, shelve). The file-layout engines (pairtree,
+# dataframe, jsonl) store bare values and version through their on-disk layout,
+# so they don't carry "_fv". Serializer-format changes (custom.py __pytype__
+# tags) are handled by tag-dispatch — the deserializer recognizes both old and
+# new tag forms — which is why most format evolution needs no version bump; this
+# field is for changes to the envelope that a structure check alone can't tell
+# apart.
+FORMAT_VERSION = 1
+
 # single-flight key locks are striped across this many lock files per stash:
 # bounded lock-file count, negligible collision odds between distinct keys
 SINGLE_FLIGHT_STRIPES = 256
@@ -238,6 +256,10 @@ def _unwrap_envelope(decoded):
     legacy lists as multiple versions silently corrupted list-valued caches
     (get() returned the last element instead of the list)."""
     if isinstance(decoded, dict) and decoded.get(ENVELOPE_MARKER) is True:
+        # envelopes written before versioning have no "_fv" -> treat as version 1
+        version = decoded.get("_fv", 1)
+        if version != FORMAT_VERSION:
+            decoded = _migrate_envelope(decoded, version)
         values = decoded.get("_values", [])
         timestamps = decoded.get("_written_at", [])
         if len(timestamps) < len(values):
@@ -246,9 +268,29 @@ def _unwrap_envelope(decoded):
     return [decoded], [0.0]
 
 
+def _migrate_envelope(decoded, version):
+    """Bring an envelope written by an older FORMAT_VERSION up to the current one.
+
+    Currently a no-op passthrough (only version 1 exists) — this is the single
+    place to add migration logic when FORMAT_VERSION is bumped, so old caches
+    keep reading instead of silently misinterpreting. A newer-than-known version
+    (data written by a future hashstash) is returned untouched: the envelope
+    fields we read (_values/_written_at) are stable, so forward reads still work.
+    """
+    if version > FORMAT_VERSION:
+        log.debug(
+            f"reading envelope format v{version} with hashstash format "
+            f"v{FORMAT_VERSION}; reading known fields only"
+        )
+        return decoded
+    # if version < FORMAT_VERSION: add per-version migration steps here
+    return decoded
+
+
 def _wrap_envelope(values, timestamps):
     return {
         ENVELOPE_MARKER: True,
+        "_fv": FORMAT_VERSION,
         "_values": list(values),
         "_written_at": list(timestamps),
     }

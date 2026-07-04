@@ -1102,6 +1102,8 @@ LMDB is the fastest engine, followed by the custom "pairtree" implementation.
 
 Pickle is by far the fastest serializer, but it is not transportable between Python versions. HashStash is generally faster than jsonpickle, and can serialize more data types (including lambdas and functions within functions), but it produces larger file sizes.
 
+See [BENCHMARKS.md](./BENCHMARKS.md) for an up-to-date serialize/deserialize speed and size comparison across all serializers (JSON-native vs full-path payloads), regenerable with `python scripts/bench_serializers.py`.
+
 ![Serializers](./figures/fig.comparing_serializers_size_speed.png)
 
 ### Encodings
