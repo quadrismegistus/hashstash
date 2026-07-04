@@ -3,14 +3,101 @@ import time
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
-from multiprocessing import Manager, Lock as mp_Lock
 from pathlib import Path
 from ..serializers import serialize, deserialize
 
-_manager = None
-_connection_lock = None
 _connection_pool = {}
 _last_used = {}
+_conn_refcount = {}
+_pool_guard = threading.Lock()
+
+_path_locks = {}
+_path_locks_guard = threading.Lock()
+
+if os.name == "nt":
+    import msvcrt
+
+    def _lock_fileno(fileno):
+        # msvcrt.locking(LK_LOCK) retries ~10s then raises; loop until acquired
+        while True:
+            try:
+                msvcrt.locking(fileno, msvcrt.LK_LOCK, 1)
+                return
+            except OSError:
+                continue
+
+    def _unlock_fileno(fileno):
+        msvcrt.locking(fileno, msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_fileno(fileno):
+        fcntl.flock(fileno, fcntl.LOCK_EX)
+
+    def _unlock_fileno(fileno):
+        fcntl.flock(fileno, fcntl.LOCK_UN)
+
+
+class _PathLock:
+    """Reentrant lock scoped to a stash path that actually excludes other
+    processes: a threading.RLock coordinates threads in-process while an
+    advisory file lock (flock/msvcrt on <path>.lock) excludes other processes.
+    The OS releases the file lock automatically if the holder dies."""
+
+    def __init__(self, path):
+        self.lock_path = path + ".lock"
+        self._rlock = threading.RLock()
+        self._file = None
+        self._depth = 0
+
+    def acquire(self):
+        self._rlock.acquire()
+        if self._depth == 0:
+            try:
+                lock_dir = os.path.dirname(self.lock_path)
+                if lock_dir:
+                    os.makedirs(lock_dir, exist_ok=True)
+                self._file = open(self.lock_path, "a+b")
+                _lock_fileno(self._file.fileno())
+            except Exception:
+                if self._file is not None:
+                    self._file.close()
+                    self._file = None
+                self._rlock.release()
+                raise
+        self._depth += 1
+        return True
+
+    def release(self):
+        if self._depth <= 0:
+            raise RuntimeError(f"release of unheld lock {self.lock_path}")
+        self._depth -= 1
+        if self._depth == 0 and self._file is not None:
+            try:
+                if os.name == "nt":
+                    self._file.seek(0)
+                _unlock_fileno(self._file.fileno())
+            finally:
+                self._file.close()
+                self._file = None
+        self._rlock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+
+def get_lock(path):
+    """Process-wide registry of per-path locks (one _PathLock per stash path)."""
+    with _path_locks_guard:
+        lock = _path_locks.get(path)
+        if lock is None:
+            lock = _path_locks[path] = _PathLock(path)
+        return lock
 
 ENVELOPE_MARKER = "__hs_v1__"
 
@@ -78,24 +165,6 @@ def _filter_by_time(values, timestamps, before=None, after=None):
         return [], []
     vs, ts = zip(*kept)
     return list(vs), list(ts)
-
-
-def get_manager():
-    global _manager, _connection_lock
-    if _manager is None:
-        _manager = Manager()
-        _connection_lock = _manager.dict()
-    return _manager
-
-
-# Function to get or create a lock for a given path
-def get_lock(path):
-    global _connection_lock
-    manager = get_manager()
-    if path not in _connection_lock:
-        _connection_lock[path] = manager.Lock()
-    return _connection_lock[path]
-
 
 
 class BaseHashStash(MutableMapping):
@@ -264,7 +333,6 @@ class BaseHashStash(MutableMapping):
         return obj
 
     @property
-    @retry_patiently()
     def db(self):
         return self.get_connection()
 
@@ -274,71 +342,40 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __enter__(self):
-        if not self.needs_lock:
-            return self
-        
-        log.debug(f"locking {self}")
-        self._lock = get_lock(self.path)
-        try:
-            # Attempt to acquire the lock without blocking
-            acquired = self._lock.acquire(False)
-            if not acquired:
-                log.debug(f"Lock already held for {self}")
-        except TypeError:
-            # If acquire(False) is not supported, fall back to blocking acquire
-            self._lock.acquire()
+        # Blocking, reentrant, cross-process. The old implementation acquired
+        # non-blocking and proceeded into the critical section on failure, and
+        # released other holders' locks on exit — it excluded nothing.
+        if self.needs_lock:
+            get_lock(self.path).acquire()
         return self
 
     @log.debug
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if not self.needs_lock:
-            return
-        if hasattr(self, "_lock"):
-            log.debug(f"unlocking {self}")
-            try:
-                self._lock.release()
-            except (ValueError, RuntimeError) as e:
-                log.debug(e)
-                # Lock was already released or not held
-                pass
+        if self.needs_lock:
+            get_lock(self.path).release()
 
     @contextmanager
-    @retry_patiently()
     def get_connection(self):
-        global _connection_pool, _last_used
-
         if self.needs_reconnect:
             with self.get_db() as db:
                 yield db
-        else:
-            if not self.path in _connection_pool:
+            return
+
+        with _pool_guard:
+            conn = _connection_pool.get(self.path)
+            if conn is None:
                 log.debug(f"Opening {self.engine} at {self.path}")
                 conn = self.get_db()
                 _connection_pool[self.path] = conn
-            else:
-                conn = _connection_pool[self.path]
+            _conn_refcount[self.path] = _conn_refcount.get(self.path, 0) + 1
+            _last_used[self.path] = time.time()
+        try:
+            yield conn
+        finally:
+            with _pool_guard:
+                _conn_refcount[self.path] = _conn_refcount.get(self.path, 1) - 1
                 _last_used[self.path] = time.time()
-            try:
-                yield conn
-            finally:
-                self._cleanup_connections()
-
-    def _cleanup_connections(self):
-        global _connection_pool, _last_used
-        current_time = time.time()
-        for path, last_used in list(_last_used.items()):
-            if current_time - last_used > self.CONNECTION_TIMEOUT:
-                self._close_connection_path(path)
-
-    def close(self):
-        self._close_connection_path(self.path)
-
-    def _close_connection_path(self, path):
-        with self:
-            conn = _connection_pool.pop(path, None)
-            if conn is not None:
-                self._close_connection(conn)
-                _last_used.pop(path, None)
+            self._cleanup_connections()
 
     def connect(self):
         with self.get_connection() as db:
@@ -362,25 +399,30 @@ class BaseHashStash(MutableMapping):
     @classmethod
     def _cleanup_connections(cls):
         current_time = time.time()
-        for path, last_used in list(_last_used.items()):
-            if current_time - last_used > cls.CONNECTION_TIMEOUT:
-                cls._close_connection_path(path)
+        with _pool_guard:
+            stale = [
+                path
+                for path, last_used in _last_used.items()
+                if current_time - last_used > cls.CONNECTION_TIMEOUT
+                and _conn_refcount.get(path, 0) <= 0
+            ]
+        for path in stale:
+            cls._close_connection_path(path)
 
     def close(self):
         self._close_connection_path(self.path)
 
     @classmethod
     def _close_connection_path(cls, path):
-        global _connection_pool
-        conn = _connection_pool.get(path)
+        with _pool_guard:
+            conn = _connection_pool.pop(path, None)
+            _last_used.pop(path, None)
+            _conn_refcount.pop(path, None)
         if conn is not None:
-            with get_lock(path):
-                try:
-                    cls._close_connection(conn)
-                except Exception as e:
-                    log.debug(e)
-                _connection_pool.pop(path, None)
-                _last_used.pop(path, None)
+            try:
+                cls._close_connection(conn)
+            except Exception as e:
+                log.debug(e)
 
     @staticmethod
     def _close_connection(connection):
@@ -510,16 +552,18 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def set(self, unencoded_key: Any, unencoded_value: Any, append=None) -> None:
-        encoded_key = self.encode_key(unencoded_key)
-        # log.info(encoded_key)
-        new_unencoded_value = self.new_unencoded_value(
-            unencoded_value,
-            unencoded_key=unencoded_key,
-            append=append,
-        )
+        # hold the lock across the whole read-modify-write: append mode reads the
+        # old envelope and writes it back, and an unlocked gap loses concurrent appends
+        with self:
+            encoded_key = self.encode_key(unencoded_key)
+            new_unencoded_value = self.new_unencoded_value(
+                unencoded_value,
+                unencoded_key=unencoded_key,
+                append=append,
+            )
 
-        encoded_value = self.encode_value(new_unencoded_value)
-        self._set(encoded_key, encoded_value)
+            encoded_value = self.encode_value(new_unencoded_value)
+            self._set(encoded_key, encoded_value)
 
     @log.debug
     def run(

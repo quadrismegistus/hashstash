@@ -354,6 +354,109 @@ def test_bare_name_nests_under_config_root():
     assert stash.root_dir == os.path.join(Config().root_dir, "bare_name_regression")
 
 
+# --- Stage 4: real locking & connection pool --------------------------------
+
+
+def test_lock_is_reentrant(tmp_path):
+    """Nested `with stash:` used to make the inner exit release the outer lock."""
+    pytest.importorskip("sqlitedict")
+    stash = HashStash(engine="sqlite", root_dir=str(tmp_path / "cache"))
+    with stash:
+        with stash:
+            stash["k"] = 1
+        stash["k2"] = 2  # still holding the outer lock
+    assert stash["k"] == 1
+    assert stash["k2"] == 2
+
+
+@pytest.mark.skipif(os.name == "nt", reason="flock check is POSIX-only")
+def test_lock_excludes_other_processes(tmp_path):
+    """The old Manager-based lock was per-process: two independent processes never
+    shared it. The file lock must actually be held across process boundaries."""
+    pytest.importorskip("sqlitedict")
+    stash = HashStash(engine="sqlite", root_dir=str(tmp_path / "cache"))
+    stash["seed"] = 1  # create dirs + lock file
+    lock_path = stash.path + ".lock"
+
+    probe = (
+        "import fcntl, sys\n"
+        f"f = open({lock_path!r}, 'a+b')\n"
+        "try:\n"
+        "    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        "    print('ACQUIRED')\n"
+        "except OSError:\n"
+        "    print('LOCKED')\n"
+    )
+    with stash:
+        held = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True
+        )
+    released = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True
+    )
+    assert held.stdout.strip() == "LOCKED", held.stderr
+    assert released.stdout.strip() == "ACQUIRED", released.stderr
+
+
+def test_concurrent_appends_no_lost_updates(tmp_path):
+    """Append-mode was an unlocked read-modify-write: concurrent appenders read
+    the same old envelope and one append vanished."""
+    pytest.importorskip("sqlitedict")
+    root = str(tmp_path / "cache")
+    n_procs, n_appends = 4, 5
+
+    worker = (
+        "import sys\n"
+        f"sys.path.insert(0, {REPO_ROOT!r})\n"
+        "from hashstash import HashStash\n"
+        f"stash = HashStash(engine='sqlite', root_dir={root!r}, append_mode=True)\n"
+        f"for i in range({n_appends}):\n"
+        "    stash.set('k', (int(sys.argv[1]), i))\n"
+    )
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", worker, str(n)],
+            env={**os.environ, "PYTHONPATH": REPO_ROOT},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for n in range(n_procs)
+    ]
+    for p in procs:
+        _, err = p.communicate(timeout=120)
+        assert p.returncode == 0, err.decode()
+
+    stash = HashStash(engine="sqlite", root_dir=root, append_mode=True)
+    versions = stash.get_all("k")
+    assert len(versions) == n_procs * n_appends
+
+
+def test_connection_pool_thread_safety(tmp_path):
+    """The pool was an unsynchronized dict: concurrent threads could clobber and
+    leak each other's connections."""
+    import threading
+
+    pytest.importorskip("sqlitedict")
+    stash = HashStash(engine="sqlite", root_dir=str(tmp_path / "cache"))
+    errors = []
+
+    def work(tid):
+        try:
+            for i in range(20):
+                stash[f"{tid}-{i}"] = i
+                assert stash[f"{tid}-{i}"] == i
+        except Exception as e:  # pragma: no cover - failure path
+            errors.append(e)
+
+    threads = [threading.Thread(target=work, args=(t,)) for t in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(stash) == 8 * 20
+
+
 @pytest.mark.skipif(not _redis_available(), reason="no local redis server")
 def test_redis_clear_scoped_to_namespace():
     """clear() used to flushdb() the whole numbered Redis db, wiping other stashes

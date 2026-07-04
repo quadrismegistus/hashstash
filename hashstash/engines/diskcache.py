@@ -3,6 +3,7 @@ from . import *
 class DiskCacheHashStash(BaseHashStash):
     engine = 'diskcache'
     string_keys = False
+    needs_lock = False  # diskcache is process- and thread-safe by design
 
     @log.debug
     def get_db(self):

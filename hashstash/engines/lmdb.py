@@ -3,6 +3,7 @@ from . import *
 class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
     filename_is_dir = True
+    needs_lock = False  # LMDB has its own multi-reader/single-writer locking
 
     def __init__(self, *args, map_size=10 * 1024**3, **kwargs):  # Default to 10GB
         self._env = None

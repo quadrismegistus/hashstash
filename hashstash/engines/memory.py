@@ -1,9 +1,5 @@
 from . import *
-from .base import get_manager, BaseHashStash
-from multiprocessing import Manager
-
-# # Use the existing get_manager function
-# manager = Manager()
+from .base import BaseHashStash
 
 SHARED_MEMORY_CACHE = None
 def get_shared_memory_cache():
@@ -16,6 +12,7 @@ def get_shared_memory_cache():
 class MemoryHashStash(BaseHashStash):
     engine = 'memory'
     ensure_dir = False
+    needs_lock = False  # UltraDict provides its own shared-memory locking
 
     @contextmanager
     def get_connection(self):

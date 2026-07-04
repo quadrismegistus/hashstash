@@ -28,6 +28,7 @@ class MongoHashStash(BaseHashStash):
     string_keys = True
     string_values = True
     dbname = 'hashstash'
+    needs_lock = False  # the server serializes operations; a local file lock can't span hosts anyway
 
     def __init__(self, *args, host=None, port=None, **kwargs):
         if host is not None: self.host = host
