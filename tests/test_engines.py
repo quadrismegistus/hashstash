@@ -55,7 +55,13 @@ TEST_CLASSES = [
 @pytest.fixture(params=TEST_CLASSES)
 def cache(request, tmp_path):
     cache_type = request.param
-    cache = cache_type(os.path.join(tmp_path, f"{cache_type.__name__.lower()}_cache"))
+    # safe=False so these broad round-trip tests exercise the full code-capable
+    # serializer on every engine. Networked engines (redis/mongo) now default to
+    # safe=True (see test_engine_safe_default.py); this fixture opts back in to
+    # keep testing what it always tested. We trust our own writes here.
+    cache = cache_type(
+        os.path.join(tmp_path, f"{cache_type.__name__.lower()}_cache"), safe=False
+    )
     cache.clear()
     yield cache
 
