@@ -148,6 +148,13 @@ def get_working_engines():
     except ImportError:
         pass
 
+    try:
+        import plyvel
+
+        working_engines.add("rocksdb")
+    except ImportError:
+        pass
+
     return working_engines
 
 

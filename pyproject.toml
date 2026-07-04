@@ -36,6 +36,7 @@ msgpack = ["msgpack"]
 fsspec = ["fsspec"]
 best = ["lmdb", "lz4"]
 lmdb = ["lmdb"]
+rocksdb = ["plyvel"]
 diskcache = ["diskcache"]
 memory = ["ultradict"]
 
@@ -44,6 +45,7 @@ filebased = [
   "sqlitedict",
   "diskcache",
   "lmdb",
+  "plyvel",
   "ultradict",
 ]
 servers = [
@@ -52,6 +54,7 @@ servers = [
 engines = [
     "pandas", "polars", "numpy", "pyarrow","fastparquet",
     "lmdb",
+    "plyvel",
     "sqlitedict",
     "diskcache",
     "redis", "redis_dict",
@@ -62,6 +65,7 @@ dev = [
   # engines
   "pandas", "polars", "numpy", "pyarrow","fastparquet",
   "lmdb",
+  "plyvel",
   "sqlitedict",
   "diskcache",
   "redis", "redis_dict",
@@ -89,6 +93,7 @@ all = [
   # engines
   "pandas", "polars", "numpy", "pyarrow","fastparquet",
   "lmdb",
+  "plyvel",
   "sqlitedict",
   "diskcache",
   "redis", "redis_dict",
