@@ -621,7 +621,7 @@ class BaseHashStash(MutableMapping):
         #     "kwargs": kwargs,
         # }
         key = (args,kwargs)
-        return encode_hash(self.serialize(key)) if not store_args else key
+        return encode_hash(self.serialize(key, sort_keys=True)) if not store_args else key
 
     @log.debug
     def new_unencoded_value(
@@ -671,8 +671,10 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def encode_key(self, unencoded_key: Any) -> Union[str, bytes]:
+        # sort_keys: equal dicts (and equal kwargs) must encode to identical bytes
+        # regardless of insertion order, or lookups silently miss
         return self.encode(
-            self.serialize(unencoded_key),
+            self.serialize(unencoded_key, sort_keys=True),
             as_string=self.string_keys,
             # compress=False
         )

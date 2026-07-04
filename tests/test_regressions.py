@@ -123,6 +123,113 @@ def _redis_available():
         return False
 
 
+# --- Stage 2: cache-key stability & serializer correctness ------------------
+
+
+def test_dict_key_order_does_not_change_cache_key(tmp_path):
+    """Equal dicts with different insertion order must hit the same cache entry."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    stash[{"a": 1, "b": 2}] = "hit"
+    assert stash[{"b": 2, "a": 1}] == "hit"
+
+
+def test_kwargs_order_does_not_change_function_key(tmp_path):
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    k1 = stash.encode_key((["f"], {"a": 1, "b": 2}))
+    k2 = stash.encode_key((["f"], {"b": 2, "a": 1}))
+    assert k1 == k2
+
+
+def test_set_serialization_is_deterministic_across_hash_seeds():
+    """Sets used to serialize in PYTHONHASHSEED-dependent order, changing the
+    cache key every interpreter restart."""
+    code = (
+        "from hashstash import serialize\n"
+        "print(serialize({'gamma', 'alpha', 'x', 'y', 'beta', 'z'}, serializer='hashstash'))\n"
+    )
+    outs = set()
+    for seed in ("0", "1", "2"):
+        env = {**os.environ, "PYTHONPATH": REPO_ROOT, "PYTHONHASHSEED": seed}
+        result = subprocess.run(
+            [sys.executable, "-c", code], env=env, capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stderr
+        outs.add(result.stdout)
+    assert len(outs) == 1, f"set serialization varies with hash seed: {outs}"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {1: "one", 2: "two"},
+        {1.5: "float-key", True: "bool-key"},
+        {(1, 2): "tuple-key"},
+        {"__py__": "not.an.address", "__data__": "just a plain dict"},
+        {"__pytype__": "dict"},
+    ],
+)
+def test_dict_key_types_roundtrip(value, tmp_path):
+    """Non-string dict keys were silently JSON-coerced to strings (or crashed for
+    tuple keys); dicts containing reserved marker keys were misdeserialized."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    stash["k"] = value
+    assert stash["k"] == value
+
+
+def test_datetime_roundtrip(tmp_path):
+    """datetime used to fail at write time: __reduce__ args contain raw bytes that
+    json.dumps rejected."""
+    import datetime
+
+    value = datetime.datetime(2020, 1, 1, 12, 0)
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    stash["dt"] = value
+    assert stash["dt"] == value
+
+
+def test_complex_roundtrip(tmp_path):
+    """complex used to silently serialize to null (bare __reduce__ raises on
+    C-types; the exception was swallowed)."""
+    stash = HashStash(root_dir=str(tmp_path / "cache"))
+    stash["c"] = complex(1, 2)
+    assert stash["c"] == complex(1, 2)
+
+
+class EmptyPayload:
+    """Importable class whose to_dict() payload is empty (falsy)."""
+
+    def __init__(self, label="init"):
+        self.label = label
+
+    def to_dict(self):
+        return {}
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(label="from_dict")
+
+
+def test_empty_data_object_roundtrips_to_instance():
+    """An object whose to_dict() is empty used to deserialize to the class object
+    itself instead of an instance (falsy __data__ check)."""
+    from hashstash import deserialize, serialize
+
+    out = deserialize(
+        serialize(EmptyPayload(), serializer="hashstash"), serializer="hashstash"
+    )
+    assert isinstance(out, EmptyPayload), f"expected instance, got {out!r}"
+
+
+def test_unserializable_object_raises_not_none():
+    """Objects that cannot be reduced must raise, not silently become null."""
+    import threading
+
+    from hashstash import serialize
+
+    with pytest.raises(Exception):
+        serialize(threading.Lock(), serializer="hashstash")
+
+
 @pytest.mark.skipif(not _redis_available(), reason="no local redis server")
 def test_redis_clear_scoped_to_namespace():
     """clear() used to flushdb() the whole numbered Redis db, wiping other stashes
