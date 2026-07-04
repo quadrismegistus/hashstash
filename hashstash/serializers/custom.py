@@ -1070,8 +1070,12 @@ for _addr in (
 ):
     CUSTOM_SERIALIZERS[_addr] = PandasTimedeltaSerializer.serialize
     CUSTOM_DESERIALIZERS[_addr] = PandasTimedeltaSerializer.deserialize
-CUSTOM_SERIALIZERS['pandas._libs.tslibs.nattype.NaTType'] = PandasNaTSerializer.serialize
-CUSTOM_DESERIALIZERS['pandas._libs.tslibs.nattype.NaTType'] = PandasNaTSerializer.deserialize
+for _addr in (
+    'pandas._libs.tslibs.nattype.NaTType',
+    'pandas.NaTType',  # pandas 3.x reports this top-level path
+):
+    CUSTOM_SERIALIZERS[_addr] = PandasNaTSerializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = PandasNaTSerializer.deserialize
 
 
 # numpy scalar types registered by ADDRESS STRING so that `import hashstash`
