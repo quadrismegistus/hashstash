@@ -117,6 +117,21 @@ def get_lock(path):
 
 ENVELOPE_MARKER = "__hs_v1__"
 
+# Engines where the cache may be written by a party you don't control (a shared
+# server, a remote bucket): these default to safe=True reads so a malicious value
+# can't execute code on load. Local file engines you own stay code-capable.
+NETWORKED_ENGINES = frozenset({"redis", "mongo"})
+
+
+def _is_remote_fsspec_uri(root_dir):
+    """True if an fsspec root_dir points at a remote/shared filesystem (s3://,
+    gcs://, sftp://, ...). A plain path or the local/memory protocols are not
+    remote and pose no untrusted-writer risk beyond a local directory."""
+    if not isinstance(root_dir, str) or "://" not in root_dir:
+        return False
+    scheme = root_dir.split("://", 1)[0].lower()
+    return scheme not in ("", "file", "local", "memory")
+
 # single-flight key locks are striped across this many lock files per stash:
 # bounded lock-file count, negligible collision odds between distinct keys
 SINGLE_FLIGHT_STRIPES = 256
@@ -332,9 +347,23 @@ class BaseHashStash(MutableMapping):
             raise ValueError(f"ttl must be positive, got {ttl!r}")
         self.ttl = ttl
         # safe mode: deserialization refuses payloads that would execute code
-        # (see serializers.custom.safe_deserialization); HASHSTASH_SAFE=1 makes
-        # it the default for every stash in the process
-        self.safe = safe if safe is not None else bool(os.environ.get("HASHSTASH_SAFE"))
+        # (see serializers.custom.safe_deserialization). Resolution order:
+        #   explicit safe= arg > HASHSTASH_SAFE=1 (whole process) > engine default.
+        # Networked/shared engines (redis/mongo, remote fsspec) default to safe
+        # reads because their writer may be untrusted; local engines you own stay
+        # code-capable. Only applies to the code-executing hashstash serializer
+        # (data-only serializers are already safe). Override with safe=False.
+        if safe is not None:
+            self.safe = safe
+        elif os.environ.get("HASHSTASH_SAFE"):
+            self.safe = True
+        elif self.serializer == "hashstash" and (
+            self.engine in NETWORKED_ENGINES
+            or (self.engine == "fsspec" and _is_remote_fsspec_uri(root_dir))
+        ):
+            self.safe = True
+        else:
+            self.safe = False
         if self.safe and self.serializer != "hashstash":
             raise ValueError(
                 f"safe=True requires the 'hashstash' serializer; "

@@ -160,6 +160,24 @@ The **`msgpack`** serializer (`serializer="msgpack"`, `pip install
 hashstash[msgpack]`) is data-only by construction — it cannot encode code at
 all — making it a fast, compact, inherently-safe choice for shared caches.
 
+#### Safe by default on shared engines
+
+Because the risk of a hostile value comes from caches other parties can write
+to, **networked engines default to safe mode**: `redis`, `mongo`, and remote
+`fsspec` roots (`s3://`, `gcs://`, `sftp://`, …) open with `safe=True` unless
+you say otherwise. Local file engines you own (`pairtree`, `lmdb`, `sqlite`,
+…) stay code-capable, so caching a lambda locally works out of the box.
+
+```python
+HashStash(engine="redis")                 # safe=True by default
+HashStash(engine="redis", safe=False)     # opt back into code execution (trust the writer)
+HashStash(root_dir="s3://bucket/cache")   # remote fsspec -> safe=True by default
+HashStash()                               # local default engine -> code-capable
+```
+
+If you rely on caching functions/objects to a shared engine, pass `safe=False`
+explicitly to acknowledge that you trust whoever writes to it.
+
 ## Engines & semantics
 
 ### Choosing an engine
