@@ -572,6 +572,86 @@ def test_memory_engine_works_without_ultradict(tmp_path, monkeypatch):
     monkeypatch.setattr(mem, "SHARED_MEMORY_CACHE", None)
 
 
+# --- Stage 6: GraphStash -----------------------------------------------------
+
+
+@pytest.fixture
+def graph(tmp_path):
+    stash = HashStash(root_dir=str(tmp_path / "g"))
+    return stash.graph()
+
+
+def test_graph_edges_where_mixed_types_no_typeerror(graph):
+    """One edge storing a string weight used to TypeError every weight__gt query."""
+    graph.add_edge("a", "b", weight=5)
+    graph.add_edge("a", "c", weight="heavy")
+    graph.add_edge("a", "d", tag=7)
+    hits = graph.edges_where(weight__gt=1)
+    assert [(s, d) for s, d, r, p in hits] == [("a", "b")]
+    assert graph.edges_where(tag__contains="x") == []  # int prop: non-match, not crash
+
+
+def test_graph_node_returns_copy(graph):
+    """node() used to hand out the live cache dict: caller mutation silently
+    diverged the cache from disk."""
+    graph.add_node("a", role="original")
+    props = graph.node("a")
+    props["role"] = "HACKED"
+    assert graph.node("a")["role"] == "original"
+
+
+def test_graph_edges_of_returns_copies(graph):
+    graph.add_edge("a", "b", w=1)
+    edges = graph.edges_of("a")
+    edges[0][2]["w"] = 999
+    assert graph.edge("a", "b")["w"] == 1
+
+
+def test_graph_preload_warms_sink_nodes(graph):
+    """preload() iterated out-stash keys to warm the in-cache, so pure sink nodes
+    stayed cold."""
+    graph.add_edge("a", "b")
+    g2 = graph._stash.graph()
+    g2.preload()
+    assert "b" in g2._cache_in
+
+
+def test_graph_edges_between_returns_parallel_edges(graph):
+    graph.add_edge("a", "b", rel="knows", since=2020)
+    graph.add_edge("a", "b", rel="knows", since=2024)
+    graph.add_edge("a", "b", rel="likes")
+    knows = graph.edges_between("a", "b", rel="knows")
+    assert sorted(p["since"] for r, p in knows) == [2020, 2024]
+    assert len(graph.edges_between("a", "b")) == 3
+
+
+def test_graph_edges_where_rel_none_means_rel_none(graph):
+    """edges_where(rel=None) was a no-op filter returning every edge."""
+    graph.add_edge("a", "b")  # rel None
+    graph.add_edge("a", "c", rel="k")
+    hits = graph.edges_where(rel=None)
+    assert [(s, d) for s, d, r, p in hits] == [("a", "b")]
+    assert len(graph.edges_where()) == 2
+
+
+def test_graph_absent_prop_ne_semantics(graph):
+    graph.add_edge("a", "b", color="red")
+    graph.add_edge("a", "c")  # no color
+    hits = graph.edges_where(color__ne="blue")
+    assert sorted(d for s, d, r, p in hits) == ["b", "c"]
+
+
+def test_graph_interleaved_write_query_stays_fresh(graph):
+    """Every write used to nuke the key caches, and queries after writes could
+    miss just-written edges if caches went stale in the other direction."""
+    graph.add_edge("a", "b", n=1)
+    assert len(graph.edges_where(n__gte=1)) == 1
+    graph.add_edge("a", "c", n=2)
+    assert len(graph.edges_where(n__gte=1)) == 2
+    graph.add_edge("z", "a", n=3)  # brand-new source node
+    assert len(graph.edges_where(n__gte=1)) == 3
+
+
 @pytest.mark.skipif(not _redis_available(), reason="no local redis server")
 def test_redis_clear_scoped_to_namespace():
     """clear() used to flushdb() the whole numbered Redis db, wiping other stashes

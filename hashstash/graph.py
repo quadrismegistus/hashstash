@@ -1,5 +1,7 @@
 from collections import defaultdict, deque
 
+_UNSET = object()
+
 _OPS = {
     "eq": lambda a, b: a == b,
     "ne": lambda a, b: a != b,
@@ -12,6 +14,14 @@ _OPS = {
     "startswith": lambda a, b: isinstance(a, str) and a.startswith(b),
     "endswith": lambda a, b: isinstance(a, str) and a.endswith(b),
 }
+
+
+def _safe_op(op, a, b):
+    # one edge storing weight="heavy" must not TypeError every weight__gt query
+    try:
+        return _OPS[op](a, b)
+    except TypeError:
+        return False
 
 
 def _parse_predicate(key):
@@ -41,13 +51,18 @@ def _match(src_props, dst_props, edge_rel, edge_props, predicates):
         elif scope == "target":
             obj = dst_props
         elif field == "rel":
-            if not _OPS[op](edge_rel, value):
+            if not _safe_op(op, edge_rel, value):
                 return False
             continue
         else:
             obj = edge_props
-        actual = obj.get(field) if isinstance(obj, dict) else None
-        if actual is None or not _OPS[op](actual, value):
+        actual = obj.get(field, _UNSET) if isinstance(obj, dict) else _UNSET
+        if actual is _UNSET:
+            # absent property: fails every predicate except __ne (absent != value)
+            if op == "ne":
+                continue
+            return False
+        if not _safe_op(op, actual, value):
             return False
     return True
 
@@ -61,11 +76,24 @@ class GraphStash:
         _in:    node_id -> [(src, rel, {edge_props}), ...]
 
     Multigraph: multiple edges between the same (src, dst, rel) are
-    allowed, distinguished by their properties.
+    allowed, distinguished by their properties. edge() returns the first
+    match; use edges_between() to see all parallel edges.
 
     Read caching: adjacency lists and node props are cached in memory
-    after first read. Writes invalidate affected cache entries. Call
-    preload() after bulk loading to warm the cache for fast queries.
+    after first read; writes update the cache in place. Call preload()
+    after bulk loading to warm the cache for fast queries.
+
+    Concurrency: a GraphStash instance assumes it is the only writer.
+    Adjacency updates are read-modify-write over whole lists, and each
+    instance caches reads — two concurrent writers (or a writer plus a
+    long-lived second instance) can lose edges or serve stale reads.
+    Create one writer instance, and re-create reader instances (or call
+    a fresh stash.graph()) after another process has written.
+
+    Performance: add_edge() rewrites the source and target adjacency
+    lists on every call — O(degree) I/O per insert, quadratic in the
+    final degree when building a hub incrementally. Use add_edges_bulk()
+    for bulk loads; it groups writes per node.
     """
 
     def __init__(self, stash, name="graph"):
@@ -127,6 +155,9 @@ class GraphStash:
             self._get_node_props(nid)
         for nid in self._out_keys():
             self._get_out(nid)
+        # sink nodes (in-edges only) never appear in the out stash: warm their
+        # in-cache from the in stash's own keys
+        for nid in self._in_stash.keys():
             self._get_in(nid)
 
     # -- Nodes --
@@ -134,17 +165,23 @@ class GraphStash:
     def add_node(self, node_id, **props):
         existing = self._get_node_props(node_id)
         if existing is not None:
-            existing.update(props)
-            self._nodes_stash[node_id] = existing
+            merged = {**existing, **props}
         else:
-            self._nodes_stash[node_id] = props
-        self._invalidate(node_id)
+            merged = dict(props)
+        self._nodes_stash[node_id] = merged
+        # update the cache in place: nuking key caches on every write made any
+        # interleaved write/query workload re-list all keys per query
+        self._cache_nodes[node_id] = merged
+        if existing is None and self._cache_node_keys is not None:
+            self._cache_node_keys.append(node_id)
 
     def node(self, node_id):
         props = self._get_node_props(node_id)
         if props is None:
             raise KeyError(node_id)
-        return props
+        # a copy: handing out the cached dict let callers silently diverge the
+        # cache from disk by mutating it
+        return dict(props)
 
     def has_node(self, node_id):
         return self._get_node_props(node_id) is not None
@@ -185,27 +222,42 @@ class GraphStash:
     # -- Edges --
 
     def add_edge(self, src, dst, rel=None, **edge_props):
+        """Add one edge. NOTE: rewrites both nodes' adjacency lists — O(degree)
+        I/O per call. For bulk loading, add_edges_bulk() is much faster."""
         if not self.has_node(src):
             self.add_node(src)
         if not self.has_node(dst):
             self.add_node(dst)
 
         out_list = list(self._get_out(src))
+        had_out = bool(out_list)
         out_list.append((dst, rel, edge_props))
         self._out_stash[src] = out_list
+        self._cache_out[src] = out_list
+        if not had_out and self._cache_out_keys is not None:
+            self._cache_out_keys.append(src)
 
         in_list = list(self._get_in(dst))
         in_list.append((src, rel, edge_props))
         self._in_stash[dst] = in_list
-
-        self._invalidate(src)
-        self._invalidate(dst)
+        self._cache_in[dst] = in_list
 
     def edge(self, src, dst, rel=None):
+        """Return the properties of the FIRST edge matching (src, dst, rel).
+        Parallel edges exist in a multigraph — use edges_between() for all."""
         for d, r, props in self._get_out(src):
             if d == dst and r == rel:
-                return props
+                return dict(props)
         raise KeyError((src, dst, rel))
+
+    def edges_between(self, src, dst, rel=_UNSET):
+        """All parallel edges src -> dst as (rel, props) tuples, optionally
+        restricted to a specific rel (rel=None matches only rel-less edges)."""
+        return [
+            (r, dict(props))
+            for d, r, props in self._get_out(src)
+            if d == dst and (rel is _UNSET or r == rel)
+        ]
 
     def has_edge(self, src, dst, rel=None):
         for d, r, _ in self._get_out(src):
@@ -247,9 +299,9 @@ class GraphStash:
     def edges_of(self, node_id, direction="out"):
         results = []
         if direction in ("out", "both"):
-            results.extend(self._get_out(node_id))
+            results.extend((o, r, dict(p)) for o, r, p in self._get_out(node_id))
         if direction in ("in", "both"):
-            results.extend(self._get_in(node_id))
+            results.extend((o, r, dict(p)) for o, r, p in self._get_in(node_id))
         return results
 
     @property
@@ -257,12 +309,12 @@ class GraphStash:
         result = []
         for src in self._out_keys():
             for dst, rel, props in self._get_out(src):
-                result.append((src, dst, rel, props))
+                result.append((src, dst, rel, dict(props)))
         return result
 
     # -- Query --
 
-    def edges_where(self, rel=None, **kwargs):
+    def edges_where(self, rel=_UNSET, **kwargs):
         """Filter edges by Django-style predicates.
 
         Operators: __gt, __lt, __gte, __lte, __ne, __contains, __in,
@@ -270,9 +322,14 @@ class GraphStash:
         Prefixes: source__ / target__ for node props, rel / rel__op for
                   the relationship string, bare name for edge props.
 
+        rel=None matches only rel-less edges (omit rel to match any).
+        Type-mismatched comparisons (weight__gt=1 against weight='heavy')
+        are non-matches, not errors. An absent property fails every
+        predicate except __ne.
+
         Returns list of (src, dst, rel, props) tuples.
         """
-        if rel is not None:
+        if rel is not _UNSET:
             kwargs["rel"] = rel
         results = []
         for src in self._out_keys():
@@ -282,7 +339,7 @@ class GraphStash:
                     src_props = self._get_node_props(src) or {}
                 dst_props = self._get_node_props(dst) or {}
                 if _match(src_props, dst_props, edge_rel, props, kwargs):
-                    results.append((src, dst, edge_rel, props))
+                    results.append((src, dst, edge_rel, dict(props)))
         return results
 
     def add_edges_bulk(self, edges):
@@ -304,6 +361,7 @@ class GraphStash:
                 if not self.has_node(dst):
                     self.add_node(dst)
                 nodes_seen.add(dst)
+            props = dict(props)  # detach from the caller's dict
             out_new[src].append((dst, rel, props))
             in_new[dst].append((src, rel, props))
 
@@ -311,13 +369,16 @@ class GraphStash:
             out_list = list(self._get_out(src))
             out_list.extend(new_entries)
             self._out_stash[src] = out_list
+            self._cache_out[src] = out_list
 
         for dst, new_entries in in_new.items():
             in_list = list(self._get_in(dst))
             in_list.extend(new_entries)
             self._in_stash[dst] = in_list
+            self._cache_in[dst] = in_list
 
-        self._invalidate()
+        # sources may have gained their first out-edges; relist lazily
+        self._cache_out_keys = None
 
     # -- Neighbors --
 
