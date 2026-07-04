@@ -110,6 +110,7 @@ class PairtreeHashStash(BaseHashStash):
             all_results=self._all_results(all_results),
             with_metadata=True,
         )
+        after = self._ttl_after(after, kwargs)
         if before is not None or after is not None:
             timestamps = [p["_written_at"] for p in paths_ld]
             paths_ld, _ = _filter_by_time(paths_ld, timestamps, before=before, after=after)

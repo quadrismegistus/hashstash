@@ -44,6 +44,7 @@ class DataFrameHashStash(PairtreeHashStash):
             # honor overwrite semantics like pairtree: without this, every set()
             # accumulated another version file forever
             self._prune_dir(filepath_value)
+        self._stats["sets"] += 1
 
     @log.debug
     def get_all(
@@ -66,6 +67,7 @@ class DataFrameHashStash(PairtreeHashStash):
             all_results=self._all_results(all_results),
             with_metadata=True,
         )
+        after = self._ttl_after(after, kwargs)
         if before is not None or after is not None:
             timestamps = [p["_written_at"] for p in paths_ld]
             paths_ld, _ = _filter_by_time(paths_ld, timestamps, before=before, after=after)

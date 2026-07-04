@@ -161,6 +161,37 @@ stash.get_all("k")    # -> ["v1", "v2"]  (full history)
 
 Use `append_mode=True` when you want reproducibility or audit history (e.g. caching LLM responses across prompt revisions). Leave it off for ordinary overwrite semantics.
 
+### TTL (time-to-live)
+
+Give a stash a `ttl` (seconds or a `timedelta`) and entries older than that read as absent — `get` returns the default, `in` says no, and `@stashed_result`/`run` recompute:
+
+```python
+stash = HashStash(ttl=3600)          # results live for an hour
+stash["k"] = expensive()             # fresh for 3600s, then a miss
+```
+
+TTL is enforced on read (works identically on every engine); expired entries still occupy storage until you reclaim them with `stash.prune(older_than=..., dry_run=False)`, which deliberately still sees expired entries.
+
+### Single-flight caching
+
+`stash.run`, `@stashed_result`, and `stash.get_set` are single-flight by default: concurrent callers (threads or processes on one machine) that miss on the same key wait for one compute instead of all executing the function. Opt out per call with `_single_flight=False` (or `single_flight=False` for `get_set`). The locks are striped files next to the stash, so they cannot span hosts — multi-host redis/mongo callers may still occasionally double-compute.
+
+### Statistics and invalidation
+
+```python
+stash.stats                    # {'hits': 10, 'misses': 3, 'sets': 3, 'deletes': 0}
+stash.reset_stats()
+
+@stashed_result
+def f(x): ...
+f(2)                           # computes
+f.invalidate(2)                # drops that one cached call signature -> True
+f(2)                           # recomputes
+stash.invalidate(key)          # plain-stash form
+```
+
+Counters are shared by every stash instance pointing at the same path, per process.
+
 ### `items()`, `keys()`, and `values()` are lazy
 
 All three are generators — they yield as they read, so you can iterate a multi-GB stash without loading it into memory:
@@ -256,6 +287,7 @@ stash = HashStash(
 
     # storage options
     append_mode=False,           # store all versions of a key/value pair
+    ttl=3600,                    # optional: entries expire after this many seconds
     clear=True                   # clear on init
 )
 

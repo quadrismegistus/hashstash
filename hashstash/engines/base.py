@@ -2,6 +2,7 @@
 # circular, and whether a name has landed in the package namespace yet
 # depends on import order (spawn workers + editable installs order imports
 # differently). Never rely on the star-chain for stdlib names.
+from collections import Counter
 from collections.abc import MutableMapping
 from functools import cached_property
 from typing import Any
@@ -116,6 +117,24 @@ def get_lock(path):
 
 ENVELOPE_MARKER = "__hs_v1__"
 
+# single-flight key locks are striped across this many lock files per stash:
+# bounded lock-file count, negligible collision odds between distinct keys
+SINGLE_FLIGHT_STRIPES = 256
+
+# access counters shared by every stash instance pointing at the same path
+# (run()/attach_func create fresh sub-stash instances per call; their traffic
+# must land on the same counters the user reads via func.stash.stats)
+_stats_by_path = {}
+_stats_guard = threading.Lock()
+
+
+def _get_stats(path):
+    with _stats_guard:
+        stats = _stats_by_path.get(path)
+        if stats is None:
+            stats = _stats_by_path[path] = Counter()
+        return stats
+
 
 class _MissingType:
     """Sentinel distinguishing 'key absent' from a stored None value."""
@@ -208,6 +227,7 @@ class BaseHashStash(MutableMapping):
         "append_mode",
         "is_function_stash",
         "is_tmp",
+        "ttl",
         "_root_is_dir",
     ]
     metadata_cols = ["_version", "_written_at"]
@@ -232,12 +252,13 @@ class BaseHashStash(MutableMapping):
         is_tmp:bool=None,
         append_mode: bool = False,
         clear: bool = False,
+        ttl: Union[int, float, timedelta] = None,
         _root_is_dir: bool = None,
         **kwargs,
     ) -> None:
         config = Config()
         # self.name = name if name is not None else self.name
-        
+
         self.compress = get_compresser(
             compress if compress is not None else config.compress
         )
@@ -248,6 +269,13 @@ class BaseHashStash(MutableMapping):
         self.dbname = dbname if dbname is not None else self.dbname
         self.parent = parent
         self.children = [] if not children else children
+        # ttl (seconds or timedelta): entries older than this read as absent.
+        # Enforced on read, engine-agnostic; use prune() to reclaim storage.
+        if isinstance(ttl, timedelta):
+            ttl = ttl.total_seconds()
+        if ttl is not None and ttl <= 0:
+            raise ValueError(f"ttl must be positive, got {ttl!r}")
+        self.ttl = ttl
         self.is_function_stash = (
             is_function_stash
             if is_function_stash is not None
@@ -298,8 +326,9 @@ class BaseHashStash(MutableMapping):
             # path_dirname is a pre-existing directory we share with other files;
             # clear() must never remove it (see _owns_dir check there)
             self._owns_dir = False
-        
-        
+
+        self._stats = _get_stats(self.path)
+
         if clear:
             self.clear()
 
@@ -503,11 +532,22 @@ class BaseHashStash(MutableMapping):
         unencoded_value_setter,
         default=None,
         _force=False,
+        single_flight=True,
         **kwargs,
     ):
         unencoded_value = _MISSING
         if not _force:
             unencoded_value = self.get(unencoded_key, default=_MISSING, **kwargs)
+            if unencoded_value is _MISSING and single_flight:
+                # single-flight: concurrent callers missing on the same key wait
+                # for one compute instead of all running the setter
+                with self.key_lock(unencoded_key):
+                    unencoded_value = self.get(unencoded_key, default=_MISSING, **kwargs)
+                    if unencoded_value is _MISSING:
+                        log.debug("setting")
+                        unencoded_value = unencoded_value_setter()
+                        self.set(unencoded_key, unencoded_value)
+                return unencoded_value if unencoded_value is not _MISSING else default
         if unencoded_value is _MISSING:
             log.debug("setting")
             unencoded_value = unencoded_value_setter()
@@ -515,6 +555,18 @@ class BaseHashStash(MutableMapping):
         else:
             log.debug("getting")
         return unencoded_value if unencoded_value is not _MISSING else default
+
+    def key_lock(self, unencoded_key):
+        """Cross-process lock scoped to one key, for single-flight computes.
+
+        Locks are striped: the key hashes to one of SINGLE_FLIGHT_STRIPES file
+        locks next to the stash, so lock files stay bounded. Two different keys
+        occasionally share a stripe and serialize their computes — harmless.
+        Reentrant within a thread; spans processes on one machine (a file lock
+        cannot span hosts, so multi-host redis/mongo callers may still race)."""
+        encoded_key = self.encode_key(unencoded_key)
+        stripe = int(encode_hash(encoded_key), 16) % SINGLE_FLIGHT_STRIPES
+        return get_lock(f"{self.path}.sf{stripe}")
 
     @log.debug
     def get(
@@ -535,6 +587,8 @@ class BaseHashStash(MutableMapping):
             as_dataframe=as_dataframe,
             **kwargs,
         )
+        found = values is not None and (not isinstance(values, list) or bool(values))
+        self._stats["hits" if found else "misses"] += 1
         value = values[-1] if values else default
         return self.serialize(value) if as_string else value
 
@@ -556,6 +610,7 @@ class BaseHashStash(MutableMapping):
 
         decoded = self.decode_value(encoded_value)
         values, timestamps = _unwrap_envelope(decoded)
+        after = self._ttl_after(after, kwargs)
         values, timestamps = _filter_by_time(values, timestamps, before=before, after=after)
         if not values:
             return default
@@ -582,6 +637,7 @@ class BaseHashStash(MutableMapping):
 
             encoded_value = self.encode_value(new_unencoded_value)
             self._set(encoded_key, encoded_value)
+        self._stats["sets"] += 1
 
     @log.debug
     def run(
@@ -590,6 +646,7 @@ class BaseHashStash(MutableMapping):
         *args,
         _force=False,
         _store_args=True,
+        _single_flight=True,
         **kwargs,
     ):
         fstash = (
@@ -602,7 +659,6 @@ class BaseHashStash(MutableMapping):
             args = [get_object_from_method(func)] + args
         elif get_pytype(func) == "classmethod":
             args = [get_class_from_method(func)] + args
-        # func = unwrap_func(func)
         # underscore-prefixed kwargs are stash-control options: excluded from the
         # cache key and never passed to the function or to get()
         func_kwargs = {k: v for k, v in kwargs.items() if k and k[0] != "_"}
@@ -618,11 +674,26 @@ class BaseHashStash(MutableMapping):
                     f"Stash hit for {func.__name__} in {fstash}. Returning stashed result"
                 )
                 return res
+            if _single_flight:
+                # single-flight: concurrent callers missing on the same key wait
+                # for one compute instead of all executing the function (opt out
+                # per call with _single_flight=False)
+                with fstash.key_lock(unencoded_key):
+                    res = fstash.get(unencoded_key, default=_MISSING)
+                    if res is not _MISSING:
+                        log.debug(
+                            f"Stash hit for {func.__name__} after waiting on "
+                            f"another caller's compute"
+                        )
+                        return res
+                    return self._run_and_store(fstash, func, unencoded_key, args, func_kwargs)
 
-        # didn't find
         note = "Forced execution" if _force else "Stash miss"
         log.debug(f"{note} for {func.__name__}. Executing function.")
+        return self._run_and_store(fstash, func, unencoded_key, args, func_kwargs)
 
+    @staticmethod
+    def _run_and_store(fstash, func, unencoded_key, args, func_kwargs):
         funcx = unwrap_func(func)
         result = call_function_politely(funcx, *args, **func_kwargs)
         result = list(result) if is_generator(result) else result
@@ -630,7 +701,6 @@ class BaseHashStash(MutableMapping):
             f"Caching result for {func.__name__} under {serialize(unencoded_key)}"
         )
         fstash.set(unencoded_key, result)
-        # return unencoded_key
         return result
 
     def map(
@@ -763,6 +833,10 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def has(self, unencoded_key: Any) -> bool:
+        if self.ttl is not None:
+            # storage-level existence isn't enough: an expired entry must read
+            # as absent everywhere, or get_set/run would trust a dead key
+            return self.get(unencoded_key, default=_MISSING) is not _MISSING
         return self._has(self.encode_key(unencoded_key))
 
     @log.debug
@@ -844,6 +918,32 @@ class BaseHashStash(MutableMapping):
         if not self.has(unencoded_key):
             raise KeyError(unencoded_key)
         self._del(self.encode_key(unencoded_key))
+        self._stats["deletes"] += 1
+
+    def invalidate(self, *args, **kwargs) -> bool:
+        """Delete the cached result for one call signature.
+
+        On a function stash (``func.stash``), pass the same arguments as the
+        original call: ``func.stash.invalidate(2, 3)``. On a plain stash, pass
+        the key itself: ``stash.invalidate(key)``. Returns True if an entry was
+        deleted, False if there was nothing cached for that signature."""
+        if self.is_function_stash:
+            func_kwargs = {k: v for k, v in kwargs.items() if k and k[0] != "_"}
+            key = self.new_function_key(
+                *args, store_args=kwargs.get("_store_args", True), **func_kwargs
+            )
+        else:
+            if len(args) != 1 or kwargs:
+                raise TypeError(
+                    "invalidate() on a non-function stash takes exactly one "
+                    "argument: the key"
+                )
+            key = args[0]
+        try:
+            self.delete(key)
+            return True
+        except KeyError:
+            return False
 
     @log.debug
     def _del(self, encoded_key: Union[str, bytes]) -> None:
@@ -867,6 +967,18 @@ class BaseHashStash(MutableMapping):
         with self as cache, cache.db as db:
             for k in db:
                 yield k, db[k]
+
+    def _ttl_after(self, after, kwargs=None):
+        """Effective 'after' floor for reads: an explicit after wins; otherwise
+        the ttl floor applies unless apply_ttl=False was passed (prune() needs
+        raw access or expired entries could never be reclaimed)."""
+        if after is not None:
+            return after
+        if kwargs is not None and kwargs.pop("apply_ttl", None) is False:
+            return None
+        if self.ttl:
+            return time.time() - self.ttl
+        return None
 
     def _all_results(self, all_results=None):
         return all_results if all_results is not None else self.append_mode
@@ -956,6 +1068,16 @@ class BaseHashStash(MutableMapping):
     @log.debug
     def hash(self, data: bytes) -> str:
         return encode_hash(data)
+
+    @property
+    def stats(self):
+        """Access counters for this stash instance: hits, misses, sets, deletes.
+        Per-instance and in-memory only (not shared across processes)."""
+        return dict(self._stats)
+
+    def reset_stats(self):
+        self._stats.clear()
+        return self
 
     @property
     def stashed_result(self):
@@ -1261,10 +1383,12 @@ class BaseHashStash(MutableMapping):
         for key in list(self.keys()):
             total += 1
             # as_dataframe/as_list are honored by the dataframe engine (and harmlessly
-            # ignored elsewhere): prune needs plain dicts to read _written_at from
+            # ignored elsewhere): prune needs plain dicts to read _written_at from.
+            # apply_ttl=False: prune must see expired entries or it could never
+            # reclaim them
             entries = self.get_all(
                 key, default=None, with_metadata=True, all_results=True,
-                as_dataframe=False, as_list=True,
+                as_dataframe=False, as_list=True, apply_ttl=False,
             )
             if not entries:
                 continue

@@ -113,6 +113,8 @@ def stashed_result(
             
         func_stash = stash.attach_func(func)
         wrapper.stash = func_stash
+        # decorated_func.invalidate(*args, **kwargs) drops one cached call signature
+        wrapper.invalidate = func_stash.invalidate
         return wrapper
 
     # Check if _func is a string (root_dir) or a function

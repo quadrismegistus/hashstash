@@ -173,6 +173,7 @@ class JSONLHashStash(BaseHashStash):
             # every other engine (the log retains history but it is not queryable)
             values, timestamps = values[-1:], timestamps[-1:]
 
+        after = self._ttl_after(after, kwargs)
         values, timestamps = _filter_by_time(values, timestamps, before=before, after=after)
         if not values:
             return default
@@ -231,6 +232,7 @@ class JSONLHashStash(BaseHashStash):
         with self:
             self._append_line(obj)
             self._keyset.add(ks)
+        self._stats["sets"] += 1
 
     @log.debug
     def _set(self, encoded_key: str, encoded_value: str) -> None:
