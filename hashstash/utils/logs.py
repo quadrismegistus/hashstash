@@ -1,4 +1,18 @@
-from . import *
+# Explicit imports only: this module is imported mid-way through the package's
+# circular star-import chain (utils/__init__ -> logs -> `from . import *` on the
+# partially-initialized utils package). Whether names like `logging` were
+# already present depended on import ordering — and spawn-mode workers under an
+# editable install + coverage hooks order imports differently, crashing with
+# NameError. Never rely on the package namespace here.
+import inspect
+import logging
+import os
+import sys
+import time
+from contextlib import contextmanager
+from functools import wraps
+
+from ..constants import DEFAULT_LOG_LEVEL
 
 
 ## Logging setup
