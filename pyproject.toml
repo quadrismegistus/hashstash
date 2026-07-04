@@ -38,6 +38,10 @@ fsspec = ["fsspec"]
 duckdb = ["duckdb"]
 best = ["lmdb", "lz4"]
 lmdb = ["lmdb"]
+# plyvel builds from source against the system LevelDB library (no binary
+# wheels), so it is intentionally NOT in the aggregate dev/all/engines extras —
+# it would break `pip install .[dev]` on machines without libleveldb-dev. The
+# leveldb engine tests importorskip cleanly when plyvel is absent.
 leveldb = ["plyvel"]
 diskcache = ["diskcache"]
 memory = ["ultradict"]
@@ -47,7 +51,6 @@ filebased = [
   "sqlitedict",
   "diskcache",
   "lmdb",
-  "plyvel",
   "ultradict",
 ]
 servers = [
@@ -56,7 +59,6 @@ servers = [
 engines = [
     "pandas", "polars", "numpy", "pyarrow","fastparquet",
     "lmdb",
-    "plyvel",
     "sqlitedict",
     "diskcache",
     "redis", "redis_dict",
@@ -68,7 +70,6 @@ dev = [
   # engines
   "pandas", "polars", "numpy", "pyarrow","fastparquet",
   "lmdb",
-  "plyvel",
   "sqlitedict",
   "diskcache",
   "redis", "redis_dict",
@@ -98,7 +99,6 @@ all = [
   # engines
   "pandas", "polars", "numpy", "pyarrow","fastparquet",
   "lmdb",
-  "plyvel",
   "sqlitedict",
   "diskcache",
   "redis", "redis_dict",
