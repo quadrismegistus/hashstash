@@ -457,6 +457,121 @@ def test_connection_pool_thread_safety(tmp_path):
     assert len(stash) == 8 * 20
 
 
+# --- Stage 5: engine fixes ---------------------------------------------------
+
+
+def test_unknown_engine_raises():
+    """Unknown engines used to silently fall back to pairtree."""
+    with pytest.raises(ValueError):
+        HashStash(engine="ldmb")  # typo of lmdb
+
+
+def test_jsonl_sees_other_writers(tmp_path):
+    """The JSONL keyset loaded once and never refreshed: a long-lived reader never
+    saw keys written by another instance/process."""
+    root = str(tmp_path / "cache")
+    reader = HashStash(engine="jsonl", root_dir=root)
+    assert reader.get("k") is None  # loads (empty) keyset
+
+    writer = HashStash(engine="jsonl", root_dir=root)
+    writer["k"] = "written elsewhere"
+
+    assert "k" in reader
+    assert reader.get("k") == "written elsewhere"
+
+
+def test_jsonl_overwrite_semantics_match_other_engines(tmp_path):
+    """With append_mode=False, jsonl.get_all returned every historical row while
+    every other engine returned only the latest."""
+    jstash = HashStash(engine="jsonl", root_dir=str(tmp_path / "j"), append_mode=False)
+    jstash["k"] = 1
+    jstash["k"] = 2
+    assert jstash.get_all("k") == [2]
+    assert jstash.items_l() == [("k", 2)]
+    # chaining contract: clear() returns self like the base engine
+    assert jstash.clear() is jstash
+
+
+def test_lmdb_two_instances_same_path(tmp_path):
+    """Two stash objects on one path used to open the LMDB environment twice in
+    one process ('environment already open', issue #9)."""
+    pytest.importorskip("lmdb")
+    root = str(tmp_path / "cache")
+    a = HashStash(engine="lmdb", root_dir=root)
+    b = HashStash(engine="lmdb", root_dir=root)
+    a["k"] = "va"
+    assert b["k"] == "va"
+    b["k2"] = "vb"
+    assert a["k2"] == "vb"
+    a.close()
+
+
+def test_pairtree_same_microsecond_appends_both_survive(tmp_path):
+    """Version filenames were bare microsecond timestamps: two writers in the same
+    microsecond silently overwrote each other. Filenames now carry a pid suffix."""
+    stash = HashStash(engine="pairtree", root_dir=str(tmp_path / "pt"), append_mode=True)
+    stash["k"] = "v1"
+    stash["k"] = "v2"
+    path = stash._get_path(stash.encode_key("k"))
+    versions = [f for f in os.listdir(path) if not f.startswith(".")]
+    assert len(versions) == 2
+    assert all("." in f for f in versions)  # pid suffix present
+    assert stash.get_all("k") == ["v1", "v2"]
+
+
+def test_dataframe_engine_set_contract(tmp_path):
+    """DataFrameHashStash.set() violated the base signature (no append param) and
+    never honored append_mode=False for dataframe values."""
+    pd = pytest.importorskip("pandas")
+    stash = HashStash(engine="dataframe", root_dir=str(tmp_path / "df"), append_mode=False)
+
+    df1 = pd.DataFrame({"a": [1, 2]})
+    df2 = pd.DataFrame({"a": [3, 4]})
+    stash.set("k", df1, append=None)  # base-contract signature
+    stash.set("k", df2)
+
+    path = stash._get_path(stash.encode_key("k"))
+    versions = [f for f in os.listdir(path) if not f.startswith(".")]
+    assert len(versions) == 1  # overwrite semantics honored
+
+    out = stash.get("k")
+    got = out.df if hasattr(out, "df") else out
+    assert list(got["a"]) == [3, 4]
+
+    # non-dataframe values still work through the pairtree path
+    stash["plain"] = {"x": 1}
+    assert stash["plain"] == {"x": 1}
+
+
+def test_shelve_engine_roundtrip(tmp_path):
+    """shelve existed in code but was never tested anywhere."""
+    stash = HashStash(engine="shelve", root_dir=str(tmp_path / "sh"))
+    stash["k"] = {"nested": [1, 2, 3]}
+    assert stash["k"] == {"nested": [1, 2, 3]}
+    del stash["k"]
+    assert "k" not in stash
+
+
+def test_memory_engine_works_without_ultradict(tmp_path, monkeypatch):
+    """memory is listed as a builtin engine but hard-required the optional
+    ultradict package at first use; it now degrades to a process-local dict."""
+    import hashstash.engines.memory as mem
+
+    monkeypatch.setattr(mem, "SHARED_MEMORY_CACHE", None)
+    real_import = __import__
+
+    def no_ultradict(name, *args, **kwargs):
+        if name == "UltraDict":
+            raise ImportError("simulated missing ultradict")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", no_ultradict)
+    stash = HashStash(engine="memory", root_dir=str(tmp_path / "mem"))
+    stash["k"] = "v"
+    assert stash["k"] == "v"
+    monkeypatch.setattr(mem, "SHARED_MEMORY_CACHE", None)
+
+
 @pytest.mark.skipif(not _redis_available(), reason="no local redis server")
 def test_redis_clear_scoped_to_namespace():
     """clear() used to flushdb() the whole numbered Redis db, wiping other stashes

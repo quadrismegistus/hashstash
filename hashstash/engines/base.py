@@ -132,15 +132,17 @@ def _coerce_timestamp(dt):
 
 
 def _unwrap_envelope(decoded):
-    """Return (values, timestamps). Pre-envelope (legacy) entries read as timestamp=0."""
+    """Return (values, timestamps). Pre-envelope (legacy) entries read as timestamp=0.
+
+    A bare (non-envelope) value — including a bare list — is ONE value: treating
+    legacy lists as multiple versions silently corrupted list-valued caches
+    (get() returned the last element instead of the list)."""
     if isinstance(decoded, dict) and decoded.get(ENVELOPE_MARKER) is True:
         values = decoded.get("_values", [])
         timestamps = decoded.get("_written_at", [])
         if len(timestamps) < len(values):
             timestamps = list(timestamps) + [0.0] * (len(values) - len(timestamps))
         return list(values), list(timestamps)
-    if isinstance(decoded, list):
-        return list(decoded), [0.0] * len(decoded)
     return [decoded], [0.0]
 
 
@@ -928,7 +930,10 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def popitem(self):
-        key, value = next(iter(self.items()))
+        try:
+            key, value = next(iter(self.items()))
+        except StopIteration:
+            raise KeyError("popitem(): stash is empty") from None
         del self[key]
         return (key,value)
 
@@ -1239,7 +1244,12 @@ class BaseHashStash(MutableMapping):
         total = 0
         for key in list(self.keys()):
             total += 1
-            entries = self.get_all(key, default=None, with_metadata=True, all_results=True)
+            # as_dataframe/as_list are honored by the dataframe engine (and harmlessly
+            # ignored elsewhere): prune needs plain dicts to read _written_at from
+            entries = self.get_all(
+                key, default=None, with_metadata=True, all_results=True,
+                as_dataframe=False, as_list=True,
+            )
             if not entries:
                 continue
             latest_ts = entries[-1].get("_written_at", 0.0)
@@ -1283,74 +1293,34 @@ def HashStash(
     """
     config = Config()
     engine = get_engine(engine if engine is not None else config.engine)
+    if serializer is not None:
+        serializer = get_serializer_type(serializer)
 
-    if engine == "pairtree":
-        from .pairtree import PairtreeHashStash
+    engine_registry = {
+        "pairtree": ("hashstash.engines.pairtree", "PairtreeHashStash"),
+        "sqlite": ("hashstash.engines.sqlite", "SqliteHashStash"),
+        "sqlitedict": ("hashstash.engines.sqlite", "SqliteHashStash"),
+        "memory": ("hashstash.engines.memory", "MemoryHashStash"),
+        "shelve": ("hashstash.engines.shelve", "ShelveHashStash"),
+        "redis": ("hashstash.engines.redis", "RedisHashStash"),
+        "diskcache": ("hashstash.engines.diskcache", "DiskCacheHashStash"),
+        "lmdb": ("hashstash.engines.lmdb", "LMDBHashStash"),
+        "mongo": ("hashstash.engines.mongo", "MongoHashStash"),
+        "dataframe": ("hashstash.engines.dataframe", "DataFrameHashStash"),
+        "jsonl": ("hashstash.engines.jsonl", "JSONLHashStash"),
+    }
+    module_name, class_name = engine_registry[engine]
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as e:
+        hint = ENGINE_INSTALL_HINTS.get(engine, engine)
+        raise ImportError(
+            f"HashStash engine {engine!r} failed to import ({e}). "
+            f"Install its dependencies with: pip install {hint}"
+        ) from e
+    cls = getattr(module, class_name)
 
-        cls = PairtreeHashStash
-    elif engine in {"sqlite", "sqlitedict"}:
-        try:
-            from ..engines.sqlite import SqliteHashStash
-
-            cls = SqliteHashStash
-        except ImportError:
-            pass
-    elif engine == "memory":
-        from ..engines.memory import MemoryHashStash
-
-        cls = MemoryHashStash
-    elif engine == "shelve":
-        from ..engines.shelve import ShelveHashStash
-
-        cls = ShelveHashStash
-    elif engine == "redis":
-        try:
-            from ..engines.redis import RedisHashStash
-
-            cls = RedisHashStash
-        except ImportError:
-            pass
-    elif engine == "diskcache":
-        try:
-            from ..engines.diskcache import DiskCacheHashStash
-
-            cls = DiskCacheHashStash
-        except ImportError:
-            pass
-    elif engine == "lmdb":
-        try:
-            from ..engines.lmdb import LMDBHashStash
-
-            cls = LMDBHashStash
-        except ImportError:
-            pass
-    elif engine == "mongo":
-        try:
-            from ..engines.mongo import MongoHashStash
-
-            cls = MongoHashStash
-        except ImportError:
-            pass
-    elif engine == "dataframe":
-        try:
-            from .dataframe import DataFrameHashStash
-
-            cls = DataFrameHashStash
-        except ImportError:
-            pass
-    elif engine == "jsonl":
-        try:
-            from ..engines.jsonl import JSONLHashStash
-
-            cls = JSONLHashStash
-        except ImportError:
-            pass
-    else:
-        raise ValueError(
-            f"\n\nInvalid HashStash engine: {engine}.\n\nOptions available given current install: {', '.join(get_working_engines())}\nAll options: {', '.join(ENGINES)}"
-        )
-
-    object = cls(
+    return cls(
         root_dir=root_dir,
         compress=compress,
         b64=b64,
@@ -1358,7 +1328,6 @@ def HashStash(
         dbname=dbname,
         **kwargs,
     )
-    return object
 
 
 def attach_stash_to_function(func, stash=None, **stash_kwargs):

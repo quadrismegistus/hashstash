@@ -28,6 +28,8 @@ except Exception as e:
     MONGO_AVAILABLE = False
     MONGO_SKIP_REASON = f"Mongo server unavailable (Docker required): {e}"
 
+from hashstash.engines.shelve import ShelveHashStash
+
 TEST_CLASSES = [
     PairtreeHashStash,
     SqliteHashStash,
@@ -37,6 +39,7 @@ TEST_CLASSES = [
     LMDBHashStash,
     pytest.param(MongoHashStash, marks=pytest.mark.skipif(not MONGO_AVAILABLE, reason=MONGO_SKIP_REASON)),
     JSONLHashStash,
+    ShelveHashStash,
 ]
 
 
@@ -555,9 +558,11 @@ class TestHashStashFactory:
         assert stash.b64 == False
 
     def test_serializer_parameter(self):
-        serializer = "json"
-        stash = HashStash(serializer=serializer)
-        assert serializer in stash.serializer
+        # unknown serializers raise instead of being silently coerced to the default
+        with pytest.raises(ValueError):
+            HashStash(serializer="not_a_serializer")
+        stash = HashStash(serializer="pickle")
+        assert stash.serializer == "pickle"
 
     def test_root_dir_parameter(self):
         root_dir = "/tmp/test_root"
@@ -565,7 +570,9 @@ class TestHashStashFactory:
         assert stash.root_dir == root_dir
 
     def test_invalid_engine(self):
-        assert HashStash(engine="invalid_engine").engine == DEFAULT_ENGINE_TYPE
+        # a typo'd engine used to silently fall back to pairtree, writing to the wrong store
+        with pytest.raises(ValueError):
+            HashStash(engine="invalid_engine")
 
     def test_default_parameters(self):
         config = Config()

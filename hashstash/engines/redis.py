@@ -23,18 +23,32 @@ class RedisHashStash(BaseHashStash):
     dbname = 'hashstash'
     needs_lock = False  # the server serializes operations; a local file lock can't span hosts anyway
 
+    to_dict_attrs = BaseHashStash.to_dict_attrs + ["host", "port"]
+
     def __init__(self, *args, host=None, port=None, **kwargs):
         if host is not None: self.host = host
         if port is not None: self.port = port
         super().__init__(*args, **kwargs)
-        
+        if not self.b64 and (
+            self.serializer == "pickle"
+            or self.compress not in {False, None, RAW_NO_COMPRESS}
+        ):
+            raise ValueError(
+                "RedisHashStash: b64=False requires a text serializer and no "
+                "compression (values are stored as strings). Pass b64=True."
+            )
+
+    def _namespace(self):
+        # include root_dir so stashes constructed with different root_dirs are
+        # isolated, matching file-engine semantics (they used to share all keys)
+        root_sig = encode_hash(str(self.root_dir))[:8]
+        return f"{self.name}/{self.dbname}/{root_sig}".replace('/', '.')
 
     @log.debug
     def get_db(self):
         from redis_dict import RedisDict
         log.debug(f"Connecting to Redis at {self.host}:{self.port}")
-        name = (self.name+'/'+self.dbname).replace('/','.')
-        return RedisDict(namespace=name, host=self.host, port=self.port, db=get_db_number(self.dbname))
+        return RedisDict(namespace=self._namespace(), host=self.host, port=self.port, db=get_db_number(self.dbname))
     
     @staticmethod
     def _close_connection(connection):

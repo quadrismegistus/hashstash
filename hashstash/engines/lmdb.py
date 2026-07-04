@@ -1,24 +1,48 @@
 from . import *
+import threading
+
+# One lmdb.Environment per path per process. Opening the same path twice in one
+# process is unsupported by LMDB ("environment already open", issue #9) — the old
+# per-instance self._env did exactly that whenever two stash objects shared a path.
+_lmdb_envs = {}
+_lmdb_envs_guard = threading.Lock()
+
 
 class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
     filename_is_dir = True
     needs_lock = False  # LMDB has its own multi-reader/single-writer locking
+    to_dict_attrs = BaseHashStash.to_dict_attrs + ["map_size"]
 
     def __init__(self, *args, map_size=10 * 1024**3, **kwargs):  # Default to 10GB
-        self._env = None
         self.map_size = map_size
         super().__init__(*args, **kwargs)
 
     @log.debug
     def get_db(self):
-        if self._env is None:
-            import lmdb
-            os.makedirs(self.path_dirname, exist_ok=True)
+        with _lmdb_envs_guard:
+            env = _lmdb_envs.get(self.path)
+            if env is None:
+                import lmdb
+                os.makedirs(self.path_dirname, exist_ok=True)
+                env = lmdb.open(self.path, map_size=self.map_size)
+                _lmdb_envs[self.path] = env
+            return env
 
-            self._env = lmdb.open(self.path, map_size=self.map_size)
-        return self._env
+    def _drop_env(self):
+        with _lmdb_envs_guard:
+            env = _lmdb_envs.pop(self.path, None)
+        if env is not None:
+            try:
+                env.close()
+            except Exception as e:
+                log.debug(f"error closing LMDB env: {e}")
 
+    @contextmanager
+    def get_connection(self):
+        # bypass the base connection pool: envs live in _lmdb_envs, and pooling the
+        # same object twice would let pool cleanup close an env the registry still serves
+        yield self.get_db()
 
     @contextmanager
     def get_transaction(self, write=False):
@@ -33,8 +57,7 @@ class LMDBHashStash(BaseHashStash):
                 log.debug(f"LMDB transaction error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise
-                self.close()  # Close the current environment
-                self._env = None  # Reset the environment to force a new one on next attempt
+                self._drop_env()  # force a fresh environment on the next attempt
 
     def _set(self, encoded_key, encoded_value):
         with self.get_transaction(write=True) as txn:
@@ -91,13 +114,11 @@ class LMDBHashStash(BaseHashStash):
             connection.close()
 
     def clear(self):
+        self._drop_env()
         super().clear()
-        self._env = None  # Reset the environment
         return self
 
     def close(self):
-        if self._env is not None:
-            self._env.close()
-            self._env = None
+        self._drop_env()
         super().close()
 

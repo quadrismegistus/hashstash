@@ -14,6 +14,9 @@ def iter_jsonl(path):
                     try:
                         yield json.loads(line)
                     except Exception:
+                        # a torn/corrupt row loses that version: say so instead of
+                        # silently dropping it
+                        log.warning(f"skipping unparseable JSONL line in {path}")
                         continue
 
 def is_jsonable(obj):

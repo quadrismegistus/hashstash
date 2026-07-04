@@ -30,20 +30,25 @@ class MongoHashStash(BaseHashStash):
     dbname = 'hashstash'
     needs_lock = False  # the server serializes operations; a local file lock can't span hosts anyway
 
+    to_dict_attrs = BaseHashStash.to_dict_attrs + ["host", "port"]
+
     def __init__(self, *args, host=None, port=None, **kwargs):
         if host is not None: self.host = host
         if port is not None: self.port = port
-        # force b64 True for mongo
-        self.b64 = True
         super().__init__(*args, **kwargs)
+        # force b64 AFTER super().__init__: assigning before was overwritten by the
+        # base constructor, and b64=False + binary payloads raised UnicodeDecodeError
+        self.b64 = True
 
-        
     @log.debug
     def get_db(self):
         from pymongo import MongoClient
         client = MongoClient(host=self.host, port=self.port)
         db = client[get_db_name(self.dbname)]
-        coll_name = (self.name+'/'+self.dbname).replace('/','.')
+        # include root_dir so stashes constructed with different root_dirs are
+        # isolated, matching file-engine semantics (they used to share all keys)
+        root_sig = encode_hash(str(self.root_dir))[:8]
+        coll_name = f"{self.name}/{self.dbname}/{root_sig}".replace('/', '.')
         coll = db[coll_name]
         coll._client = client
         coll._db = db

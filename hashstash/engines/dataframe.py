@@ -1,5 +1,6 @@
 from . import *
 from .pairtree import PairtreeHashStash
+from .base import _filter_by_time
 from ..utils.dataframes import MetaDataFrame
 
 class DataFrameHashStash(PairtreeHashStash):
@@ -15,12 +16,12 @@ class DataFrameHashStash(PairtreeHashStash):
     def to_dict(self):
         return {**super().to_dict(), 'io_engine': self.io_engine, 'df_engine': self.df_engine}
 
-    def set(self, unencoded_key: bytes, unencoded_value: bytes) -> None:
+    def set(self, unencoded_key: Any, unencoded_value: Any, append=None) -> None:
         log.debug(f"Setting value for key: {unencoded_key}")
         # set value as pairtree does if not a dataframe
         if not is_dataframe(unencoded_value):
             log.debug(f"Input is not a DataFrame")
-            return super().set(unencoded_key, unencoded_value)
+            return super().set(unencoded_key, unencoded_value, append=append)
 
         # Handle DataFrame values
         mdf = MetaDataFrame(unencoded_value)
@@ -28,8 +29,14 @@ class DataFrameHashStash(PairtreeHashStash):
 
         encoded_key = self.encode_key(unencoded_key)
         self._set_key(encoded_key)
-        filepath_value = self._get_path_new_value(encoded_key)
-        return mdf.write(filepath_value, io_engine=self.io_engine, compression=self.compress)
+        # the io-engine extension marks this version file as a dataframe; plain
+        # pairtree versions end in '.<pid>' and are routed to the base decoder
+        filepath_value = f"{self._get_path_new_value(encoded_key)}.{self.io_engine}"
+        mdf.write(filepath_value, io_engine=self.io_engine, compression=self.compress)
+        if not (append or self.append_mode):
+            # honor overwrite semantics like pairtree: without this, every set()
+            # accumulated another version file forever
+            self._prune_dir(filepath_value)
 
     @log.debug
     def get_all(
@@ -40,6 +47,8 @@ class DataFrameHashStash(PairtreeHashStash):
         all_results=None,
         as_dataframe=None,
         as_list=None,
+        before=None,
+        after=None,
         **kwargs,
     ) -> Any:
         all_results = self._all_results(all_results)
@@ -50,6 +59,9 @@ class DataFrameHashStash(PairtreeHashStash):
             all_results=self._all_results(all_results),
             with_metadata=True,
         )
+        if before is not None or after is not None:
+            timestamps = [p["_written_at"] for p in paths_ld]
+            paths_ld, _ = _filter_by_time(paths_ld, timestamps, before=before, after=after)
 
         out_l = []
         for path_d in paths_ld:
@@ -114,14 +126,18 @@ class DataFrameHashStash(PairtreeHashStash):
         # return self.serialize(values) if as_string else values
 
     def _decode_value_from_filepath(self, filepath):
-        try:
-            ext = os.path.splitext(filepath)[1]
-            if not ext:
-                return super().decode_value_from_filepath(filepath)
-            return MetaDataFrame.read(filepath, df_engine=self.df_engine, compression=self.compress)
-        except Exception as e:
-            log.debug(f'error reading dataframe from {filepath}: {e}')
-            return None
+        # dataframe version files carry their io-engine as the extension; anything
+        # else is a plain pairtree value. Read errors propagate: returning None
+        # here silently masked corrupted entries.
+        ext = os.path.splitext(filepath)[1].lstrip(".").lower()
+        if ext in get_working_io_engines():
+            return MetaDataFrame.read(
+                filepath,
+                io_engine=ext,
+                df_engine=self.df_engine,
+                compression=self.compress,
+            )
+        return super().decode_value_from_filepath(filepath)
 
     @log.debug
     def items(

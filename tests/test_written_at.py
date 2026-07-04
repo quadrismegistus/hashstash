@@ -108,10 +108,12 @@ class TestBeforeAfterFilter:
 
 class TestBackwardCompatUnstamped:
     def test_unwrap_legacy_list_format(self):
-        """Pre-envelope storage was a raw list; verify _unwrap_envelope reads it with t=0."""
+        """A bare (non-envelope) list is ONE value with t=0. Treating it as multiple
+        versions silently corrupted list-valued caches (get() returned the last
+        element instead of the stored list)."""
         values, timestamps = _unwrap_envelope(["v1", "v2"])
-        assert values == ["v1", "v2"]
-        assert timestamps == [0.0, 0.0]
+        assert values == [["v1", "v2"]]
+        assert timestamps == [0.0]
 
     def test_unwrap_envelope_format(self):
         envelope = {
@@ -125,10 +127,8 @@ class TestBackwardCompatUnstamped:
 
     def test_legacy_entries_excluded_from_after_queries(self, stash):
         # Simulate a pre-feature entry by writing directly at engine layer with no envelope.
-        # This test only really applies to non-JSONL engines (JSONL always has per-row timestamps
-        # once written through the new code path). We just confirm _unwrap_envelope behavior: legacy
-        # => timestamp=0 => fails after=(any positive) filter.
-        values, timestamps = _unwrap_envelope(["legacy"])
+        # Legacy => timestamp=0 => fails after=(any positive) filter.
+        values, timestamps = _unwrap_envelope("legacy")
         kept = [(v, t) for v, t in zip(values, timestamps) if t > time.time() - 3600]
         assert kept == []  # legacy timestamp=0 is excluded from "after: last hour" query
 

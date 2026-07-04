@@ -37,20 +37,30 @@ COMPRESSERS = ['zlib','lz4','blosc','gzip','bz2']
 
 # Cache engines
 ENGINE_TYPES = Literal[
-    "memory", 
-    "pairtree", 
-    # "dataframe",
-    # "shelve",
+    "memory",
+    "pairtree",
+    "dataframe",
+    "shelve",
     "lmdb",
     "sqlite",
-    "diskcache", 
-    "redis", 
+    "diskcache",
+    "redis",
     "mongo",
     "jsonl",
 ]
 ENGINES = ENGINE_TYPES.__args__
-BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve']
+BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve', 'jsonl']
 EXT_ENGINES = [e for e in ENGINES if e not in BUILTIN_ENGINES]
+
+# pip package(s) providing each optional engine, for actionable error messages
+ENGINE_INSTALL_HINTS = {
+    "sqlite": "sqlitedict",
+    "redis": "redis redis_dict",
+    "mongo": "pymongo",
+    "lmdb": "lmdb",
+    "diskcache": "diskcache",
+    "dataframe": "pandas numpy",
+}
 
 # Performance testing constants
 DEFAULT_NUM_PROC = 1# mp.cpu_count() - 2 if mp.cpu_count() > 2 else 1
