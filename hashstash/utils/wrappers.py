@@ -71,6 +71,8 @@ def stashed_result(
     stash: Optional["BaseHashStash"] = None,
     _force=False,
     _store_args=True,
+    _cache_exceptions=False,
+    _exception_ttl=None,
     **stash_kwargs,
 ):
     @log.debug
@@ -112,6 +114,8 @@ def stashed_result(
             # Extract _force from kwargs if present, otherwise use the default force value
             kwargs.setdefault('_force', _force)
             kwargs.setdefault('_store_args', _store_args)
+            kwargs.setdefault('_cache_exceptions', _cache_exceptions)
+            kwargs.setdefault('_exception_ttl', _exception_ttl)
 
             return stash.run(call_func, *args, **kwargs)
 
