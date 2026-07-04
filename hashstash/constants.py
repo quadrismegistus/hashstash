@@ -51,6 +51,8 @@ ENGINE_TYPES = Literal[
     "mongo",
     "jsonl",
     "fsspec",
+    "duckdb",
+    "leveldb",
 ]
 ENGINES = ENGINE_TYPES.__args__
 BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve', 'jsonl']
@@ -65,6 +67,8 @@ ENGINE_INSTALL_HINTS = {
     "diskcache": "diskcache",
     "dataframe": "pandas numpy",
     "fsspec": "fsspec",
+    "duckdb": "duckdb",
+    "leveldb": "plyvel",
 }
 
 # Performance testing constants
@@ -107,6 +111,7 @@ SERIALIZER_TYPES = Literal[
     "jsonpickle",      # pretty flexible json replacement for pickle
     "pickle",          # fastest but not platform independent
     "msgpack",         # fast, compact, data-only (no code); requires msgpack
+    "cbor2",           # fast, compact, data-only (no code); requires cbor2
 ]
 DEFAULT_SERIALIZER = "hashstash"
 OPTIMAL_SERIALIZER = "hashstash"

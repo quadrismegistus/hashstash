@@ -535,7 +535,14 @@ class TestHashStash:
 
 class TestHashStashFactory:
     def test_engine_selection(self):
+        from hashstash.config import get_working_engines
+
+        working = get_working_engines()
         for engine in ENGINES:
+            # engines whose backing package isn't installed (e.g. leveldb without
+            # plyvel) can't be constructed here; skip rather than hard-fail
+            if engine not in working:
+                continue
             stash = HashStash(engine=engine)
             assert stash.engine == engine
 

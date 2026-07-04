@@ -172,4 +172,4 @@ cache.sqlite
 .vscode
 venv*
 .venv*
-notebooks/*
+notebooks/*.claude/worktrees/

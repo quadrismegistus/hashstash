@@ -58,9 +58,11 @@ HashStash is a versatile caching library for Python that supports multiple stora
 
 - File-based
     - "__pairtree__" (no dependencies, no database; just organized folder and file structure; very fast; safe for concurrent writers)
-    - "__[lmdb](https://pypi.org/project/lmdb/)__" (single file, very efficient, slightly faster than pairtree)
+    - "__[lmdb](https://pypi.org/project/lmdb/)__" (single file, very efficient, slightly faster than pairtree; auto-grows its map on demand)
     - "__[diskcache](https://pypi.org/project/diskcache/)__" (similar to pairtree, but slower)
     - "__sqlite__" (using [sqlitedict](https://pypi.org/project/sqlitedict/))
+    - "__[duckdb](https://pypi.org/project/duckdb/)__" (embedded SQL database; indexed key-value store)
+    - "__[leveldb](https://pypi.org/project/plyvel/)__" (embedded LSM key-value store via plyvel; no fixed size to pre-allocate)
     - "__jsonl__" (no dependencies; single human-readable append-only log; best for read-heavy or inspectable caches — see note on concurrent writes below; call `stash.compact()` to reclaim space from overwritten/deleted rows)
     - "__shelve__" (standard library; simple dbm-backed store)
     - "__dataframe__" (pairtree layout that stores pandas/polars DataFrames natively as feather/parquet/csv files, requires [pandas](https://pypi.org/project/pandas/))
@@ -84,8 +86,11 @@ HashStash is a versatile caching library for Python that supports multiple stora
         - Serializes pandas dataframes using pyarrow if available
         - Faster than jsonpickle but with larger file sizes
         - Mostly JSON-based, with some binary data
+        - Uses [orjson](https://pypi.org/project/orjson/) to speed up value encoding when installed (cache keys stay stdlib-canonical either way)
     - "__[jsonpickle](https://pypi.org/project/jsonpickle/)__"
         - Flexible, battle-tested, but slowest
+    - "__[msgpack](https://pypi.org/project/msgpack/)__" / "__[cbor2](https://pypi.org/project/cbor2/)__"
+        - Fast, compact, binary, and **data-only** (cannot encode code) — a safe pairing with `safe=True` for shared caches
 
 - Not transportable between Python versions
     - "__pickle__"
@@ -215,6 +220,23 @@ stash.invalidate(key)          # plain-stash form
 ```
 
 Counters are shared by every stash instance pointing at the same path, per process.
+
+### Exception caching
+
+By default a function that raises is re-executed on every call. Opt into caching
+failures so an expensive call that fails isn't retried until you want it to:
+
+```python
+stash.run(fetch, url, _cache_exceptions=True, _exception_ttl=60)
+
+@stashed_result
+def fetch(url): ...
+fetch(url, _cache_exceptions=True)   # a raised exception is cached and re-raised
+```
+
+The original exception type is preserved (so `except OriginalError` still
+catches it); an `_exception_ttl` gives failures their own (usually shorter)
+lifetime, and `_force` bypasses the cached failure. Works under `safe=True`.
 
 ### Size-bounded eviction
 

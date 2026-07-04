@@ -93,7 +93,11 @@ class GraphStash:
     Performance: add_edge() rewrites the source and target adjacency
     lists on every call — O(degree) I/O per insert, quadratic in the
     final degree when building a hub incrementally. Use add_edges_bulk()
-    for bulk loads; it groups writes per node.
+    or ``with g.batch():`` for bulk loads; they group writes per node.
+    edges_where(rel=...) is served from a secondary rel index (built
+    lazily, maintained on add, rebuilt after removes), so a rel-filtered
+    query visits only sources with that rel instead of the whole graph;
+    queries without an exact rel filter still do a full scan.
     """
 
     def __init__(self, stash, name="graph"):
@@ -113,8 +117,15 @@ class GraphStash:
         self._batching = False
         self._dirty_out = set()
         self._dirty_in = set()
+        # secondary index: rel -> set of source node_ids that have >=1 out-edge
+        # with that rel. Lets edges_where(rel=...) visit only relevant sources
+        # instead of scanning every node. Built lazily, maintained incrementally
+        # on add; invalidated (rebuilt on next query) on remove.
+        self._rel_index = None
 
     def _invalidate(self, node_id=None):
+        # any structural change drops the rel index; adds re-maintain it in place
+        self._rel_index = None
         if node_id is None:
             self._cache_nodes.clear()
             self._cache_out.clear()
@@ -127,6 +138,31 @@ class GraphStash:
             self._cache_in.pop(node_id, None)
             self._cache_node_keys = None
             self._cache_out_keys = None
+
+    def _ensure_rel_index(self):
+        if self._rel_index is not None:
+            return
+        idx = defaultdict(set)
+        for src in self._out_keys():
+            for _dst, rel, _props in self._get_out(src):
+                idx[rel].add(src)
+        self._rel_index = idx
+
+    def _rel_sources(self, rel):
+        """Source nodes with at least one out-edge of exactly this rel."""
+        self._ensure_rel_index()
+        return self._rel_index.get(rel, set())
+
+    def _index_add(self, src, rel):
+        # keep the index current on adds without a full rebuild (no-op if the
+        # index hasn't been built yet — it'll pick everything up when built)
+        if self._rel_index is not None:
+            self._rel_index[rel].add(src)
+
+    def rels(self):
+        """Sorted list of distinct relationship types present in the graph."""
+        self._ensure_rel_index()
+        return sorted(self._rel_index.keys(), key=lambda r: (r is not None, r))
 
     def _get_node_props(self, node_id):
         if node_id not in self._cache_nodes:
@@ -260,6 +296,8 @@ class GraphStash:
         in_list.append((src, rel, edge_props))
         self._cache_in[dst] = in_list
 
+        self._index_add(src, rel)
+
         if self._batching:
             # defer the writes; flush persists each dirty node once
             self._dirty_out.add(src)
@@ -361,12 +399,22 @@ class GraphStash:
         are non-matches, not errors. An absent property fails every
         predicate except __ne.
 
+        An exact ``rel=`` filter is served from the rel index, so the query
+        visits only sources that have an edge of that rel rather than scanning
+        the whole graph; other predicates are then applied within that set.
+
         Returns list of (src, dst, rel, props) tuples.
         """
         if rel is not _UNSET:
             kwargs["rel"] = rel
+        # index fast-path: an exact rel equality ("rel" in kwargs, as opposed to
+        # rel__contains etc.) means only sources indexed under that rel can match
+        if "rel" in kwargs:
+            sources = self._rel_sources(kwargs["rel"])
+        else:
+            sources = self._out_keys()
         results = []
-        for src in self._out_keys():
+        for src in sources:
             src_props = None
             for dst, edge_rel, props in self._get_out(src):
                 if src_props is None:
@@ -375,6 +423,11 @@ class GraphStash:
                 if _match(src_props, dst_props, edge_rel, props, kwargs):
                     results.append((src, dst, edge_rel, dict(props)))
         return results
+
+    def edges_with_rel(self, rel):
+        """All edges of a given rel as (src, dst, rel, props) tuples — the
+        index fast-path, without predicate filtering."""
+        return self.edges_where(rel=rel)
 
     def add_edges_bulk(self, edges):
         """Add edges in batch, minimizing read-modify-write cycles.
@@ -398,6 +451,7 @@ class GraphStash:
             props = dict(props)  # detach from the caller's dict
             out_new[src].append((dst, rel, props))
             in_new[dst].append((src, rel, props))
+            self._index_add(src, rel)
 
         for src, new_entries in out_new.items():
             out_list = list(self._get_out(src))

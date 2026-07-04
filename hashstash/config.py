@@ -148,6 +148,18 @@ def get_working_engines():
     except ImportError:
         pass
 
+    try:
+        import duckdb
+        working_engines.add("duckdb")
+    except ImportError:
+        pass
+
+    try:
+        import plyvel
+        working_engines.add("leveldb")
+    except ImportError:
+        pass
+
     return working_engines
 
 
@@ -184,6 +196,11 @@ def get_working_serializers():
     try:
         import msgpack
         working_serializers.append('msgpack')
+    except ImportError:
+        pass
+    try:
+        import cbor2
+        working_serializers.append('cbor2')
     except ImportError:
         pass
     return working_serializers

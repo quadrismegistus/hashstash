@@ -149,6 +149,57 @@ class _MissingType:
 _MISSING = _MissingType()
 
 
+class HashStashCachedError(Exception):
+    """Raised for a cached exception whose original type couldn't be
+    reconstructed (e.g. a non-importable custom exception)."""
+
+
+# Cached exceptions are stored as a plain-data marker dict (not a serialized
+# exception object), so they read back even under safe mode and carry their own
+# optional expiry. The marker key is deliberately long to avoid colliding with
+# a user value that happens to be a dict.
+_CACHED_EXC_MARKER = "__hashstash_cached_exception_v1__"
+
+
+def _make_cached_exc(exc, expires_at):
+    # only keep exc.args if they are simple data — otherwise reconstruction falls
+    # back to the message, and we never risk the exc-cache write itself failing
+    raw_args = getattr(exc, "args", ())
+    if all(isinstance(a, (str, int, float, bool, type(None))) for a in raw_args):
+        args = list(raw_args)
+    else:
+        args = None
+    return {
+        _CACHED_EXC_MARKER: True,
+        "type": f"{type(exc).__module__}.{type(exc).__qualname__}",
+        "message": str(exc),
+        "args": args,
+        "expires_at": expires_at,
+    }
+
+
+def _reconstruct_cached_exc(info):
+    type_name = info.get("type") or "builtins.Exception"
+    message = info.get("message", "")
+    args = info.get("args")
+    exc_type = None
+    try:
+        mod, _, name = type_name.rpartition(".")
+        exc_type = getattr(importlib.import_module(mod), name) if mod else None
+    except Exception:
+        exc_type = None
+    if isinstance(exc_type, type) and issubclass(exc_type, BaseException):
+        try:
+            return exc_type(*(args if args is not None else ([message] if message else [])))
+        except Exception:
+            return exc_type(message) if message else exc_type()
+    return HashStashCachedError(f"{type_name}: {message}")
+
+
+def _is_cached_exc(res):
+    return isinstance(res, dict) and res.get(_CACHED_EXC_MARKER) is True
+
+
 def _coerce_timestamp(dt):
     """Normalize a datetime or unix timestamp to a float unix timestamp (UTC)."""
     if dt is None:
@@ -555,28 +606,51 @@ class BaseHashStash(MutableMapping):
         default=None,
         _force=False,
         single_flight=True,
+        cache_exceptions=False,
+        exception_ttl=None,
         **kwargs,
     ):
         unencoded_value = _MISSING
         if not _force:
             unencoded_value = self.get(unencoded_key, default=_MISSING, **kwargs)
+            if unencoded_value is not _MISSING:
+                unencoded_value = self._resolve_hit(unencoded_value)  # may re-raise
             if unencoded_value is _MISSING and single_flight:
                 # single-flight: concurrent callers missing on the same key wait
                 # for one compute instead of all running the setter
                 with self.key_lock(unencoded_key):
                     unencoded_value = self.get(unencoded_key, default=_MISSING, **kwargs)
+                    if unencoded_value is not _MISSING:
+                        unencoded_value = self._resolve_hit(unencoded_value)
                     if unencoded_value is _MISSING:
                         log.debug("setting")
-                        unencoded_value = unencoded_value_setter()
-                        self.set(unencoded_key, unencoded_value)
+                        unencoded_value = self._call_setter(
+                            unencoded_key, unencoded_value_setter,
+                            cache_exceptions, exception_ttl,
+                        )
                 return unencoded_value if unencoded_value is not _MISSING else default
         if unencoded_value is _MISSING:
             log.debug("setting")
-            unencoded_value = unencoded_value_setter()
-            self.set(unencoded_key, unencoded_value)
+            unencoded_value = self._call_setter(
+                unencoded_key, unencoded_value_setter, cache_exceptions, exception_ttl,
+            )
         else:
             log.debug("getting")
         return unencoded_value if unencoded_value is not _MISSING else default
+
+    def _call_setter(self, unencoded_key, setter, cache_exceptions, exception_ttl):
+        try:
+            value = setter()
+        except Exception as e:
+            if cache_exceptions:
+                try:
+                    expires_at = (time.time() + exception_ttl) if exception_ttl else None
+                    self.set(unencoded_key, _make_cached_exc(e, expires_at))
+                except Exception:
+                    log.debug("could not negative-cache exception")
+            raise
+        self.set(unencoded_key, value)
+        return value
 
     def key_lock(self, unencoded_key):
         """Cross-process lock scoped to one key, for single-flight computes.
@@ -612,7 +686,7 @@ class BaseHashStash(MutableMapping):
         found = values is not None and (not isinstance(values, list) or bool(values))
         self._stats["hits" if found else "misses"] += 1
         value = values[-1] if values else default
-        return self.serialize(value) if as_string else value
+        return self.serialize(value, as_string=True) if as_string else value
 
     @log.debug
     def get_all(
@@ -703,6 +777,17 @@ class BaseHashStash(MutableMapping):
         aged.sort(key=lambda kt: kt[1])
         return aged
 
+    def _resolve_hit(self, res):
+        """Interpret a cache hit. A normal value is returned as-is. A cached
+        exception that is still valid is re-raised; an expired one returns
+        _MISSING so the caller recomputes."""
+        if _is_cached_exc(res):
+            expires_at = res.get("expires_at")
+            if expires_at is not None and time.time() > expires_at:
+                return _MISSING
+            raise _reconstruct_cached_exc(res)
+        return res
+
     @log.debug
     def run(
         self,
@@ -711,6 +796,8 @@ class BaseHashStash(MutableMapping):
         _force=False,
         _store_args=True,
         _single_flight=True,
+        _cache_exceptions=False,
+        _exception_ttl=None,
         **kwargs,
     ):
         fstash = (
@@ -734,10 +821,12 @@ class BaseHashStash(MutableMapping):
         if not _force:
             res = fstash.get(unencoded_key, default=_MISSING)
             if res is not _MISSING:
-                log.debug(
-                    f"Stash hit for {func.__name__} in {fstash}. Returning stashed result"
-                )
-                return res
+                res = fstash._resolve_hit(res)  # re-raises a cached exception
+                if res is not _MISSING:
+                    log.debug(
+                        f"Stash hit for {func.__name__} in {fstash}. Returning stashed result"
+                    )
+                    return res
             if _single_flight:
                 # single-flight: concurrent callers missing on the same key wait
                 # for one compute instead of all executing the function (opt out
@@ -745,21 +834,44 @@ class BaseHashStash(MutableMapping):
                 with fstash.key_lock(unencoded_key):
                     res = fstash.get(unencoded_key, default=_MISSING)
                     if res is not _MISSING:
-                        log.debug(
-                            f"Stash hit for {func.__name__} after waiting on "
-                            f"another caller's compute"
-                        )
-                        return res
-                    return self._run_and_store(fstash, func, unencoded_key, args, func_kwargs)
+                        res = fstash._resolve_hit(res)
+                        if res is not _MISSING:
+                            log.debug(
+                                f"Stash hit for {func.__name__} after waiting on "
+                                f"another caller's compute"
+                            )
+                            return res
+                    return self._run_and_store(
+                        fstash, func, unencoded_key, args, func_kwargs,
+                        _cache_exceptions, _exception_ttl,
+                    )
 
         note = "Forced execution" if _force else "Stash miss"
         log.debug(f"{note} for {func.__name__}. Executing function.")
-        return self._run_and_store(fstash, func, unencoded_key, args, func_kwargs)
+        return self._run_and_store(
+            fstash, func, unencoded_key, args, func_kwargs,
+            _cache_exceptions, _exception_ttl,
+        )
 
     @staticmethod
-    def _run_and_store(fstash, func, unencoded_key, args, func_kwargs):
+    def _run_and_store(
+        fstash, func, unencoded_key, args, func_kwargs,
+        cache_exceptions=False, exception_ttl=None,
+    ):
         funcx = unwrap_func(func)
-        result = call_function_politely(funcx, *args, **func_kwargs)
+        try:
+            result = call_function_politely(funcx, *args, **func_kwargs)
+        except Exception as e:
+            if cache_exceptions:
+                # negative caching: a later call re-raises this instead of
+                # re-executing. Guard the write so a serialization hiccup on the
+                # marker never masks the real exception.
+                try:
+                    expires_at = (time.time() + exception_ttl) if exception_ttl else None
+                    fstash.set(unencoded_key, _make_cached_exc(e, expires_at))
+                except Exception:
+                    log.debug("could not negative-cache exception")
+            raise
         result = list(result) if is_generator(result) else result
         log.debug(
             f"Caching result for {func.__name__} under {serialize(unencoded_key)}"
@@ -1556,6 +1668,8 @@ def HashStash(
         "dataframe": ("hashstash.engines.dataframe", "DataFrameHashStash"),
         "jsonl": ("hashstash.engines.jsonl", "JSONLHashStash"),
         "fsspec": ("hashstash.engines.fsspec", "FsspecHashStash"),
+        "duckdb": ("hashstash.engines.duckdb_engine", "DuckDBHashStash"),
+        "leveldb": ("hashstash.engines.leveldb", "LevelDBHashStash"),
     }
     module_name, class_name = engine_registry[engine]
     try:

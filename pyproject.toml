@@ -33,9 +33,16 @@ sqlite = ["sqlitedict"]
 redis = ["redis", "redis_dict"]
 mongo = ["pymongo"]
 msgpack = ["msgpack"]
+cbor2 = ["cbor2"]
 fsspec = ["fsspec"]
+duckdb = ["duckdb"]
 best = ["lmdb", "lz4"]
 lmdb = ["lmdb"]
+# plyvel builds from source against the system LevelDB library (no binary
+# wheels), so it is intentionally NOT in the aggregate dev/all/engines extras —
+# it would break `pip install .[dev]` on machines without libleveldb-dev. The
+# leveldb engine tests importorskip cleanly when plyvel is absent.
+leveldb = ["plyvel"]
 diskcache = ["diskcache"]
 memory = ["ultradict"]
 
@@ -57,6 +64,7 @@ engines = [
     "redis", "redis_dict",
     "pymongo",
     "ultradict",
+    "duckdb",
 ]
 dev = [
   # engines
@@ -67,11 +75,13 @@ dev = [
   "redis", "redis_dict",
   "pymongo",
   "ultradict",
+  "duckdb",
 
   # serializers
   "jsonpickle",# "numpy", "pandas"
   "orjson",
   "msgpack",
+  "cbor2",
 
   # compressers
   "lz4",
@@ -94,11 +104,13 @@ all = [
   "redis", "redis_dict",
   "pymongo",
   "ultradict",
+  "duckdb",
 
   # serializers
   "jsonpickle",
   "orjson",
   "msgpack",
+  "cbor2",
 
   # Compressers
   "lz4",
