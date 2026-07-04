@@ -148,6 +148,13 @@ def get_working_engines():
     except ImportError:
         pass
 
+    try:
+        import duckdb
+
+        working_engines.add("duckdb")
+    except ImportError:
+        pass
+
     return working_engines
 
 
