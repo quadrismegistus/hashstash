@@ -1,3 +1,11 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from pathlib import Path
+import time
+import uuid
+
 from . import *
 from ..utils.encodings import encode, decode
 
@@ -132,8 +140,6 @@ class HashStashProfiler:
             tasks = [{**task} for _ in range(iterations)]
             if operations is not None:
                 tasks[-1]['operations'] = [x for x in operations] + ["Size"]
-            print(tasks[0])
-            print(tasks[-1])
 
             smap = profiler_stash.map(
                 profile_stash_transaction,

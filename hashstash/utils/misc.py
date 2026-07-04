@@ -1,3 +1,11 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+import json
+import os
+import shutil
+
 from . import *
 
 def iter_jsonl(path):
@@ -14,6 +22,9 @@ def iter_jsonl(path):
                     try:
                         yield json.loads(line)
                     except Exception:
+                        # a torn/corrupt row loses that version: say so instead of
+                        # silently dropping it
+                        log.warning(f"skipping unparseable JSONL line in {path}")
                         continue
 
 def is_jsonable(obj):
@@ -35,6 +46,11 @@ def prune_none_values(data, badkeys=None):
 
 @log.debug
 def is_dir(path):
+    # what exists on disk beats any name-based guess
+    if os.path.isdir(path):
+        return True
+    if os.path.isfile(path):
+        return False
     fn, ext = os.path.splitext(path)
     return not bool(ext)
 

@@ -1,3 +1,15 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Union
+import random
+import string
+import uuid
+
 from . import *
 
 def generate_primitive():

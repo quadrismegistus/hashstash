@@ -7,11 +7,22 @@ from pandas.testing import assert_frame_equal
 from pathlib import Path
 from hashstash.constants import SERIALIZER_TYPES
 
-serializers = ['hashstash']
+from hashstash.config import get_working_serializers
+
+# every installed serializer gets the full round-trip suite (only 'hashstash'
+# was ever exercised before)
+serializers = get_working_serializers()
 
 @pytest.fixture(params=serializers)
 def serializer_type(request):
     return request.param
+
+
+def require_code_serialization(serializer_type):
+    """Skip for serializers that cannot round-trip locally-defined functions,
+    classes, or lambdas (pickle/jsonpickle serialize code objects by reference)."""
+    if serializer_type != "hashstash":
+        pytest.skip(f"{serializer_type} does not round-trip local code objects")
 
 @pytest.fixture
 def cache(serializer_type, tmp_path):
@@ -54,7 +65,8 @@ class TestSerializers:
         assert isinstance(result, pd.Series)
         assert result.equals(series)
 
-    def test_serialize_deserialize_function(self, cache):
+    def test_serialize_deserialize_function(self, cache, serializer_type):
+        require_code_serialization(serializer_type)
         def test_func(x):
             return x * 2
         
@@ -63,7 +75,8 @@ class TestSerializers:
         assert callable(result)
         assert result(3) == 6
 
-    def test_serialize_deserialize_class(self, cache):
+    def test_serialize_deserialize_class(self, cache, serializer_type):
+        require_code_serialization(serializer_type)
         class TestClass:
             def __init__(self, x):
                 self.x = x
@@ -78,7 +91,8 @@ class TestSerializers:
         assert instance.x == 5
         assert instance.method() == 10
 
-    def test_serialize_deserialize_instance(self, cache):
+    def test_serialize_deserialize_instance(self, cache, serializer_type):
+        require_code_serialization(serializer_type)
         class TestClass:
             def __init__(self, x):
                 self.x = x
@@ -114,7 +128,8 @@ class TestSerializers:
         assert isinstance(result, Path)
         assert str(result) == str(path)
 
-    def test_serialize_deserialize_complex_nested_structure(self, cache):
+    def test_serialize_deserialize_complex_nested_structure(self, cache, serializer_type):
+        require_code_serialization(serializer_type)
         complex_obj = {
             'list': [1, 2, np.array([3, 4, 5])],
             'dict': {'a': pd.Series([1, 2, 3]), 'b': Path('/tmp/test.txt')},

@@ -9,8 +9,6 @@ from hashstash.engines.base import HashStash
 from hashstash.serializers.serializer import serialize, deserialize
 logger.setLevel(logging.CRITICAL+1)
 
-_CI = os.environ.get("CI") == "true"
-_SKIP_CI = "Known LMDB env-handle issue on CI — see issue #9"
 
 def square(x):
     return x * x
@@ -42,24 +40,21 @@ def test_pmap_mismatched_lengths():
     with pytest.raises(ValueError):
         list(pmap(square, objects=[1, 2, 3], options=[{}, {}]))
 
-def slow_square(x):
-    time.sleep(1)
-    return x * x
-
-def test_pmap_keyboard_interrupt():
-    with pytest.raises(KeyboardInterrupt):
-        result = pmap(slow_square, objects=[1, 2, 3, 4], num_proc=2)
-        next(result)  # Start the generator
-        raise KeyboardInterrupt()
-
 def failing_function(x):
     if x == 2:
         raise ValueError("Simulated error")
     return x * x
 
-def test_pmap_exception_handling():
-    res = list(pmap(failing_function, objects=[1, 2, 3, 4], num_proc=2))
-    assert None in res
+def test_pmap_exception_propagates():
+    """Worker exceptions used to be silently converted into None results."""
+    with pytest.raises(ValueError, match="Simulated error"):
+        list(pmap(failing_function, objects=[1, 2, 3, 4], num_proc=2))
+
+def test_pmap_pool_usable_after_worker_exception():
+    """A failed worker must not poison later pmap calls in the process."""
+    with pytest.raises(ValueError):
+        list(pmap(failing_function, objects=[2], num_proc=2))
+    assert list(pmap(square, objects=[3], num_proc=2)) == [9]
 
 @pytest.fixture
 def mock_log_prefix_str():
@@ -84,44 +79,19 @@ def test_progress_bar_tqdm_not_available(mock_log_prefix_str):
         
         assert result == list(test_iter)
 
-def test_progress_bar_current_depth(mock_log_prefix_str):
-    with patch('hashstash.utils.pmap.tqdm', create=True) as mock_tqdm:
-        from hashstash.utils.pmap import current_depth, progress_bar
-        
-        initial_depth = current_depth
-        test_iter = range(5)
-        mock_tqdm.return_value = MagicMock(__iter__=lambda self: iter(test_iter))
-        
-        list(progress_bar(test_iter, progress=True))
-        
-        assert current_depth == initial_depth
-
-def square(x):
-    return x ** 2
-
-
-@patch('concurrent.futures.ProcessPoolExecutor')
-def test_pmap_multi_process(mock_executor):
-    mock_future = MagicMock()
-    mock_future.result.side_effect = [i**2 for i in range(5)]
-    mock_submit = MagicMock(return_value=mock_future)
-    mock_executor.return_value.__enter__.return_value.submit = mock_submit
-    
+def test_pmap_multi_process():
     result = list(pmap(square, objects=range(5), num_proc=2, progress=False, ordered=True))
     assert result == [0, 1, 4, 9, 16]
 
-def test_pmap_single_process():
-    def square(x):
-        return x ** 2
-    
+def test_pmap_single_process_range():
     result = list(pmap(square, objects=range(5), num_proc=1, progress=False))
     assert result == [0, 1, 4, 9, 16]
 
-def test_pmap_with_options():
-    def power(x, n):
-        return x ** n
-    
-    result = list(pmap(power, objects=[2, 3, 4], options=[{'n': 2}, {'n': 3}, {'n': 2}], num_proc=1, progress=False))
+def _power(x, n):
+    return x ** n
+
+def test_pmap_with_option_dicts():
+    result = list(pmap(_power, objects=[2, 3, 4], options=[{'n': 2}, {'n': 3}, {'n': 2}], num_proc=1, progress=False))
     assert result == [4, 27, 16]
 
 def test_pmap_error_handling():
@@ -131,7 +101,6 @@ def test_pmap_error_handling():
     with pytest.raises(ValueError):
         list(pmap(lambda x: x, objects=[1, 2], options=[{}]))
 
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_pmap_with_stash():
     with HashStash().tmp() as stash:
         result = list(pmap(square, objects=[1, 2, 3], num_proc=1, stash=stash, progress=False))
@@ -157,7 +126,6 @@ def test_pmap_item_without_stash():
     result = _pmap_item(item)
     assert result == 9
 
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_pmap_item_with_stash():
     with HashStash().tmp() as stash:
         

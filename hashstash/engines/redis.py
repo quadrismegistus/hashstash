@@ -1,3 +1,11 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+import os
+import subprocess
+import time
+
 from . import *
 
 import hashlib
@@ -21,35 +29,46 @@ class RedisHashStash(BaseHashStash):
     string_keys = True
     string_values = True
     dbname = 'hashstash'
+    needs_lock = False  # the server serializes operations; a local file lock can't span hosts anyway
+
+    to_dict_attrs = BaseHashStash.to_dict_attrs + ["host", "port"]
 
     def __init__(self, *args, host=None, port=None, **kwargs):
         if host is not None: self.host = host
         if port is not None: self.port = port
         super().__init__(*args, **kwargs)
-        
+        if not self.b64 and (
+            self.serializer == "pickle"
+            or self.compress not in {False, None, RAW_NO_COMPRESS}
+        ):
+            raise ValueError(
+                "RedisHashStash: b64=False requires a text serializer and no "
+                "compression (values are stored as strings). Pass b64=True."
+            )
+
+    def _namespace(self):
+        # include root_dir so stashes constructed with different root_dirs are
+        # isolated, matching file-engine semantics (they used to share all keys)
+        root_sig = encode_hash(str(self.root_dir))[:8]
+        return f"{self.name}/{self.dbname}/{root_sig}".replace('/', '.')
 
     @log.debug
     def get_db(self):
         from redis_dict import RedisDict
         log.debug(f"Connecting to Redis at {self.host}:{self.port}")
-        name = (self.name+'/'+self.dbname).replace('/','.')
-        return RedisDict(namespace=name, host=self.host, port=self.port, db=get_db_number(self.dbname))
+        return RedisDict(namespace=self._namespace(), host=self.host, port=self.port, db=get_db_number(self.dbname))
     
     @staticmethod
     def _close_connection(connection):
         pass # how does one close a redis connection?
 
     def clear(self):
+        # Delete only this stash's namespaced keys. Never flushdb: the numbered db is
+        # md5(dbname) % 16, so unrelated stashes (and any other application data) share it.
+        log.debug(f"Clearing Redis namespace for {self} at {self.host}:{self.port}")
+        with self.db as db:
+            db.clear()
         super().close()
-        import redis
-        log.debug(f"Dropping Redis database at {self.host}:{self.port}")
-        client = redis.Redis(host=self.host, port=self.port, db=get_db_number(self.dbname))
-        # Free up disk space immediately
-        try:
-            client.flushdb()
-            client.save()
-        except Exception as e:
-            pass
         return self
     
     @property

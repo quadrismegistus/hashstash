@@ -1,21 +1,33 @@
-from . import *
-from .base import get_manager, BaseHashStash
-from multiprocessing import Manager
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from contextlib import contextmanager
 
-# # Use the existing get_manager function
-# manager = Manager()
+from . import *
+from .base import BaseHashStash
 
 SHARED_MEMORY_CACHE = None
 def get_shared_memory_cache():
     global SHARED_MEMORY_CACHE
     if SHARED_MEMORY_CACHE is None:
-        from UltraDict import UltraDict
-        SHARED_MEMORY_CACHE = UltraDict(recursive=True)
+        try:
+            from UltraDict import UltraDict
+            SHARED_MEMORY_CACHE = UltraDict(recursive=True)
+        except ImportError:
+            # 'memory' is a builtin engine: without ultradict it degrades to a
+            # process-local dict instead of raising at first use
+            log.debug(
+                "ultradict is not installed; the memory engine is process-local "
+                "(pip install ultradict for shared memory across processes)"
+            )
+            SHARED_MEMORY_CACHE = {}
     return SHARED_MEMORY_CACHE
 
 class MemoryHashStash(BaseHashStash):
     engine = 'memory'
     ensure_dir = False
+    needs_lock = False  # UltraDict provides its own shared-memory locking
 
     @contextmanager
     def get_connection(self):

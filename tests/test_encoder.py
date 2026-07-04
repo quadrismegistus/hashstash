@@ -37,6 +37,24 @@ def test_compression(default_params):
     encoded_uncompressed = encode(data, b64=False, compress=RAW_NO_COMPRESS)
     assert len(encoded_compressed) < len(encoded_uncompressed)
 
+
+def _working_compressers():
+    from hashstash.config import get_working_compressers
+
+    return sorted(get_working_compressers())
+
+
+@pytest.mark.parametrize("compresser", _working_compressers())
+@pytest.mark.parametrize("b64", [True, False])
+def test_every_compresser_roundtrips(compresser, b64):
+    """Only zlib and raw were ever exercised; lz4/blosc/gzip/bz2 were untested."""
+    data = json.dumps({"payload": "data" * 1000}).encode()
+    encoded = encode(data, b64=b64, compress=compresser)
+    decoded = decode(encoded, b64=b64, compress=compresser)
+    assert decoded == data
+    if compresser != RAW_NO_COMPRESS and not b64:
+        assert len(encoded) < len(data)
+
 def test_as_string(default_params):
     data = json.dumps({"test": "data"})
     encoded = encode(data, as_string=True)

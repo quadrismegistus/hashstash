@@ -20,16 +20,21 @@ def get_deserializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
     return deserializer_dict.get(serializer)
 
 @log.debug
-def serialize(obj, serializer: SERIALIZER_TYPES = None, as_string=False):
+def serialize(obj, serializer: SERIALIZER_TYPES = None, as_string=False, sort_keys=False):
     if serializer is None:
         serializer = Config().serializer
     serializer_func = get_serializer(serializer)
     if serializer_func is None:
         raise ValueError(f"Invalid serializer: {serializer}. Choose one of: {', '.join(repr(x) for x in SERIALIZERS)}")
-    
+
     log.debug(f"Attempting to serialize with {serializer_func.__name__}")
     try:
-        data = serializer_func(obj)
+        # only the custom serializer supports canonical (sorted-key) output;
+        # jsonpickle already sorts and pickle bytes cannot be canonicalized
+        if serializer == "hashstash":
+            data = serializer_func(obj, sort_keys=sort_keys)
+        else:
+            data = serializer_func(obj)
         assert isinstance(data, (bytes, str)), "data should be bytes or string"
         log.debug(f"Serialized data type: {type(data)}")
         log.debug(f"Serialized data: {data}")
@@ -56,7 +61,8 @@ def deserialize(data, serializer: SERIALIZER_TYPES = None):
         raise e
 
 
-def bytesize(obj):
+def bytesize(obj, serializer: SERIALIZER_TYPES = None):
     if isinstance(obj, bytes): return len(obj)
     if isinstance(obj, str): return len(obj.encode())
-    return len(serialize(obj, serializer='pickle'))
+    data = serialize(obj, serializer=serializer)
+    return len(data.encode()) if isinstance(data, str) else len(data)

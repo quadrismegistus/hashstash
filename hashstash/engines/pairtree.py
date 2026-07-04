@@ -1,3 +1,12 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from typing import Any
+import os
+import shutil
+import time
+
 from . import *
 from .base import _filter_by_time
 
@@ -73,8 +82,12 @@ class PairtreeHashStash(BaseHashStash):
 
     @log.debug
     def _get_path_new_value(self, encoded_key):
+        # the .pid suffix disambiguates concurrent writers hitting the same
+        # microsecond (they used to silently overwrite each other's version);
+        # readers parse the timestamp with splitext, which strips the suffix
         return os.path.join(
-            self._get_path(encoded_key), str(int(time.time() * 1000000))
+            self._get_path(encoded_key),
+            f"{int(time.time() * 1000000)}.{os.getpid()}",
         )
 
     @log.debug
@@ -123,9 +136,15 @@ class PairtreeHashStash(BaseHashStash):
             return f.read()
 
     def _set_to_filepath(self, filepath, encoded_data):
+        # write to a hidden temp file then rename: a crash mid-write must not leave
+        # a truncated version file that poisons every later read of this key
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, "wb") as f:
+        tmp_path = os.path.join(
+            os.path.dirname(filepath), f".tmp.{os.getpid()}.{os.path.basename(filepath)}"
+        )
+        with open(tmp_path, "wb") as f:
             f.write(encoded_data)
+        os.replace(tmp_path, filepath)
 
     @log.debug
     def _set(self, encoded_key: str, encoded_value: Any) -> None:
@@ -143,7 +162,10 @@ class PairtreeHashStash(BaseHashStash):
             if file and file[0]!='.':
                 file_path = os.path.join(dir_path, file)
                 if file_path != filepath_value and os.path.isfile(file_path):
-                    os.remove(file_path)
+                    try:
+                        os.remove(file_path)
+                    except FileNotFoundError:
+                        pass  # concurrent delete/prune already removed it
 
 
         
@@ -182,12 +204,22 @@ class PairtreeHashStash(BaseHashStash):
         )
 
     @staticmethod
-    def _get_path_values_metadata(path_values, incl_path=False):
+    def _parse_written_at(vpath):
+        # filenames are '<micros>[.<pid>][.<io_ext>]': the timestamp is everything
+        # before the first dot
+        name = os.path.basename(vpath)
+        try:
+            return float(name.split(".", 1)[0]) / 1_000_000
+        except ValueError:
+            return 0.0
+
+    @classmethod
+    def _get_path_values_metadata(cls, path_values, incl_path=False):
         return [
             {
                 **({"_path": vpath} if incl_path else {}),
                 "_version": vi + 1,
-                "_written_at": float(os.path.splitext(os.path.basename(vpath))[0]) / 1_000_000,
+                "_written_at": cls._parse_written_at(vpath),
             }
             for vi, vpath in enumerate(path_values)
         ]
@@ -200,12 +232,12 @@ class PairtreeHashStash(BaseHashStash):
             if not self.key_filename in set(files):
                 continue
             key_path = os.path.join(root, self.key_filename)
-            value_paths = [
+            value_paths = sorted(
                 os.path.join(root, file)
                 for file in files
                 if file != self.key_filename
                 and file[0] != "."
-            ]
+            )
             if not value_paths:
                 continue
             if with_metadata:
@@ -230,12 +262,6 @@ class PairtreeHashStash(BaseHashStash):
                 yield self._get_from_filepath(path)
 
     @log.debug
-    # def values(self, all_results=None, **kwargs):
-    #     yield from (
-    #         self.decode_value(value) for value in self._values(all_results=all_results)
-    #     )
-
-    @log.debug
     def _items(self, all_results=None):
         for path_key, path_values in self.paths_items(all_results=all_results):
             encoded_key = self._get_from_filepath(path_key)
@@ -244,31 +270,8 @@ class PairtreeHashStash(BaseHashStash):
                 yield (encoded_key, encoded_value)
 
     @log.debug
-    # def items(self, all_results=None, with_metadata=False, **kwargs):
-    #     for path_key, path_values in self.paths_items(
-    #         all_results=all_results, with_metadata=True
-    #     ):
-    #         encoded_key = self._get_from_filepath(path_key)
-    #         decoded_key = self.decode_key(encoded_key)
-
-    #         for path_value_d in path_values:
-    #             path_value = path_value_d.pop("_path")
-    #             encoded_value = self._get_from_filepath(path_value)
-    #             decoded_value = self.decode_value(encoded_value)
-    #             if not with_metadata:
-    #                 yield (decoded_key, decoded_value)
-    #             else:
-    #                 key = decoded_key
-    #                 value = decoded_value
-    #                 key_d = {"_key": key} if not isinstance(key, dict) else {**key}
-    #                 value_d = {
-    #                     "_value": value
-    #                 }  # if not isinstance(value,dict) else {**value}
-    #                 meta_d = path_value_d
-    #                 yield {**key_d, **meta_d, **value_d}
-
-    def __delitem__(self, unencoded_key: str) -> None:
-        path = self.get_path(unencoded_key)
+    def _del(self, encoded_key: bytes) -> None:
+        path = self._get_path(encoded_key)
         if not os.path.exists(path):
-            raise KeyError(unencoded_key)
+            raise KeyError(encoded_key)
         shutil.rmtree(path, ignore_errors=True)

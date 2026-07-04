@@ -2,19 +2,19 @@ import pytest
 from hashstash import *
 logger.setLevel(logging.CRITICAL+1)
 
-def test_function():
+def sample_function():
     pass
 
-class TestClass:
-    def test_method(self):
+class SampleClass:
+    def sample_method(self):
         pass
 
 @pytest.fixture
 def sample_objects():
     return {
-        'function': test_function,
-        'method': TestClass.test_method,
-        'class': TestClass,
+        'function': sample_function,
+        'method': SampleClass.sample_method,
+        'class': SampleClass,
         'builtin': len,
     }
 
@@ -25,20 +25,20 @@ def test_get_obj_module(sample_objects):
     assert get_obj_module(sample_objects['builtin']) == 'builtins'
 
 def test_get_obj_addr(sample_objects):
-    assert get_obj_addr(sample_objects['function']) == 'test_addrs.test_function'
-    assert get_obj_addr(sample_objects['method']) == 'test_addrs.TestClass.test_method'
-    assert get_obj_addr(sample_objects['class']) == 'test_addrs.TestClass'
+    assert get_obj_addr(sample_objects['function']) == 'test_addrs.sample_function'
+    assert get_obj_addr(sample_objects['method']) == 'test_addrs.SampleClass.sample_method'
+    assert get_obj_addr(sample_objects['class']) == 'test_addrs.SampleClass'
 
 def test_get_obj_name(sample_objects):
-    assert get_obj_name(sample_objects['function']) == 'test_function'
-    assert get_obj_name(sample_objects['method']) == 'test_method'
-    assert get_obj_name(sample_objects['class']) == 'TestClass'
+    assert get_obj_name(sample_objects['function']) == 'sample_function'
+    assert get_obj_name(sample_objects['method']) == 'sample_method'
+    assert get_obj_name(sample_objects['class']) == 'SampleClass'
     assert get_obj_name(sample_objects['builtin']) == 'len'
 
 def test_get_obj_nice_name(sample_objects):
-    assert get_obj_nice_name(sample_objects['function']) == 'test_addrs.test_function'
-    assert get_obj_nice_name(sample_objects['method']) == 'TestClass.test_method'
-    assert get_obj_nice_name(sample_objects['class']) == 'test_addrs.TestClass'
+    assert get_obj_nice_name(sample_objects['function']) == 'test_addrs.sample_function'
+    assert get_obj_nice_name(sample_objects['method']) == 'SampleClass.sample_method'
+    assert get_obj_nice_name(sample_objects['class']) == 'test_addrs.SampleClass'
     assert get_obj_nice_name(sample_objects['builtin']) == 'len'
 
 def test_flexible_import():

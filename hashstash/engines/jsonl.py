@@ -1,3 +1,12 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from typing import Any
+import json
+import os
+import time
+
 from . import *
 from collections import defaultdict
 from .base import _filter_by_time
@@ -39,7 +48,7 @@ class JSONLHashStash(BaseHashStash):
         self.flat = flat
         super().__init__(*args, compress=compress, b64=b64, **kwargs)
         self._keyset = OrderedSet()
-        self._keyset_loaded = False
+        self._keyset_offset = 0  # bytes of the file already folded into _keyset
         self._flat_meta = frozenset([
             self.key_name, self.value_name, self.delete_name, self.written_at_name
         ])
@@ -79,15 +88,41 @@ class JSONLHashStash(BaseHashStash):
     # --- keyset loading ---
 
     def _ensure_keyset_loaded(self) -> None:
-        if self._keyset_loaded:
+        """Fold any rows appended since the last scan into the keyset.
+
+        Other writers append to the same file, so a one-shot load goes permanently
+        stale; instead we remember how far we've read and incrementally fold new
+        lines on every access (a single getsize() when nothing changed)."""
+        try:
+            size = os.path.getsize(self.path)
+        except OSError:
+            self._keyset = OrderedSet()
+            self._keyset_offset = 0
             return
-        for row in iter_jsonl(self.path):
-            rk = row[self.key_name]
-            ks = self._flat_ks(rk) if self.flat else rk
-            self._keyset.add(ks)
-            if row.get(self.delete_name):
-                self._keyset.discard(ks)
-        self._keyset_loaded = True
+        if size < self._keyset_offset:
+            # file was truncated or replaced (e.g. clear()): rescan from the top
+            self._keyset = OrderedSet()
+            self._keyset_offset = 0
+        if size == self._keyset_offset:
+            return
+        with open(self.path, "r", encoding="utf-8") as f:
+            f.seek(self._keyset_offset)
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    log.warning(f"skipping unparseable JSONL line in {self.path}")
+                    continue
+                rk = row[self.key_name]
+                ks = self._flat_ks(rk) if self.flat else rk
+                if row.get(self.delete_name):
+                    self._keyset.discard(ks)
+                else:
+                    self._keyset.add(ks)
+            self._keyset_offset = f.tell()
 
     # --- get_all ---
 
@@ -133,6 +168,11 @@ class JSONLHashStash(BaseHashStash):
                         values.append(self.decode_value(row[self.value_name]))
                         timestamps.append(row.get(self.written_at_name, 0.0))
 
+        if not self.append_mode:
+            # overwrite semantics: only the last write is "the" value, matching
+            # every other engine (the log retains history but it is not queryable)
+            values, timestamps = values[-1:], timestamps[-1:]
+
         values, timestamps = _filter_by_time(values, timestamps, before=before, after=after)
         if not values:
             return default
@@ -157,14 +197,18 @@ class JSONLHashStash(BaseHashStash):
         with open(self.path, "a", encoding="utf-8") as fh:
             fh.write(line)
 
-    def clear(self) -> None:
+    def clear(self) -> "JSONLHashStash":
+        for sub in self.children:
+            sub.clear()
+        self.close()
         self._keyset = OrderedSet()
-        self._keyset_loaded = False
+        self._keyset_offset = 0
         if os.path.exists(self.path):
             try:
                 os.remove(self.path)
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"could not remove {self.path}: {e}")
+        return self
 
     @log.debug
     def set(self, unencoded_key: Any, unencoded_value: Any, append=None) -> None:
@@ -238,13 +282,15 @@ class JSONLHashStash(BaseHashStash):
     def _values(self):
         for row in iter_jsonl(self.path):
             if not row.get(self.delete_name):
-                yield row[self.value_name]
+                # flat rows have no __value__ field: extract from the row itself
+                yield self._flat_row_to_value(row) if self.flat else row[self.value_name]
 
     @log.debug
     def _items(self):
         for row in iter_jsonl(self.path):
             if not row.get(self.delete_name):
-                yield row[self.key_name], row[self.value_name]
+                value = self._flat_row_to_value(row) if self.flat else row[self.value_name]
+                yield row[self.key_name], value
 
     @log.debug
     def items(self, all_results=None, with_metadata=False, before=None, after=None, **kwargs):
@@ -261,6 +307,8 @@ class JSONLHashStash(BaseHashStash):
         for ks, entries in key2entries.items():
             if not entries:
                 continue
+            if not self.append_mode:
+                entries = entries[-1:]  # overwrite semantics: latest write only
             vals, timestamps, rks = zip(*entries)
             vals, timestamps = _filter_by_time(
                 list(vals), list(timestamps), before=before, after=after

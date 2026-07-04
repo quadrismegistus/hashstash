@@ -1,10 +1,18 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from collections import Counter
+import importlib
+import inspect
+import types
+
 from . import *
 BUILTIN_DECORATORS = {'property', 'classmethod', 'staticmethod', 'cached_property'}
 
 
 def get_obj_module(obj):
-    if hasattr(obj,'__name__') and obj.__name__ == '<lambda>': 
-        print(obj,obj.__name__)
+    if hasattr(obj,'__name__') and obj.__name__ == '<lambda>':
         return '__main__'
     if hasattr(obj, "__module__"): return obj.__module__
     if hasattr(obj, "__class__"): return get_obj_module(obj.__class__)
@@ -340,7 +348,15 @@ def is_classmethod(obj):
     
     return False
 def is_instancemethod(obj):
-    return not is_classmethod(obj) and hasattr(obj,'__self__') and obj.__self__ is not None
+    # builtins like len expose __self__ as their *module*, not an instance
+    if isinstance(obj, types.BuiltinFunctionType):
+        return False
+    return (
+        not is_classmethod(obj)
+        and hasattr(obj, '__self__')
+        and obj.__self__ is not None
+        and not inspect.ismodule(obj.__self__)
+    )
 
 def is_method(func):
     """

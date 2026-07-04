@@ -1,4 +1,14 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from typing import List
+from typing import Set
+from typing import Union
+import os
+
 from . import *
+from . import constants as _constants
 
 class Config:
     def __init__(
@@ -7,13 +17,21 @@ class Config:
         engine: ENGINE_TYPES = None,
         compress: bool = None,
         b64: bool = DEFAULT_B64,
-        root_dir: str = DEFAULT_ROOT_DIR,
+        root_dir: str = None,
         **kwargs,
     ):
         self.serializer = get_serializer_type(serializer)
         self.engine = get_engine(engine)
         self.compress = get_compresser(compress)
         self.b64 = b64
+        if root_dir is None:
+            # resolved at call time, not bound at import: HASHSTASH_ROOT_DIR and
+            # patched constants (e.g. test isolation) must take effect for
+            # Config() instances created later
+            root_dir = (
+                os.environ.get("HASHSTASH_ROOT_DIR")
+                or _constants.DEFAULT_ROOT_DIR
+            )
         self.root_dir = root_dir
 
 
@@ -128,19 +146,20 @@ def get_working_engines():
 
 
 def get_engine(engine):
-    from .utils.logs import log
+    # Fail loudly: the old silent fallback to pairtree meant a typo'd engine name
+    # (or a missing dependency) quietly wrote to the wrong store
     if engine is None:
         engine = OPTIMAL_ENGINE_TYPE
     if engine not in get_working_engines():
         if engine in ENGINES:
-            log.debug(
-                f"Engine {engine} is not installed. Defaulting to {DEFAULT_ENGINE_TYPE}. To install {engine}, run: pip install {engine}"
+            hint = ENGINE_INSTALL_HINTS.get(engine, engine)
+            raise ImportError(
+                f"HashStash engine {engine!r} is not installed. "
+                f"Install it with: pip install {hint}"
             )
-        else:
-            log.debug(
-                f'Engine {engine} is not recognized. Defaulting to {DEFAULT_ENGINE_TYPE}. Choose one of: {", ".join(ENGINES)}'
-            )
-        engine = DEFAULT_ENGINE_TYPE
+        raise ValueError(
+            f"Unknown HashStash engine {engine!r}. Choose one of: {', '.join(ENGINES)}"
+        )
     return engine
 
 
@@ -161,7 +180,17 @@ def get_working_serializers():
 def get_serializer_type(serializer):
     if serializer is None:
         serializer = OPTIMAL_SERIALIZER
-    return serializer if serializer in get_working_serializers() else DEFAULT_SERIALIZER
+    if serializer not in get_working_serializers():
+        if serializer in SERIALIZERS:
+            raise ImportError(
+                f"HashStash serializer {serializer!r} is not installed. "
+                f"Install it with: pip install {serializer}"
+            )
+        raise ValueError(
+            f"Unknown HashStash serializer {serializer!r}. "
+            f"Choose one of: {', '.join(SERIALIZERS)}"
+        )
+    return serializer
 
 
 

@@ -1,3 +1,11 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+import importlib
+import inspect
+import types
+
 from . import *
 from ..utils.logs import *
 from pprint import pprint
@@ -8,27 +16,17 @@ from ..utils.misc import ReusableGenerator
 
 PANDAS_EXTENSION_ACTIVATED = True
 
-def dump_json(obj,as_string=False):
-    try:
-        # res = serialize_orjson(obj)
-        res = serialize_json(obj)
-        log.debug('serialized via orjson')
-        if as_string: res = res.decode('utf-8')
-    except ImportError:
-        res = serialize_json(obj)
-        if not as_string: res = res.encode('utf-8')
-    return res
-    
+# Plain dicts containing any of these keys must round-trip through the tagged
+# '__pytype__: dict' form, or the deserializer would misread them as object markers.
+RESERVED_DICT_KEYS = frozenset({'__py__', '__pytype__', '__data__'})
+
 
 @log.debug
-def serialize_custom(obj: Any) -> str:
+def serialize_custom(obj: Any, sort_keys: bool = False) -> str:
     serialized = _serialize_custom(obj)
-    return json.dumps(serialized)
-
-@log.debug
-def serialize_custom(obj: Any) -> str:
-    serialized = _serialize_custom(obj)
-    return json.dumps(serialized)
+    # sort_keys=True gives canonical bytes: equal dicts (and equal kwargs) always
+    # serialize identically regardless of insertion order. Used for cache keys.
+    return json.dumps(serialized, sort_keys=sort_keys)
 
 def stuff(obj, data=None):
     return _serialize_custom(obj, data=data)
@@ -49,10 +47,19 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
 
     if isinstance(obj, (str, int, float, bool)):
         return obj
-    
+
     if isinstance(obj, dict):
-        return {_serialize_custom(k): _serialize_custom(v) for k, v in obj.items()}
-    
+        if all(isinstance(k, str) for k in obj) and not RESERVED_DICT_KEYS & obj.keys():
+            return {k: _serialize_custom(v) for k, v in obj.items()}
+        # Non-string keys (JSON would coerce them to strings) or reserved marker keys:
+        # keep keys as a list of [key, value] pairs so their types survive the round-trip.
+        return {
+            '__pytype__': 'dict',
+            '__items__': [
+                [_serialize_custom(k), _serialize_custom(v)] for k, v in obj.items()
+            ],
+        }
+
     if isinstance(obj, list):
         return [_serialize_custom(v) for v in obj]
 
@@ -74,7 +81,12 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
     
     if isinstance(obj, type):
         return ClassSerializer.serialize(obj)
-    
+
+    if inspect.ismodule(obj):
+        # serialize modules by reference — recursing into __dict__ would pull in
+        # the world (and blow the recursion limit)
+        return {'__py__': obj.__name__, '__pytype__': 'module'}
+
     if inspect.isgenerator(obj):
         return GeneratorSerializer.serialize(obj)
 
@@ -140,32 +152,43 @@ def _deserialize_custom(data: Any) -> Any:
     if isinstance(data, dict):
         pytype = data.get('__pytype__')
         addr = data.get('__py__')
-        
+
+        if pytype == 'dict':
+            return {
+                _deserialize_custom(k): _deserialize_custom(v)
+                for k, v in data['__items__']
+            }
+
         if pytype == 'instance':
             return InstanceSerializer.deserialize(data)
-        
+
         if addr and addr in CUSTOM_DESERIALIZERS:
             return CUSTOM_DESERIALIZERS[addr](data)
-        
+
         if pytype == 'reducer':
             return ReducerSerializer.deserialize(data)
-        
+
         if pytype in {'function', 'classmethod', 'instancemethod'}:
             return FunctionSerializer.deserialize(data)
-        
+
         if pytype == 'class':
             return ClassSerializer.deserialize(data)
-        
+
         if pytype == 'generator':
             return GeneratorSerializer.deserialize(data)
 
+        if pytype == 'module':
+            return importlib.import_module(addr)
+
         obj_data = data.get('__data__')
-        if obj_data and can_import_object(addr):
+        # 'is not None': an empty-but-valid payload ({}, [], 0, '') must still be
+        # reconstructed — the old truthiness check returned the class itself instead
+        if obj_data is not None and addr and can_import_object(addr):
             return _deserialize_object_data(flexible_import(addr), _deserialize_custom(obj_data))
-        
-        if '__py__' in data:
-            return flexible_import(data['__py__'])
-        
+
+        if addr:
+            return flexible_import(addr)
+
         return {_deserialize_custom(k): _deserialize_custom(v) for k, v in data.items()}
     
     return data
@@ -186,9 +209,14 @@ class CustomSerializer:
 class IterableSerializer(CustomSerializer):
     @staticmethod
     def serialize(obj):
+        items = [_serialize_custom(x) for x in obj]
+        if isinstance(obj, (set, frozenset)):
+            # set iteration order depends on PYTHONHASHSEED: sort the serialized
+            # forms so equal sets always produce identical (cache-key-stable) bytes
+            items.sort(key=lambda x: json.dumps(x, sort_keys=True, default=str))
         return {
             '__py__': get_obj_addr(obj),
-            '__data__': [_serialize_custom(x) for x in obj]
+            '__data__': items
         }
 
     @staticmethod
@@ -342,59 +370,69 @@ class PandasSeriesSerializer(CustomSerializer):
 class ReducerSerializer(CustomSerializer):
     @staticmethod
     def serialize(obj):
-        try:
-            reduced = obj.__reduce__()
-            if not isinstance(reduced, tuple) or len(reduced) < 2:
-                raise ValueError("Invalid __reduce__ output")
-            
-            result = {
-                '__py__': get_obj_addr(reduced[0]),
+        # __reduce_ex__(2), not bare __reduce__(): protocol 2 works for C-level types
+        # (complex, datetime, array, ...) and still dispatches to a custom __reduce__.
+        # No fallback — where protocol 2 refuses (locks, sockets), bare __reduce__()
+        # "succeeds" with a copyreg._reconstructor form that cannot deserialize.
+        reduced = obj.__reduce_ex__(2)
+
+        if isinstance(reduced, str):
+            # pickle protocol: a string means "look this name up in the module"
+            return {
                 '__pytype__': 'reducer',
-                '__args__': list(reduced[1]) if reduced[1] else []
+                '__global__': f'{get_obj_module(obj)}.{reduced}',
             }
-            if len(reduced) > 2:
-                result['__state__'] = reduced[2]
-            if len(reduced) > 3:
-                result['__listitems__'] = reduced[3]
-            if len(reduced) > 4:
-                result['__dictitems__'] = reduced[4]
-            if len(reduced) > 5:
-                result['__state_setter__'] = get_obj_addr(reduced[5])
-            return result
-        except Exception as e:
-            log.debug(f"Error using __reduce__ for {type(obj)}: {e}")
-            return None
+        if not isinstance(reduced, tuple) or len(reduced) < 2:
+            raise ValueError(f"Invalid __reduce__ output for {type(obj)}: {reduced!r}")
+
+        # Every component must recurse through _serialize_custom: reduce output
+        # routinely contains bytes/tuples/numpy that raw json.dumps rejects
+        result = {
+            '__py__': get_obj_addr(reduced[0]),
+            '__pytype__': 'reducer',
+            '__args__': [_serialize_custom(a) for a in reduced[1]] if reduced[1] else []
+        }
+        if len(reduced) > 2 and reduced[2] is not None:
+            result['__state__'] = _serialize_custom(reduced[2])
+        if len(reduced) > 3 and reduced[3] is not None:
+            result['__listitems__'] = [_serialize_custom(x) for x in reduced[3]]
+        if len(reduced) > 4 and reduced[4] is not None:
+            result['__dictitems__'] = [
+                [_serialize_custom(k), _serialize_custom(v)] for k, v in reduced[4]
+            ]
+        if len(reduced) > 5 and reduced[5] is not None:
+            result['__state_setter__'] = get_obj_addr(reduced[5])
+        return result
 
     @staticmethod
     def deserialize(data):
-        try:
-            constructor = flexible_import(data['__py__'])
-            args = _deserialize_custom(data['__args__'])
-            state = _deserialize_custom(data.get('__state__'))
-            listitems = _deserialize_custom(data.get('__listitems__'))
-            dictitems = _deserialize_custom(data.get('__dictitems__'))
-            state_setter = flexible_import(data.get('__state_setter__')) if data.get('__state_setter__') else None
+        if data.get('__global__'):
+            return flexible_import(data['__global__'])
 
-            obj = constructor(*args)
+        constructor = flexible_import(data['__py__'])
+        args = _deserialize_custom(data['__args__'])
+        state = _deserialize_custom(data.get('__state__'))
+        listitems = _deserialize_custom(data.get('__listitems__'))
+        dictitems = _deserialize_custom(data.get('__dictitems__'))
+        state_setter = flexible_import(data.get('__state_setter__')) if data.get('__state_setter__') else None
 
-            if state is not None:
-                if state_setter:
-                    state_setter(obj, state)
-                elif hasattr(obj, '__setstate__'):
-                    _invoke_setstate(obj, state)
-                else:
-                    obj.__dict__.update(state)
+        obj = constructor(*args)
 
-            if listitems is not None:
-                obj.extend(listitems)
+        if state is not None:
+            if state_setter:
+                state_setter(obj, state)
+            elif hasattr(obj, '__setstate__'):
+                _invoke_setstate(obj, state)
+            else:
+                obj.__dict__.update(state)
 
-            if dictitems is not None:
-                obj.update(dictitems)
+        if listitems is not None:
+            obj.extend(listitems)
 
-            return obj
-        except Exception as e:
-            log.debug(f"Error using safe_unreduce: {e}")
-            return None
+        if dictitems is not None:
+            obj.update(dictitems)
+
+        return obj
         
 class BytesSerializer(CustomSerializer):
     @staticmethod

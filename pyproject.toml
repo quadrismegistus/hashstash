@@ -8,13 +8,13 @@ dynamic = ["version"]
 authors = [
   { name="Dr Ryan Heuser", email="ryan.heuser@gmail.com" },
 ]
-description = "A simple file-based caching system using hash-based file names"
+description = "Serialize and cache anything: a dict-like stash with pluggable storage engines (pairtree, lmdb, sqlite, jsonl, redis, mongo, ...), serializers, and compression"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 dependencies = []
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: OS Independent",
 ]
 
@@ -38,8 +38,8 @@ diskcache = ["diskcache"]
 memory = ["ultradict"]
 
 filebased = [
-  "pandas", "polars", "numpy", "pyarrow","fastparquet", 
-  "sqlitedict", 
+  "pandas", "polars", "numpy", "pyarrow","fastparquet",
+  "sqlitedict",
   "diskcache",
   "lmdb",
   "ultradict",
@@ -51,9 +51,9 @@ engines = [
     "pandas", "polars", "numpy", "pyarrow","fastparquet",
     "lmdb",
     "sqlitedict",
-    "diskcache", 
+    "diskcache",
     "redis", "redis_dict",
-    "mongo",
+    "pymongo",
     "ultradict",
 ]
 dev = [
@@ -61,31 +61,35 @@ dev = [
   "pandas", "polars", "numpy", "pyarrow","fastparquet",
   "lmdb",
   "sqlitedict",
-  "diskcache", 
+  "diskcache",
   "redis", "redis_dict",
-  "mongo",
+  "pymongo",
   "ultradict",
 
   # serializers
   "jsonpickle",# "numpy", "pandas"
   "orjson",
-  
+
+  # compressers
+  "lz4",
+  "blosc",
+
   # utils
-  "tqdm", 
+  "tqdm",
   "plotnine",
   "scikit-misc",
 
   # dev tools
-  "pytest", "pytest-cov", "setuptools-scm", "ipython", 
+  "pytest", "pytest-cov", "setuptools-scm", "ipython",
 ]
 all = [
   # engines
   "pandas", "polars", "numpy", "pyarrow","fastparquet",
   "lmdb",
   "sqlitedict",
-  "diskcache", 
+  "diskcache",
   "redis", "redis_dict",
-  "mongo",
+  "pymongo",
   "ultradict",
 
   # serializers
@@ -95,20 +99,17 @@ all = [
   # Compressers
   "lz4",
   "blosc",
-  
+
   # utils
-  "tqdm", 
+  "tqdm",
   "plotnine",
   "scikit-misc",
 ]
 rec = ["pandas","pyarrow","lz4","ultradict"]
 
 [tool.setuptools]
-packages = {find = {}}
+packages = {find = {include = ["hashstash*"]}}
 
 [tool.pytest.ini_options]
 addopts = "-v"
-testpaths = ["."]
-
-[project.scripts]
-test = "pytest:main"
+testpaths = ["tests"]

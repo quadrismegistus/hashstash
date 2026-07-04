@@ -1,3 +1,14 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from base64 import b64decode
+from base64 import b64encode
+from typing import Dict
+from typing import List
+from typing import Union
+import io
+
 from . import *
 
 DEFAULT_COMPRESS = 'gzip'  # Define your default compression method here
@@ -572,6 +583,7 @@ def has_index(df):
 
 def reinfer_types(df):
     import pandas as pd
+    import warnings
 
     # Infer types for pandas DataFrame. errors='ignore' was removed from to_numeric/to_datetime
     # in pandas 3.0; catch explicitly to preserve the "leave column alone if conversion fails"
@@ -583,6 +595,10 @@ def reinfer_types(df):
             pass
         if df[column].dtype == "object":
             try:
-                df[column] = pd.to_datetime(df[column])
+                with warnings.catch_warnings():
+                    # per-element format inference is exactly what we're asking
+                    # for here; don't spam every CSV read with the warning
+                    warnings.simplefilter("ignore", UserWarning)
+                    df[column] = pd.to_datetime(df[column])
             except (ValueError, TypeError):
                 pass
