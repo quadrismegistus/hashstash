@@ -150,8 +150,13 @@ def get_working_engines():
 
     try:
         import duckdb
-
         working_engines.add("duckdb")
+    except ImportError:
+        pass
+
+    try:
+        import plyvel
+        working_engines.add("leveldb")
     except ImportError:
         pass
 

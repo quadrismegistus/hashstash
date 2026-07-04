@@ -1669,6 +1669,7 @@ def HashStash(
         "jsonl": ("hashstash.engines.jsonl", "JSONLHashStash"),
         "fsspec": ("hashstash.engines.fsspec", "FsspecHashStash"),
         "duckdb": ("hashstash.engines.duckdb_engine", "DuckDBHashStash"),
+        "leveldb": ("hashstash.engines.leveldb", "LevelDBHashStash"),
     }
     module_name, class_name = engine_registry[engine]
     try:

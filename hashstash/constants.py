@@ -52,6 +52,7 @@ ENGINE_TYPES = Literal[
     "jsonl",
     "fsspec",
     "duckdb",
+    "leveldb",
 ]
 ENGINES = ENGINE_TYPES.__args__
 BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve', 'jsonl']
@@ -67,6 +68,7 @@ ENGINE_INSTALL_HINTS = {
     "dataframe": "pandas numpy",
     "fsspec": "fsspec",
     "duckdb": "duckdb",
+    "leveldb": "plyvel",
 }
 
 # Performance testing constants
