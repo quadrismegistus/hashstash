@@ -22,6 +22,59 @@ class PairtreeHashStash(BaseHashStash):
     def connect(self):
         pass
 
+    # --- filesystem primitives -------------------------------------------
+    # All disk access goes through these so alternative backends (see the
+    # fsspec engine) can serve the same pairtree layout over remote storage
+    # by overriding just this handful of methods.
+
+    def _fs_join(self, *parts):
+        return os.path.join(*parts)
+
+    def _fs_dirname(self, path):
+        return os.path.dirname(path)
+
+    def _fs_basename(self, path):
+        return os.path.basename(path)
+
+    def _fs_exists(self, path):
+        return os.path.exists(path)
+
+    def _fs_isfile(self, path):
+        return os.path.isfile(path)
+
+    def _fs_listdir(self, path):
+        return os.listdir(path)
+
+    def _fs_read(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def _fs_write_atomic(self, path, data):
+        # temp file + rename: a crash mid-write must not leave a truncated
+        # version file that poisons every later read of this key
+        self._fs_makedirs(self._fs_dirname(path))
+        tmp_path = self._fs_join(
+            self._fs_dirname(path),
+            f".tmp.{os.getpid()}.{self._fs_basename(path)}",
+        )
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, path)
+
+    def _fs_makedirs(self, path):
+        os.makedirs(path, exist_ok=True)
+
+    def _fs_remove(self, path):
+        os.remove(path)
+
+    def _fs_rmtree(self, path):
+        shutil.rmtree(path, ignore_errors=True)
+
+    def _fs_walk(self, path):
+        """Yield (dirpath, filenames) for every directory under path."""
+        for root, _dirs, files in os.walk(path):
+            yield root, files
+
     @log.debug
     def _get_path(self, encoded_key):
         hashed_key = self.hash(encoded_key)
@@ -31,7 +84,7 @@ class PairtreeHashStash(BaseHashStash):
             hashed_key[4:6],
             hashed_key[6:],
         )
-        return os.path.join(self.path, dir1, dir2, dir3, fname)
+        return self._fs_join(self.path, dir1, dir2, dir3, fname)
 
     @log.debug
     def get_path(self, unencoded_key):
@@ -39,11 +92,11 @@ class PairtreeHashStash(BaseHashStash):
 
     @log.debug
     def _get_path_key(self, encoded_key):
-        return os.path.join(self._get_path(encoded_key), self.key_filename)
+        return self._fs_join(self._get_path(encoded_key), self.key_filename)
 
     @log.debug
     def _get_path_valtype(self, encoded_key):
-        return os.path.join(self._get_path(encoded_key), self.valtype_filename)
+        return self._fs_join(self._get_path(encoded_key), self.valtype_filename)
 
     @log.debug
     def get_path_key(self, unencoded_key):
@@ -52,11 +105,11 @@ class PairtreeHashStash(BaseHashStash):
     @log.debug
     def _get_path_values(self, encoded_key, all_results=None, with_metadata=None):
         path = self._get_path(encoded_key)
-        if not os.path.exists(path): return []
+        if not self._fs_exists(path): return []
         try:
             paths = [
-                os.path.join(path, f)
-                for f in os.listdir(path)
+                self._fs_join(path, f)
+                for f in self._fs_listdir(path)
                 if f[0] != "." and f != self.key_filename
             ]
         except NotADirectoryError:
@@ -85,7 +138,7 @@ class PairtreeHashStash(BaseHashStash):
         # the .pid suffix disambiguates concurrent writers hitting the same
         # microsecond (they used to silently overwrite each other's version);
         # readers parse the timestamp with splitext, which strips the suffix
-        return os.path.join(
+        return self._fs_join(
             self._get_path(encoded_key),
             f"{int(time.time() * 1000000)}.{os.getpid()}",
         )
@@ -130,22 +183,12 @@ class PairtreeHashStash(BaseHashStash):
         return unencoded_value # file versioning takes care of this
 
     def _get_from_filepath(self, filepath):
-        if not os.path.exists(filepath):
+        if not self._fs_exists(filepath):
             return None
-
-        with open(filepath, "rb") as f:
-            return f.read()
+        return self._fs_read(filepath)
 
     def _set_to_filepath(self, filepath, encoded_data):
-        # write to a hidden temp file then rename: a crash mid-write must not leave
-        # a truncated version file that poisons every later read of this key
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        tmp_path = os.path.join(
-            os.path.dirname(filepath), f".tmp.{os.getpid()}.{os.path.basename(filepath)}"
-        )
-        with open(tmp_path, "wb") as f:
-            f.write(encoded_data)
-        os.replace(tmp_path, filepath)
+        self._fs_write_atomic(filepath, encoded_data)
 
     @log.debug
     def _set(self, encoded_key: str, encoded_value: Any) -> None:
@@ -157,14 +200,14 @@ class PairtreeHashStash(BaseHashStash):
 
 
     def _prune_dir(self, filepath_value):
-        dir_path = os.path.dirname(filepath_value)
-        files = os.listdir(dir_path)
+        dir_path = self._fs_dirname(filepath_value)
+        files = self._fs_listdir(dir_path)
         for file in files:
             if file and file[0]!='.':
-                file_path = os.path.join(dir_path, file)
-                if file_path != filepath_value and os.path.isfile(file_path):
+                file_path = self._fs_join(dir_path, file)
+                if file_path != filepath_value and self._fs_isfile(file_path):
                     try:
-                        os.remove(file_path)
+                        self._fs_remove(file_path)
                     except FileNotFoundError:
                         pass  # concurrent delete/prune already removed it
 
@@ -174,7 +217,7 @@ class PairtreeHashStash(BaseHashStash):
     @log.debug
     def _set_key(self, encoded_key):
         filepath_key = self._get_path_key(encoded_key)
-        if not os.path.exists(filepath_key):
+        if not self._fs_exists(filepath_key):
             self._set_to_filepath(filepath_key, encoded_key)
 
     @log.debug
@@ -187,7 +230,7 @@ class PairtreeHashStash(BaseHashStash):
 
     @log.debug
     def paths(self):
-        for root, _, files in os.walk(self.path):
+        for root, files in self._fs_walk(self.path):
             if self.key_filename in files:
                 yield root
 
@@ -208,7 +251,7 @@ class PairtreeHashStash(BaseHashStash):
     def _parse_written_at(vpath):
         # filenames are '<micros>[.<pid>][.<io_ext>]': the timestamp is everything
         # before the first dot
-        name = os.path.basename(vpath)
+        name = vpath.rsplit("/", 1)[-1].rsplit(os.sep, 1)[-1]
         try:
             return float(name.split(".", 1)[0]) / 1_000_000
         except ValueError:
@@ -229,12 +272,12 @@ class PairtreeHashStash(BaseHashStash):
         return self.decode_value(self._get_from_filepath(filepath))
 
     def paths_items(self, all_results=None, with_metadata=None):
-        for root, _, files in os.walk(self.path):
+        for root, files in self._fs_walk(self.path):
             if not self.key_filename in set(files):
                 continue
-            key_path = os.path.join(root, self.key_filename)
+            key_path = self._fs_join(root, self.key_filename)
             value_paths = sorted(
-                os.path.join(root, file)
+                self._fs_join(root, file)
                 for file in files
                 if file != self.key_filename
                 and file[0] != "."
@@ -273,6 +316,6 @@ class PairtreeHashStash(BaseHashStash):
     @log.debug
     def _del(self, encoded_key: bytes) -> None:
         path = self._get_path(encoded_key)
-        if not os.path.exists(path):
+        if not self._fs_exists(path):
             raise KeyError(encoded_key)
-        shutil.rmtree(path, ignore_errors=True)
+        self._fs_rmtree(path)

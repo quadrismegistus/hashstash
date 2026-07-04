@@ -311,7 +311,11 @@ class BaseHashStash(MutableMapping):
                 self.root_dir = os.path.join(config.root_dir,DEFAULT_NAME)
             else:
                 root_dir = str(root_dir)
-                if os.path.isabs(root_dir) or root_dir.startswith("~"):
+                if "://" in root_dir:
+                    # an fsspec URL (s3://bucket/x, memory://cache): already
+                    # absolute, and abspath would mangle the protocol
+                    self.root_dir = root_dir
+                elif os.path.isabs(root_dir) or root_dir.startswith("~"):
                     self.root_dir = os.path.expanduser(root_dir)
                 elif os.sep in root_dir or "/" in root_dir or root_dir.startswith("."):
                     # a relative *path* (contains separators or leading dot):
@@ -1503,6 +1507,7 @@ def HashStash(
         "mongo": ("hashstash.engines.mongo", "MongoHashStash"),
         "dataframe": ("hashstash.engines.dataframe", "DataFrameHashStash"),
         "jsonl": ("hashstash.engines.jsonl", "JSONLHashStash"),
+        "fsspec": ("hashstash.engines.fsspec", "FsspecHashStash"),
     }
     module_name, class_name = engine_registry[engine]
     try:

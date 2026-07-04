@@ -142,6 +142,12 @@ def get_working_engines():
     # jsonl uses only stdlib
     working_engines.add("jsonl")
 
+    try:
+        import fsspec
+        working_engines.add("fsspec")
+    except ImportError:
+        pass
+
     return working_engines
 
 

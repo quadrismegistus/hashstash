@@ -50,6 +50,7 @@ ENGINE_TYPES = Literal[
     "redis",
     "mongo",
     "jsonl",
+    "fsspec",
 ]
 ENGINES = ENGINE_TYPES.__args__
 BUILTIN_ENGINES = ['memory', 'pairtree', 'shelve', 'jsonl']
@@ -63,6 +64,7 @@ ENGINE_INSTALL_HINTS = {
     "lmdb": "lmdb",
     "diskcache": "diskcache",
     "dataframe": "pandas numpy",
+    "fsspec": "fsspec",
 }
 
 # Performance testing constants
