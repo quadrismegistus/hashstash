@@ -1001,6 +1001,11 @@ CUSTOM_SERIALIZERS = {
     'types.GeneratorType': GeneratorSerializer.serialize,
     'pathlib.PosixPath': PathSerializer.serialize,
     'pathlib.WindowsPath': PathSerializer.serialize,
+    # Python 3.13 moved pathlib internals to pathlib._local, so get_obj_addr
+    # reports these names; without them Path falls through to the reducer
+    # (which safe mode blocks). Data-only PathSerializer works on every version.
+    'pathlib._local.PosixPath': PathSerializer.serialize,
+    'pathlib._local.WindowsPath': PathSerializer.serialize,
     'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.serialize,
     'hashstash.utils.dataframes.MetaDataFrame': MetaDataFrameSerializer.serialize,
     # 'hashstash.utils.pmap.Pmap': PmapSerializer.serialize,
@@ -1024,6 +1029,8 @@ CUSTOM_DESERIALIZERS = {
     'types.GeneratorType': GeneratorSerializer.deserialize,
     'pathlib.PosixPath': PathSerializer.deserialize,
     'pathlib.WindowsPath': PathSerializer.deserialize,
+    'pathlib._local.PosixPath': PathSerializer.deserialize,
+    'pathlib._local.WindowsPath': PathSerializer.deserialize,
     'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.deserialize,
     'hashstash.utils.dataframes.MetaDataFrame': MetaDataFrameSerializer.deserialize,
     # 'hashstash.utils.pmap.Pmap': PmapSerializer.deserialize,
