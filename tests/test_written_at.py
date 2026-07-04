@@ -149,9 +149,13 @@ class TestPrune:
     def test_prune_actually_deletes(self, stash):
         stash["k1"] = 1
         stash["k2"] = 2
+        # capture the midpoint BETWEEN the writes, with margin on both sides:
+        # deriving it from wall-clock after the k3 write was flaky on loaded CI
+        # runners (a slow write pushed k3's timestamp before the midpoint)
+        time.sleep(0.05)
+        midpoint = datetime.fromtimestamp(time.time(), tz=timezone.utc)
         time.sleep(0.05)
         stash["k3"] = 3
-        midpoint = datetime.fromtimestamp(time.time() - 0.03, tz=timezone.utc)
         count = stash.prune(older_than=midpoint, dry_run=False)
         assert count == 2  # k1, k2 are older than midpoint
         assert len(stash) == 1
