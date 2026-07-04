@@ -1,10 +1,13 @@
-name: Test, Release, and Publish
+name: Release and Publish
 
+# Publish ONLY when a version tag is pushed (e.g. `git tag v0.8.0 && git push
+# --tags`). Merging to main no longer auto-releases — ci.yml handles testing on
+# every push/PR; a release is a deliberate, tagged event. The tag should match
+# the version in hashstash/__init__.py.
 on:
   push:
-    branches:
-      - "main"
-      - "master"
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -53,9 +56,9 @@ jobs:
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "latest"
+          automatic_release_tag: "${{ github.ref_name }}"
           prerelease: false
-          title: "Latest Build"
+          title: "Release ${{ github.ref_name }}"
 
   pypi-release:
     name: "PyPI Release"
