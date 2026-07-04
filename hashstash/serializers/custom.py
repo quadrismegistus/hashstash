@@ -145,6 +145,45 @@ def _loads_any(data):
     return json.loads(data)
 
 
+def _is_json_native(obj):
+    """True if a VALUE can be dumped directly by json/orjson and read back
+    identically, letting serialize_custom skip the recursive _serialize_custom
+    rebuild entirely — the biggest serialization cost for JSON-shaped payloads.
+
+    EXACT types only (`type(obj) is X`, not isinstance): subclasses take the
+    full path, so bool/IntEnum/OrderedDict/defaultdict/namedtuple and friends
+    never slip through with different-from-full-path semantics.
+
+    Rejected (they serialize DIFFERENTLY via _serialize_custom, so a direct dump
+    would corrupt the round-trip):
+      - tuple    -> full path tags it; a direct dump becomes a JSON array (list)
+      - set/bytes/... -> need their custom serializers
+      - dict with a non-str or reserved-marker key -> full path uses the tagged
+        '__pytype__: dict' form; a direct dump would either coerce int keys to
+        str or be misread as an object marker on load
+
+    Big ints and non-finite floats are NOT rejected here: _dumps_value falls
+    back to stdlib json.dumps(obj) for them, which for a native obj is byte-for-
+    byte what the full path would produce."""
+    t = type(obj)
+    if obj is None or t is bool or t is int or t is str:
+        return True
+    if t is float:
+        # finite floats dump fine; inf/nan need the tagged form (orjson emits
+        # null for them), so route those through the full path
+        return obj == obj and obj != float("inf") and obj != float("-inf")
+    if t is list:
+        return all(_is_json_native(v) for v in obj)
+    if t is dict:
+        for k, v in obj.items():
+            if type(k) is not str or k in RESERVED_DICT_KEYS:
+                return False
+            if not _is_json_native(v):
+                return False
+        return True
+    return False
+
+
 # NOTE: serialize_custom / _serialize_custom are intentionally NOT decorated
 # with @log.debug. _serialize_custom recurses once per node of the value tree
 # (millions of calls on a large payload), and the log-wrapper's per-call
@@ -152,6 +191,11 @@ def _loads_any(data):
 # (measured 1.5x speedup from removing it). Tracing lives at the serialize()/
 # deserialize() boundary in serializer.py, which fires once per operation.
 def serialize_custom(obj: Any, sort_keys: bool = False) -> str:
+    # VALUE fast-path: a purely JSON-native value dumps identically without the
+    # recursive _serialize_custom rebuild — the dominant serialization cost. Only
+    # for values (not the canonical key path): keys stay on the audited full path.
+    if not sort_keys and _is_json_native(obj):
+        return _dumps_value(obj)
     serialized = _serialize_custom(obj)
     if sort_keys:
         # canonical KEY path: stdlib json with sorted keys so equal keys hash
@@ -176,7 +220,15 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
         }
 
 
-    if isinstance(obj, (str, int, float, bool)):
+    if isinstance(obj, float):
+        # non-finite floats round-trip through a tagged form: orjson emits null
+        # for inf/nan (silent data loss) and stdlib json emits non-standard
+        # Infinity/NaN. The tag survives any JSON backend.
+        if obj != obj or obj == float("inf") or obj == float("-inf"):
+            return {'__pytype__': 'float', '__val__': repr(obj)}
+        return obj
+
+    if isinstance(obj, (str, int, bool)):
         return obj
 
     if isinstance(obj, dict):
@@ -293,6 +345,9 @@ def _deserialize_custom(data: Any) -> Any:
                 _deserialize_custom(k): _deserialize_custom(v)
                 for k, v in data['__items__']
             }
+
+        if pytype == 'float':
+            return float(data['__val__'])
 
         if pytype == 'instance':
             if _safe_mode_active():
