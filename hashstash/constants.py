@@ -107,6 +107,7 @@ SERIALIZER_TYPES = Literal[
     "jsonpickle",      # pretty flexible json replacement for pickle
     "pickle",          # fastest but not platform independent
     "msgpack",         # fast, compact, data-only (no code); requires msgpack
+    "cbor2",           # fast, compact, data-only (no code); requires cbor2
 ]
 DEFAULT_SERIALIZER = "hashstash"
 OPTIMAL_SERIALIZER = "hashstash"

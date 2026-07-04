@@ -7,6 +7,7 @@ def get_serializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
         "jsonpickle": serialize_jsonpickle,
         "pickle": serialize_pickle,
         "msgpack": serialize_msgpack,
+        "cbor2": serialize_cbor2,
     }
 
     return serializer_dict.get(serializer)
@@ -17,6 +18,7 @@ def get_deserializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
         "jsonpickle": deserialize_jsonpickle,
         "pickle": deserialize_pickle,
         "msgpack": deserialize_msgpack,
+        "cbor2": deserialize_cbor2,
     }
 
     return deserializer_dict.get(serializer)
