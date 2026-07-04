@@ -1,4 +1,5 @@
 from . import *
+from . import constants as _constants
 
 class Config:
     def __init__(
@@ -7,13 +8,21 @@ class Config:
         engine: ENGINE_TYPES = None,
         compress: bool = None,
         b64: bool = DEFAULT_B64,
-        root_dir: str = DEFAULT_ROOT_DIR,
+        root_dir: str = None,
         **kwargs,
     ):
         self.serializer = get_serializer_type(serializer)
         self.engine = get_engine(engine)
         self.compress = get_compresser(compress)
         self.b64 = b64
+        if root_dir is None:
+            # resolved at call time, not bound at import: HASHSTASH_ROOT_DIR and
+            # patched constants (e.g. test isolation) must take effect for
+            # Config() instances created later
+            root_dir = (
+                os.environ.get("HASHSTASH_ROOT_DIR")
+                or _constants.DEFAULT_ROOT_DIR
+            )
         self.root_dir = root_dir
 
 

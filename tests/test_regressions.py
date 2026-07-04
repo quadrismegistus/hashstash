@@ -572,6 +572,17 @@ def test_memory_engine_works_without_ultradict(tmp_path, monkeypatch):
     monkeypatch.setattr(mem, "SHARED_MEMORY_CACHE", None)
 
 
+# --- Stage 7: test isolation -------------------------------------------------
+
+
+def test_default_stash_is_isolated_from_user_cache(isolated_default_root):
+    """The conftest isolation fixture used to patch a throwaway Config instance:
+    HashStash() still wrote to the real ~/.cache/hashstash during tests."""
+    stash = HashStash()
+    assert stash.root_dir.startswith(isolated_default_root)
+    assert not stash.root_dir.startswith(os.path.expanduser("~/.cache/hashstash"))
+
+
 # --- Stage 6: GraphStash -----------------------------------------------------
 
 

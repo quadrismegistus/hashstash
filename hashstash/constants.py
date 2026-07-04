@@ -7,7 +7,10 @@ from typing import Literal
 import time
 import random
 
-DEFAULT_ROOT_DIR = os.path.expanduser("~/.cache/hashstash")
+# HASHSTASH_ROOT_DIR redirects the default cache location (useful in CI/containers)
+DEFAULT_ROOT_DIR = os.environ.get("HASHSTASH_ROOT_DIR") or os.path.expanduser(
+    "~/.cache/hashstash"
+)
 DEFAULT_NAME = "default_stash"
 DEFAULT_PATH = os.path.join(DEFAULT_ROOT_DIR, DEFAULT_NAME)
 DEFAULT_REDIS_DIR = os.path.join(DEFAULT_ROOT_DIR, ".redis")

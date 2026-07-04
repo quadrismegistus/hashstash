@@ -572,6 +572,7 @@ def has_index(df):
 
 def reinfer_types(df):
     import pandas as pd
+    import warnings
 
     # Infer types for pandas DataFrame. errors='ignore' was removed from to_numeric/to_datetime
     # in pandas 3.0; catch explicitly to preserve the "leave column alone if conversion fails"
@@ -583,6 +584,10 @@ def reinfer_types(df):
             pass
         if df[column].dtype == "object":
             try:
-                df[column] = pd.to_datetime(df[column])
+                with warnings.catch_warnings():
+                    # per-element format inference is exactly what we're asking
+                    # for here; don't spam every CSV read with the warning
+                    warnings.simplefilter("ignore", UserWarning)
+                    df[column] = pd.to_datetime(df[column])
             except (ValueError, TypeError):
                 pass

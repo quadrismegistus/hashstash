@@ -9,8 +9,6 @@ from hashstash.engines.base import HashStash
 from hashstash.serializers.serializer import serialize, deserialize
 logger.setLevel(logging.CRITICAL+1)
 
-_CI = os.environ.get("CI") == "true"
-_SKIP_CI = "Known LMDB env-handle issue on CI — see issue #9"
 
 def square(x):
     return x * x
@@ -103,7 +101,6 @@ def test_pmap_error_handling():
     with pytest.raises(ValueError):
         list(pmap(lambda x: x, objects=[1, 2], options=[{}]))
 
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_pmap_with_stash():
     with HashStash().tmp() as stash:
         result = list(pmap(square, objects=[1, 2, 3], num_proc=1, stash=stash, progress=False))
@@ -129,7 +126,6 @@ def test_pmap_item_without_stash():
     result = _pmap_item(item)
     assert result == 9
 
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_pmap_item_with_stash():
     with HashStash().tmp() as stash:
         

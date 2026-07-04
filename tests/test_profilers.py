@@ -6,8 +6,6 @@ import pytest
 import numpy as np
 import pandas as pd
 
-_CI = os.environ.get("CI") == "true"
-_SKIP_CI = "Known LMDB env-handle issue on CI — see issue #9"
 
 def test_generate_primitive():
     result = generate_primitive()
@@ -39,7 +37,6 @@ def test_generate_data_dataframe():
     assert 'id' in result.columns
     assert all(col.startswith(('int_', 'float_', 'str_', 'bool_')) for col in result.columns if col != 'id')
 
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_generate_dict():
     result = generate_dict(1000)
     assert isinstance(result, dict)

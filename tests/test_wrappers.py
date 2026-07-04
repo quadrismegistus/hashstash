@@ -4,11 +4,8 @@ import pytest
 from unittest.mock import Mock, patch
 logger.setLevel(logging.CRITICAL+1)
 
-_CI = os.environ.get("CI") == "true"
-_SKIP_CI = "Known LMDB env-handle issue on CI — see issue #9"
 
 # Test stashed_result decorator
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_stashed_result():
     @stashed_result
     def example_function(x, y):
@@ -26,30 +23,29 @@ def test_stashed_result():
     result3 = example_function(3, 4)
     assert result3 == 7
 
-counter = 0
-tmp = Stash(engine='memory').clear()
+# module-level (importable, closure-free) so its cache identity is stable;
+# the counter lives in a module global that is not part of the function's identity
+_force_counter = {"n": 0}
 
-@tmp.stashed_result
-def incrementing_function():
-    global counter
-    counter += 1
-    return counter
-logger.setLevel(logging.DEBUG)
+
+def _incrementing_function():
+    _force_counter["n"] += 1
+    return _force_counter["n"]
+
+
 def test_stashed_result_force():
-    global counter
-    counter = 0  # Reset counter at the start of the test
-    
+    _force_counter["n"] = 0
+    stash = Stash(engine="memory", dbname="wrappers_force_test").clear()
+    incrementing_function = stash.stashed_result(_incrementing_function)
+
     # First call
-    result1 = incrementing_function()
-    assert result1 == 1
+    assert incrementing_function() == 1
 
     # Second call (should be cached)
-    result2 = incrementing_function()
-    assert result2 == 1
+    assert incrementing_function() == 1
 
     # Forced call
-    result3 = incrementing_function(_force=True)
-    assert result3 == 2
+    assert incrementing_function(_force=True) == 2
 
 # Test retry_patiently decorator
 def test_retry_patiently():
@@ -76,7 +72,6 @@ def test_retry_patiently_success():
     assert counter == 3
 
 # Test parallelized decorator
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_parallelized():
     with HashStash().tmp() as tmp:
         @parallelized(stash=tmp)
@@ -87,9 +82,7 @@ def test_parallelized():
         assert result == [2, 4, 6, 8]
 
 
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_parallelized_with_stashed_result():
-    logger.setLevel(logging.INFO)
     with Stash().tmp() as tmp:
 
         @parallelized(stash=tmp)
@@ -108,7 +101,6 @@ def test_parallelized_with_stashed_result():
         result3 = parallel_stashed_function([5, 6, 7, 8]).results
         assert result3 == [10, 12, 14, 16]
 
-@pytest.mark.skipif(_CI, reason=_SKIP_CI)
 def test_parallelized_with_stashed_result_single_input():
     with Stash().tmp() as tmp:
 
