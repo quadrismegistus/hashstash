@@ -33,6 +33,7 @@ sqlite = ["sqlitedict"]
 redis = ["redis", "redis_dict"]
 mongo = ["pymongo"]
 msgpack = ["msgpack"]
+cbor2 = ["cbor2"]
 fsspec = ["fsspec"]
 best = ["lmdb", "lz4"]
 lmdb = ["lmdb"]
@@ -72,6 +73,7 @@ dev = [
   "jsonpickle",# "numpy", "pandas"
   "orjson",
   "msgpack",
+  "cbor2",
 
   # compressers
   "lz4",
@@ -99,6 +101,7 @@ all = [
   "jsonpickle",
   "orjson",
   "msgpack",
+  "cbor2",
 
   # Compressers
   "lz4",

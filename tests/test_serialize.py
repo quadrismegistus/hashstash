@@ -27,10 +27,10 @@ def require_code_serialization(serializer_type):
 
 def require_rich_types(serializer_type):
     """Skip for data-only serializers that don't handle numpy/pandas/Path/sets
-    (msgpack is a fixed data format; only hashstash/pickle/jsonpickle round-trip
-    these arbitrary Python objects)."""
-    if serializer_type == "msgpack":
-        pytest.skip("msgpack is data-only; numpy/pandas/Path not supported")
+    (msgpack/cbor2 are fixed data formats; only hashstash/pickle/jsonpickle
+    round-trip these arbitrary Python objects)."""
+    if serializer_type in ("msgpack", "cbor2"):
+        pytest.skip(f"{serializer_type} is data-only; numpy/pandas/Path not supported")
 
 @pytest.fixture
 def cache(serializer_type, tmp_path):
