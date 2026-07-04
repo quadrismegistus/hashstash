@@ -268,6 +268,8 @@ class JSONLHashStash(BaseHashStash):
             self._append_line(obj)
             self._keyset.add(ks)
         self._stats["sets"] += 1
+        if self.max_entries is not None:
+            self._enforce_max_entries()
 
     @log.debug
     def _set(self, encoded_key: str, encoded_value: str) -> None:
