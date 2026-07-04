@@ -1,3 +1,11 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from functools import wraps
+import multiprocessing as mp
+import threading
+
 from . import *
 from collections import UserList
 from threading import Thread, Event

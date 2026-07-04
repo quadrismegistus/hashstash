@@ -1,3 +1,12 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from collections import Counter
+import importlib
+import inspect
+import types
+
 from . import *
 BUILTIN_DECORATORS = {'property', 'classmethod', 'staticmethod', 'cached_property'}
 

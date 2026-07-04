@@ -1,3 +1,18 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from collections.abc import MutableMapping
+from functools import cached_property
+from typing import Any
+from typing import List
+from typing import Union
+import importlib
+import json
+import os
+import tempfile
+import uuid
+
 from . import *
 import time
 import threading

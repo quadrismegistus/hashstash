@@ -1,3 +1,10 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from typing import Any
+import os
+
 from . import *
 from .pairtree import PairtreeHashStash
 from .base import _filter_by_time

@@ -1,3 +1,16 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from collections import UserDict
+from functools import partial
+from functools import wraps
+from typing import Callable
+from typing import Optional
+import functools
+import random
+import time
+
 from . import *
 from .misc import is_method
 

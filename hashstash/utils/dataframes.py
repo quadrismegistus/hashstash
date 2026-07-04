@@ -1,3 +1,14 @@
+# Explicit stdlib imports: this package's `from . import *` chains are
+# circular, and whether a name has landed in the package namespace yet
+# depends on import order (spawn workers + editable installs order imports
+# differently). Never rely on the star-chain for stdlib names.
+from base64 import b64decode
+from base64 import b64encode
+from typing import Dict
+from typing import List
+from typing import Union
+import io
+
 from . import *
 
 DEFAULT_COMPRESS = 'gzip'  # Define your default compression method here
