@@ -715,6 +715,49 @@ class BaseHashStash(MutableMapping):
         fstash.set(unencoded_key, result)
         return result
 
+    # --- async API ---------------------------------------------------------
+    # Storage engines are synchronous; these run the blocking work in a thread
+    # so an event loop isn't stalled. arun additionally awaits coroutine
+    # functions (caching the awaited result, not the coroutine object) — this
+    # is what @stashed_result uses to wrap `async def`.
+
+    async def aget(self, *args, **kwargs):
+        import asyncio
+        return await asyncio.to_thread(self.get, *args, **kwargs)
+
+    async def aset(self, *args, **kwargs):
+        import asyncio
+        return await asyncio.to_thread(self.set, *args, **kwargs)
+
+    async def ahas(self, *args, **kwargs):
+        import asyncio
+        return await asyncio.to_thread(self.has, *args, **kwargs)
+
+    async def arun(self, func, *args, _force=False, _store_args=True, **kwargs):
+        import asyncio
+
+        funcx = unwrap_func(func)
+        if not asyncio.iscoroutinefunction(funcx):
+            # plain callable: just run() off-thread
+            return await asyncio.to_thread(
+                self.run, func, *args,
+                _force=_force, _store_args=_store_args, **kwargs,
+            )
+
+        fstash = self.attach_func(func)
+        func_kwargs = {k: v for k, v in kwargs.items() if k and k[0] != "_"}
+        unencoded_key = fstash.new_function_key(
+            *list(args), store_args=_store_args, **func_kwargs
+        )
+        if not _force:
+            res = await asyncio.to_thread(fstash.get, unencoded_key, default=_MISSING)
+            if res is not _MISSING:
+                return res
+        # await the coroutine, then store its result off-thread
+        result = await funcx(*args, **func_kwargs)
+        await asyncio.to_thread(fstash.set, unencoded_key, result)
+        return result
+
     def map(
         self,
         func,
