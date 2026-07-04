@@ -12,6 +12,7 @@ HashStash is a versatile caching library for Python that supports multiple stora
   - [Multiple serializers](#multiple-serializers)
   - [Compression and encoding options](#compression-and-encoding-options)
 - [Installation](#installation)
+- [Security](#security)
 - [Usage](#usage)
   - [Creating a stash](#creating-a-stash)
   - [Stashing objects](#stashing-objects)
@@ -24,6 +25,12 @@ HashStash is a versatile caching library for Python that supports multiple stora
   - [Utilities](#utilities)
     - [Serialization](#serialization)
     - [Encoding and Compression](#encoding-and-compression)
+- [GraphStash](#graphstash)
+  - [Nodes and edges](#nodes-and-edges)
+  - [Multigraph support](#multigraph-support)
+  - [Edge queries](#edge-queries)
+  - [Traversal](#traversal)
+  - [Bulk loading and performance](#bulk-loading-and-performance)
 - [Profiling](#profiling)
   - [Engines](#engines)
   - [Serializers](#serializers)
@@ -55,13 +62,15 @@ HashStash is a versatile caching library for Python that supports multiple stora
     - "__[diskcache](https://pypi.org/project/diskcache/)__" (similar to pairtree, but slower)
     - "__sqlite__" (using [sqlitedict](https://pypi.org/project/sqlitedict/))
     - "__jsonl__" (no dependencies; single human-readable append-only log; best for read-heavy or inspectable caches — see note on concurrent writes below)
+    - "__shelve__" (standard library; simple dbm-backed store)
+    - "__dataframe__" (pairtree layout that stores pandas/polars DataFrames natively as feather/parquet/csv files, requires [pandas](https://pypi.org/project/pandas/))
 
 - Server-based
     - "__redis__" (using [redis-py](https://pypi.org/project/redis/))
     - "__mongo__" (using [pymongo](https://pypi.org/project/pymongo/))
 
 - In-memory
-    - "__memory__" (shared memory, using [ultradict](https://pypi.org/project/ultradict/))
+    - "__memory__" (shared across processes when [ultradict](https://pypi.org/project/ultradict/) is installed; otherwise a process-local dict)
 
 ### Multiple serializers
 
@@ -97,7 +106,7 @@ HashStash requires no dependencies by default, but you can install optional depe
 
 * Default installation (no dependencies): `pip install hashstash`
 
-* Installation with only the recommended/optimal settings (pairtree engine is built-in; adds lz4 compression, pyarrow dataframe serialization, and the ultradict memory engine): `pip install hashstash[rec]`
+* Best performance (lmdb engine + lz4 compression): `pip install hashstash[best]`
 
 * Full installation with all optional dependencies: `pip install hashstash[all]`
 
@@ -106,8 +115,22 @@ HashStash requires no dependencies by default, but you can install optional depe
 For all options see [pyproject.toml](./pyproject.toml) under [project.optional-dependencies].
 
 ```python
-!pip install -qU hashstash[rec]
+!pip install -qU hashstash[best]
 ```
+
+## Security
+
+**Never open a stash you don't trust.** Deserializing a stash executes
+code: the `pickle` serializer is `pickle.loads`, and the default
+`hashstash` serializer can reconstruct functions and classes from stored
+source (via `exec`) and invoke constructors by importable name. A
+malicious value written into a shared cache (a shared Redis/Mongo
+server, a synced or world-writable directory, a downloaded stash file)
+can run arbitrary code on your machine when it is read back.
+
+Treat a stash like you treat a pickle file: only read caches written by
+code you trust, and don't point shared/networked engines at databases
+other parties can write to.
 
 ## Engines & semantics
 
@@ -219,12 +242,14 @@ stash = HashStash()
 # or customize:
 stash = HashStash(
     # naming
-    root_dir="project_stash",    # root directory of the stash (default: default_stash)
-                                 # if not an absolute path, will be ~/.cache/hashstash/[root_dir]
-    dbname="sub_stash",          # name of "database" or subfolder (default: main)
-    
+    root_dir="project_stash",    # bare name -> ~/.cache/hashstash/project_stash;
+                                 # paths ("./cache", "data/cache", "/abs/path", "~/x")
+                                 # resolve like any file path
+    dbname="sub_stash",          # name of "database" or subfolder (default: None)
+
     # engines
-    engine="pairtree",           # or lmdb, sqlite, diskcache, redis, mongo, or memory
+    engine="pairtree",           # or lmdb, sqlite, diskcache, jsonl, shelve,
+                                 # dataframe, redis, mongo, or memory
     serializer="hashstash",      # or jsonpickle or pickle
     compress='lz4',              # or blosc, bz2, gzip, zlib, or raw
     b64=True,                    # base64 encode keys and values
@@ -520,7 +545,7 @@ assert stashed_result7 == stashed_result8 == stashed_result5 == stashed_result6
 
 ↓
 
-    Function results cached in LMDBHashStash(~/.cache/hashstash/functions_stash/lmdb.hashstash.lz4/stashed_result/__main__.expensive_computation/lmdb.hashstash.lz4/data.db)
+    Function results cached in PairtreeHashStash(~/.cache/hashstash/default_stash/pairtree.hashstash.lz4+b64/stashed_result/__main__.expensive_computation/.../data.db)
     
     Stashed key = ((['cat', 'dog'],), {'goodnesses': ['good', 'bad']})
     Called args: (['cat', 'dog'],)
@@ -530,7 +555,7 @@ assert stashed_result7 == stashed_result8 == stashed_result5 == stashed_result6
 
 ### Mapping functions
 
-You can also map functions across many objects, with stashed results, with `stash.map`. By default it uses {num_proc}-2 processors to start computing results in background. In the meantime it returns a `StashMap` object.
+You can also map functions across many objects, with stashed results, with `stash.map`. By default it uses (number of CPUs - 2) processes to start computing results in the background. In the meantime it returns a `StashMap` object. If a mapped function raises, the exception propagates when you read that result.
 
 ```python
 def expensive_computation3(name, goodnesses=['good']):
@@ -822,6 +847,130 @@ data == decoded_data
 
     Mapping __main__.expensive_computation3 across 4 objects [2x]: 6it [00:04,  1.45it/s]               
 
+## GraphStash
+
+GraphStash is a directed property multigraph built on top of HashStash. It stores nodes and edges as key-value pairs in sub-stashes, so every storage engine (pairtree, sqlite, lmdb, etc.) works automatically. It supports multiple edges between the same node pair, Django-style edge queries, BFS traversal, shortest path, and in-memory caching for fast reads.
+
+### Nodes and edges
+
+```python
+from hashstash import HashStash
+
+stash = HashStash(root_dir="my_project")
+g = stash.graph("social")
+
+# Add nodes with properties
+g.add_node("alice", name="Alice", role="engineer")
+g.add_node("bob", name="Bob", role="designer")
+
+# Add directed edges with relationship type and properties
+g.add_edge("alice", "bob", rel="knows", since=2020)
+g.add_edge("alice", "bob", rel="works_with", team="frontend")
+
+# Query
+g.node("alice")                         # → {"name": "Alice", "role": "engineer"}
+g.neighbors("alice")                    # → ["bob"]
+g.neighbors("alice", rel="knows")      # → ["bob"]
+g.neighbors("bob", direction="in")     # → ["alice"]
+g.edge("alice", "bob", rel="knows")    # → {"since": 2020}
+```
+
+Nodes are auto-created when adding edges. `add_edge` auto-creates source and destination nodes with empty properties if they don't already exist.
+
+### Multigraph support
+
+Multiple edges between the same `(src, dst, rel)` are allowed, distinguished by their properties:
+
+```python
+# Per-prompt measurements between model pairs
+g.add_edge("olmo", "olmo-sft", rel="sft_of", prompt="anger", resistance=2.3)
+g.add_edge("olmo", "olmo-sft", rel="sft_of", prompt="fear", resistance=0.5)
+g.add_edge("olmo", "olmo-sft", rel="sft_of", prompt="joy", resistance=1.8)
+
+# Targeted removal by property match
+g.remove_edge("olmo", "olmo-sft", rel="sft_of", prompt="anger")  # removes just that one
+g.remove_edge("olmo", "olmo-sft", rel="sft_of")                  # removes all sft_of edges
+```
+
+### Edge queries
+
+`edges_where` filters edges using Django-style keyword arguments:
+
+```python
+# Filter by relationship type
+g.edges_where(rel="sft_of")
+
+# Filter by edge property with comparison operators
+g.edges_where(resistance__gt=1.0)
+g.edges_where(resistance__gte=0.5, resistance__lt=2.0)
+
+# Combine rel and property filters
+g.edges_where(rel="sft_of", resistance__gt=1.0)
+
+# Filter by source/target node properties
+g.edges_where(source__role="engineer")
+g.edges_where(target__name="Bob")
+
+# String operators on rel
+g.edges_where(rel__startswith="sft")
+```
+
+Supported operators: `__gt`, `__lt`, `__gte`, `__lte`, `__ne`, `__contains`, `__in`, `__startswith`, `__endswith`. No suffix means equality.
+
+### Traversal
+
+```python
+# BFS traversal with depth limit
+levels = g.traverse("alice", depth=2)
+# → {0: ["alice"], 1: ["bob"], 2: ["carol"]}
+
+# Filter traversal by relationship type
+g.traverse("olmo", depth=3, rel="sft_of")
+
+# Shortest path (BFS, unweighted)
+g.shortest_path("alice", "carol")  # → ["alice", "bob", "carol"] or None
+```
+
+### Bulk loading and performance
+
+For large datasets, `add_edges_bulk` groups writes by source node to minimize disk I/O:
+
+```python
+edges = [
+    ("olmo", "olmo-sft", "sft_of", {"prompt": p, "resistance": r})
+    for p, r in zip(prompts, resistances)
+]
+g.add_edges_bulk(edges)
+
+# Warm the in-memory cache for fast subsequent queries
+g.preload()
+
+# Queries now run against cached data (~300x faster)
+g.edges_where(rel="sft_of", resistance__gt=2.0)
+```
+
+GraphStash caches adjacency lists in memory after first read. For write-once-read-many workloads, call `preload()` after bulk loading. Two caveats:
+
+- **Incremental `add_edge` rewrites the node's whole adjacency list per call** — O(degree) I/O per insert, quadratic when building a hub node edge-by-edge. The benchmark numbers below are for `add_edges_bulk`, which groups writes per node; prefer it for any sizeable load.
+- **One writer at a time.** Adjacency updates are read-modify-write over whole lists, and each `stash.graph()` instance caches its reads: two concurrent writers (or a long-lived reader alongside a writer in another process) can lose edges or serve stale results. Use a single writer instance, and create a fresh instance after another process has written.
+
+Benchmarks on Apple M1:
+
+| Edges | Bulk load | Query (cached) |
+|------:|----------:|---------------:|
+| 15K   | 0.3s      | 10ms           |
+| 100K  | 3.3s      | 80–200ms       |
+| 250K  | 8.9s      | 140–300ms      |
+
+Data persists automatically — every write goes to disk through the chosen engine. Reopen the same path later and the graph is there:
+
+```python
+# Later or in another process
+stash = HashStash(root_dir="my_project")
+g = stash.graph("social")
+g.neighbors("alice")  # → ["bob"]
+```
+
 ## Profiling
 
 ### Engines
@@ -860,4 +1009,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### License
 
-This project is licensed under the GNU License.
+This project is licensed under the GNU General Public License v3.0 (GPLv3) — see [LICENSE](./LICENSE).
