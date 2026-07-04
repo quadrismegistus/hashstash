@@ -50,6 +50,19 @@ def deserialize_pickle(data):
     return pickle.loads(data)
 
 
+def serialize_msgpack(obj):
+    import msgpack
+    # msgpack is DATA-only — it cannot encode functions/classes, which is
+    # exactly why it is safe to deserialize. datetime=True keeps native
+    # timestamps; use_bin_type distinguishes bytes from str.
+    return msgpack.packb(obj, datetime=True, use_bin_type=True)
+
+def deserialize_msgpack(data):
+    import msgpack
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return msgpack.unpackb(data, timestamp=3, raw=False, strict_map_key=False)
+
 
 def serialize_jsonpickle(obj):
     import jsonpickle

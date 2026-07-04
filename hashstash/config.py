@@ -175,6 +175,11 @@ def get_working_serializers():
         working_serializers.append('jsonpickle')
     except ImportError:
         pass
+    try:
+        import msgpack
+        working_serializers.append('msgpack')
+    except ImportError:
+        pass
     return working_serializers
 
 def get_serializer_type(serializer):

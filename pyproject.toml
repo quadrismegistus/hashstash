@@ -32,6 +32,7 @@ dataframe = ["pandas", "numpy", "pyarrow","fastparquet"]
 sqlite = ["sqlitedict"]
 redis = ["redis", "redis_dict"]
 mongo = ["pymongo"]
+msgpack = ["msgpack"]
 best = ["lmdb", "lz4"]
 lmdb = ["lmdb"]
 diskcache = ["diskcache"]
@@ -69,6 +70,7 @@ dev = [
   # serializers
   "jsonpickle",# "numpy", "pandas"
   "orjson",
+  "msgpack",
 
   # compressers
   "lz4",
@@ -95,6 +97,7 @@ all = [
   # serializers
   "jsonpickle",
   "orjson",
+  "msgpack",
 
   # Compressers
   "lz4",

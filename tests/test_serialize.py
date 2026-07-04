@@ -24,6 +24,14 @@ def require_code_serialization(serializer_type):
     if serializer_type != "hashstash":
         pytest.skip(f"{serializer_type} does not round-trip local code objects")
 
+
+def require_rich_types(serializer_type):
+    """Skip for data-only serializers that don't handle numpy/pandas/Path/sets
+    (msgpack is a fixed data format; only hashstash/pickle/jsonpickle round-trip
+    these arbitrary Python objects)."""
+    if serializer_type == "msgpack":
+        pytest.skip("msgpack is data-only; numpy/pandas/Path not supported")
+
 @pytest.fixture
 def cache(serializer_type, tmp_path):
     cache = MemoryHashStash(root_dir=os.path.join(tmp_path, f"{serializer_type}_cache"), serializer=serializer_type)
@@ -44,21 +52,24 @@ class TestSerializers:
             cache[key] = value
             assert cache[key] == value
 
-    def test_serialize_deserialize_numpy(self, cache):
+    def test_serialize_deserialize_numpy(self, cache, serializer_type):
+        require_rich_types(serializer_type)
         arr = np.array([1, 2, 3])
         cache['numpy_array'] = arr
         result = cache['numpy_array']
         assert isinstance(result, np.ndarray)
         assert np.array_equal(result, arr)
 
-    def test_serialize_deserialize_pandas_df(self, cache):
+    def test_serialize_deserialize_pandas_df(self, cache, serializer_type):
+        require_rich_types(serializer_type)
         df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
         cache['pandas_df'] = df
         result = cache['pandas_df']
         assert isinstance(result, pd.DataFrame)
         assert_frame_equal(result, df)
 
-    def test_serialize_deserialize_pandas_series(self, cache):
+    def test_serialize_deserialize_pandas_series(self, cache, serializer_type):
+        require_rich_types(serializer_type)
         series = pd.Series([1, 2, 3], name='test')
         cache['pandas_series'] = series
         result = cache['pandas_series']
@@ -108,7 +119,8 @@ class TestSerializers:
         assert result.x == 5
         assert result.method() == 10
 
-    def test_serialize_deserialize_nested_structure(self, cache):
+    def test_serialize_deserialize_nested_structure(self, cache, serializer_type):
+        require_rich_types(serializer_type)
         nested = {
             'list_of_dicts': [{'a': 1}, {'b': 2}],
             'dict_of_lists': {'x': [1, 2], 'y': [3, 4]},
@@ -121,7 +133,8 @@ class TestSerializers:
         
         assert result == nested
 
-    def test_serialize_deserialize_path(self, cache):
+    def test_serialize_deserialize_path(self, cache, serializer_type):
+        require_rich_types(serializer_type)
         path = Path('/tmp/test_file.txt')
         cache['path'] = path
         result = cache['path']

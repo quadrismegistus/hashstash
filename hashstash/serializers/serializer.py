@@ -6,8 +6,9 @@ def get_serializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
         "hashstash": serialize_custom,
         "jsonpickle": serialize_jsonpickle,
         "pickle": serialize_pickle,
+        "msgpack": serialize_msgpack,
     }
-    
+
     return serializer_dict.get(serializer)
 
 def get_deserializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
@@ -15,8 +16,9 @@ def get_deserializer(serializer: SERIALIZER_TYPES = DEFAULT_SERIALIZER):
         "hashstash": deserialize_custom,
         "jsonpickle": deserialize_jsonpickle,
         "pickle": deserialize_pickle,
+        "msgpack": deserialize_msgpack,
     }
-    
+
     return deserializer_dict.get(serializer)
 
 @log.debug

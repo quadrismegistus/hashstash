@@ -198,6 +198,41 @@ class JSONLHashStash(BaseHashStash):
         with open(self.path, "a", encoding="utf-8") as fh:
             fh.write(line)
 
+    def compact(self) -> "JSONLHashStash":
+        """Rewrite the log keeping only live rows.
+
+        The append-only file grows on every set and delete (deletes are
+        tombstones); nothing is ever removed until now. compact() collapses
+        each key to its surviving version(s) — the latest in overwrite mode,
+        all live versions in append mode — drops tombstones, and atomically
+        replaces the file. Returns self. Held under the stash lock so a
+        concurrent writer on the same host can't interleave."""
+        with self:
+            if not os.path.exists(self.path):
+                return self
+            live = {}  # ks -> list of rows (insertion order preserved)
+            for row in iter_jsonl(self.path):
+                rk = row[self.key_name]
+                ks = self._flat_ks(rk) if self.flat else rk
+                if row.get(self.delete_name):
+                    live.pop(ks, None)
+                elif self.append_mode:
+                    live.setdefault(ks, []).append(row)
+                else:
+                    live[ks] = [row]  # overwrite: keep only the newest
+
+            tmp_path = f"{self.path}.compact.{os.getpid()}"
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                for rows in live.values():
+                    for row in rows:
+                        fh.write(json.dumps(row) + "\n")
+            os.replace(tmp_path, self.path)
+            # force a fresh keyset scan of the rewritten file
+            self._keyset = OrderedSet()
+            self._keyset_offset = 0
+            self._ensure_keyset_loaded()
+        return self
+
     def clear(self) -> "JSONLHashStash":
         for sub in self.children:
             sub.clear()
