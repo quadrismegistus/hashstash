@@ -1,4 +1,8 @@
-import sys; sys.path.append('..')
+# NOTE: never sys.path.append('..') here. The relative '..' entry is inherited
+# by multiprocessing spawn workers, where it can resolve a sibling directory
+# named 'hashstash' (e.g. /home/runner/work/hashstash/<repo>) as an empty
+# namespace package that shadows the real one — every submodule then imports
+# from an empty parent and crashes with NameErrors (broke CI on Linux <=3.11).
 import os
 from hashstash.profilers import *
 logger.setLevel(logging.CRITICAL+1)
