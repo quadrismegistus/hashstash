@@ -458,7 +458,7 @@ class BaseHashStash(MutableMapping):
         self.set(unencoded_key, unencoded_value)
 
     @log.debug
-    def get_func(self, *args, func=None, _dbname=None, **kwargs):
+    def get_func(self, *args, func=None, _dbname=None, default=None, **kwargs):
         fstash = (
             self.sub_function_results(func, dbname=_dbname)
             if not self.is_function_stash
@@ -468,7 +468,8 @@ class BaseHashStash(MutableMapping):
             self.new_function_key(
                 *args,
                 **kwargs,
-            )
+            ),
+            default=default,
         )
 
     # @log.debug

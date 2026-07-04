@@ -15,18 +15,27 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record):
-        log_fmt = f'{self.COLORS[record.levelname]}%(message)s{self.COLORS["RESET"]}'
+        if self.use_color:
+            log_fmt = f'{self.COLORS[record.levelname]}%(message)s{self.COLORS["RESET"]}'
+        else:
+            log_fmt = '%(message)s'
         formatter = logging.Formatter(log_fmt, datefmt='%Y-%m-%d %H:%M:%S')
         return formatter.format(record)
+
+    def __init__(self, use_color=True):
+        super().__init__()
+        self.use_color = use_color
 
 def setup_logger(name, level=logging.INFO):
     """Function to setup a custom logger with color output."""
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # Console Handler
+    # ANSI colors only when stdout is a real terminal (and NO_COLOR unset):
+    # escape codes used to land verbatim in redirected/host logs
+    use_color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(ColoredFormatter())
+    console_handler.setFormatter(ColoredFormatter(use_color=use_color))
 
     logger.addHandler(console_handler)
     return logger
@@ -97,25 +106,28 @@ def log_wrapper(_func=None, level=logging.INFO):
         @wraps(func)
         def wrapper(*args, **kwargs):
             global current_depth, last_log_time
-            if level>=logger.level:
+            # decide once: logger.level can change while func runs (e.g. an import
+            # inside the call sets it), and re-evaluating on exit left funcname
+            # unbound and corrupted the depth counter
+            logged = level >= logger.level
+            if logged:
                 funcname,params_str = get_function_call_str_l(func,*args,**kwargs)
                 log_func(f'{funcname}(){"  <<<  "+params_str if params_str else ""}', level=level, incl_frame=False)
                 current_depth += 1
-            
+
             try:
                 result = func(*args, **kwargs)
             except Exception as e:
                 log.error(f"Error in {func.__name__}: {str(e)}")
-                current_depth = 0
-                raise e
+                if logged:
+                    current_depth -= 1
+                raise
 
-            if level>=logger.level:
+            if logged:
                 current_depth -= 1
-                # if result is not None: 
                 if result is not None:
                     resx=repr(result).replace("\n", " ")
                     log_func(f'{funcname}()  >>>  {resx}', level=level, incl_frame=False)
-                # log_func(f'>>> {str(result)[:100]}', level=level)
 
                 if not current_depth:
                     last_log_time = None

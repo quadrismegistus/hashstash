@@ -24,12 +24,16 @@ executors = {}
 executor_lock = threading.Lock()
 
 def get_global_executor(num_proc):
+    # keyed by (pid, num_proc): a later num_proc used to silently reuse whatever
+    # pool was created first; broken pools (worker OOM/segfault) are replaced
+    # instead of poisoning every future pmap in the process
     global executors
-    pid = os.getpid()
+    key = (os.getpid(), num_proc)
     with executor_lock:
-        if pid not in executors:
-            executors[pid] = ProcessPoolExecutor(max_workers=num_proc)
-        return executors[pid]
+        executor = executors.get(key)
+        if executor is None or getattr(executor, "_broken", False):
+            executor = executors[key] = ProcessPoolExecutor(max_workers=num_proc)
+        return executor
 
 def shutdown_global_executors():
     global executors
@@ -238,10 +242,16 @@ class StashMap(UserList):
         
 
 
+    def preload(self):
+        for res in self._results:
+            res.preload()
+
     def __del__(self):
-        # Do not shutdown the global executor here
-        if self.progress_bar:
-            self.progress_bar.close()
+        # Do not shutdown the global executor here; guard the attribute since
+        # __del__ can run on instances whose __init__ raised early
+        progress_bar = getattr(self, "progress_bar", None)
+        if progress_bar:
+            progress_bar.close()
 
     def __getitem__(self, key):
         if isinstance(key, slice):
@@ -287,6 +297,9 @@ class StashMap(UserList):
 
     @classmethod
     def from_dict(cls, data):
+        # preload/precompute forced off: deserializing a stored map must not spawn
+        # a process pool and submit lookups as a side effect of stash.get().
+        # stash.map() re-preloads explicitly when the caller asks for it.
         pmap = cls(
             data["func"],
             objects=data["objects"],
@@ -297,8 +310,8 @@ class StashMap(UserList):
             progress=data["progress"],
             ordered=data["ordered"],
             stash=data["stash"],
-            preload=data["preload"],
-            precompute=data["precompute"],
+            preload=False,
+            precompute=False,
             _results=data["_results"],
         )
         return pmap
@@ -337,10 +350,6 @@ class StashMapSlice(StashMap):
             if index < self.start or index >= self.stop:
                 raise IndexError("StashMapSlice index out of range")
             return self.pmap._get_single_item(index)
-
-    def __del__(self):
-        self.pmap._executor.shutdown(wait=False)
-        self.pmap._executor = None
 
     def to_dict(self):
         return {
@@ -404,6 +413,7 @@ class StashMapRun:
         self.kwargs = kwargs
         self._pmap_instance = _pmap_instance
         self._result = _result
+        self._error = None
         self._future = None
         self._direct_result = None  # New attribute to store direct results
         self._computed = False
@@ -468,12 +478,26 @@ class StashMapRun:
     def _set_preloaded(self, future_or_result):
         self._preloaded = True
         if isinstance(future_or_result, Future):
-            result = future_or_result.result()
+            try:
+                payload = future_or_result.result()
+            except Exception as e:
+                log.debug(f"preload lookup failed: {e}")
+                payload = ("miss", None)
         else:
-            result = future_or_result
-        if result is not None:
-            self._set_computed(result)
+            payload = future_or_result
+        # _pmap_lookup_item returns ('hit', value) / ('miss', None): a bare
+        # None used to be ambiguous, so cached None results were recomputed
+        if (
+            isinstance(payload, tuple)
+            and len(payload) == 2
+            and payload[0] in ("hit", "miss")
+        ):
+            status, value = payload
+        else:
+            status, value = ("hit", payload)
+        if status == "hit":
             self._needed_computing = False
+            self._set_computed(value)
         else:
             self._needed_computing = True
             self.compute()
@@ -499,8 +523,9 @@ class StashMapRun:
                 try:
                     self._result = future_or_result.result()
                 except Exception as e:
-                    log.error(e)
-                    raise e
+                    # raising here would be swallowed by add_done_callback:
+                    # remember the failure and re-raise when .result is read
+                    self._error = e
             else:
                 self._result = future_or_result
         if self._pmap_instance.progress_bar:
@@ -508,19 +533,22 @@ class StashMapRun:
 
     @cached_property
     def result(self):
+        # worker exceptions propagate to the caller — they used to be logged and
+        # silently converted into a None result, indistinguishable from a real None
+        if self._error is not None:
+            raise self._error
         if self._result is not None:
             return self._result
         if not self._computed:
             if not self._processing_started:
                 self._start_processing()
             if self._future:
-                try:
-                    self._result = self._future.result()
-                except Exception as e:
-                    log.error(e)
+                self._result = self._future.result()
             else:
                 self._result = self._direct_result
             self._computed = True
+        if self._error is not None:
+            raise self._error
         return self._result
 
     def compute(self):
@@ -592,6 +620,7 @@ def _pmap_item(stuffed_item):
 
 def _pmap_lookup_item(stuffed_item):
     from ..serializers import unstuff
+    from ..engines.base import _MISSING
 
     unstuffed_item = unstuff(stuffed_item)  # if num_proc>1 else stuffed_item
     func, args, kwargs = (
@@ -601,7 +630,12 @@ def _pmap_lookup_item(stuffed_item):
     )
     stash = unstuffed_item["stash"]
     if stash is not None:
-        return stash.get_func(*args, func=func,**kwargs)
+        result = stash.get_func(*args, func=func, default=_MISSING, **kwargs)
+        # a status tuple, not a bare value: sentinel identity does not survive
+        # pickling across the process boundary, and a cached None is a hit
+        if result is not _MISSING:
+            return ("hit", result)
+    return ("miss", None)
 
 
 
