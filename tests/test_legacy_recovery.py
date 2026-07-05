@@ -11,7 +11,7 @@ import tempfile
 
 import pytest
 
-from hashstash import HashStash
+from hashstash import HashStash, HashStashWarning
 
 ENGINES = ["lmdb", "pairtree", "sqlite", "memory"]
 
@@ -118,10 +118,17 @@ def test_migrate_warns_when_layout_kwargs_wrong(caplog):
 
 
 def test_items_warns_loudly_when_unaddressable(caplog):
+    import warnings
+
     s, _root, _orig = _drifted_stash("memory")
     with caplog.at_level(logging.WARNING, logger="hashstash"):
-        list(s.items())
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            list(s.items())
+    # loud on the logger (survives filterwarnings('ignore')) ...
     assert any("OLDER hashstash" in r.message for r in caplog.records)
+    # ... and catchable programmatically via a typed warning
+    assert any(issubclass(x.category, HashStashWarning) for x in w)
 
 
 def test_no_false_warning_on_a_healthy_stash(caplog):

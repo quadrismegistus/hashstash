@@ -182,6 +182,14 @@ class _MissingType:
 _MISSING = _MissingType()
 
 
+class HashStashWarning(UserWarning):
+    """Category for hashstash's user-actionable, data-integrity warnings (an
+    unreadable pre-1.0 cache, a wrong-layout migrate). Emitted via warnings.warn
+    AND the logger: the logger keeps it loud on stderr even when a consumer has
+    filterwarnings('ignore'), while the warning lets programmatic consumers catch
+    it with warnings.catch_warnings(record=True)."""
+
+
 class HashStashCachedError(Exception):
     """Raised for a cached exception whose original type couldn't be
     reconstructed (e.g. a non-importable custom exception)."""
@@ -1482,13 +1490,23 @@ class BaseHashStash(MutableMapping):
         if getattr(self, "_warned_unaddressable", False):
             return
         self._warned_unaddressable = True
-        log.warning(
+        self._warn_data_integrity(
             f"{type(self).__name__}: {n} stored keys enumerate but NONE could be "
             f"read — almost certainly a cache written by an OLDER hashstash whose "
             f"key encoding differs. Recover it with stash.migrate(dest=...) "
             f"(dry_run=True to count first), or open the stash with "
             f"legacy_read=True. Fresh writes are unaffected."
         )
+
+    @staticmethod
+    def _warn_data_integrity(msg):
+        # both channels on purpose: the logger stays loud on stderr even under
+        # filterwarnings('ignore') (common in ML stacks); the warning lets
+        # programmatic consumers catch it via warnings.catch_warnings.
+        import warnings
+
+        log.warning(msg)
+        warnings.warn(msg, HashStashWarning, stacklevel=3)
 
     @log.debug
     def keys_l(self, **kwargs):
@@ -1902,7 +1920,7 @@ class BaseHashStash(MutableMapping):
                 and os.path.isdir(os.path.join(parent, d))
             ]
             if siblings:
-                log.warning(
+                self._warn_data_integrity(
                     f"migrate found 0 entries at {layout_dir}, but sibling layout "
                     f"dir(s) exist: {siblings}. The engine/serializer/encoding "
                     f"(e.g. b64) is part of the path — reopen the source with the "

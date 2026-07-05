@@ -28,7 +28,9 @@ real pre-1.0 caches.
     rewrites, so a large stash is never churned.
   - **`stash.iter_recovered()`** streams `(key, value)` for every stored version.
   - **Loud warning:** `items()` now warns when keys enumerate but nothing resolves
-    (the drift signature) instead of silently looking empty.
+    (the drift signature) instead of silently looking empty. These data-integrity
+    warnings go out on both the logger (stays loud under `filterwarnings('ignore')`)
+    and as a catchable `HashStashWarning` (for `warnings.catch_warnings`).
 - **lmdb: no more teardown `TypeError`.** Abandoning a `keys()`/`items()` generator
   mid-iteration could raise "catching classes that do not inherit from
   BaseException" during interpreter shutdown (the `MapResizedError` handler
