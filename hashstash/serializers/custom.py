@@ -3,6 +3,7 @@
 # depends on import order (spawn workers + editable installs order imports
 # differently). Never rely on the star-chain for stdlib names.
 import enum
+import functools
 import importlib
 import inspect
 import os
@@ -295,6 +296,13 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
     if inspect.isgenerator(obj):
         return GeneratorSerializer.serialize(obj)
 
+    # functools.partial is callable, so is_function() would route it to
+    # FunctionSerializer, which stored only the bare 'functools.partial' address
+    # and silently rebuilt the partial CLASS (not the bound call) — broken at call
+    # time. Intercept it here (before is_function) and store func + args + keywords.
+    if isinstance(obj, functools.partial):
+        return PartialSerializer.serialize(obj)
+
     if is_function(obj):
         return FunctionSerializer.serialize(obj)
     
@@ -420,6 +428,14 @@ def _deserialize_custom(data: Any) -> Any:
 
         if pytype == 'reducer':
             return ReducerSerializer.deserialize(data)
+
+        if pytype == 'partial':
+            # a functools.partial wraps an arbitrary callable (its func could be
+            # os.system), so reconstructing one runs payload-chosen code on call —
+            # refuse in safe mode just like a function.
+            if _safe_mode_active():
+                _refuse_unsafe(f"a functools.partial ({addr!r})")
+            return PartialSerializer.deserialize(data)
 
         if pytype in {'function', 'classmethod', 'instancemethod'}:
             if _safe_mode_active():
@@ -1013,9 +1029,19 @@ class FunctionSerializer(CustomSerializer):
         
         if not can_import_object(full_name) or get_obj_module(obj) == '__main__':
             obj_d['__source__'] =  get_function_src(obj)
+            # Capture free-variable cells so closures round-trip. Recompiling the
+            # source alone treats captured names as GLOBALS, so the rebuilt callable
+            # raised NameError only at CALL time (silent corruption at store time).
+            # We rebuild the closure on load by wrapping the source in an enclosing
+            # scope that binds these names (see recreate_function_from_src).
+            closure_vals, closure_self = _capture_closure(func)
+            if closure_vals:
+                obj_d['__closure__'] = closure_vals
+            if closure_self:
+                obj_d['__closure_self__'] = closure_self
 
         return obj_d
-        
+
 
     @staticmethod
     @log.debug
@@ -1045,7 +1071,11 @@ class FunctionSerializer(CustomSerializer):
         elif '__source__' in data:
             source = data['__source__']
             func_name = data['__py__'].split('.')[-1]
-            return recreate_function_from_src(source, func_name)
+            return recreate_function_from_src(
+                source, func_name,
+                closure=data.get('__closure__'),
+                closure_self=data.get('__closure_self__'),
+            )
         
         else:
             #pprint(data)
@@ -1055,7 +1085,48 @@ class FunctionSerializer(CustomSerializer):
         return func
 
 
-def recreate_function_from_src(source, func_name):
+def _capture_closure(func):
+    """Serialize a function's free-variable cells so a source-recreated closure
+    can rebind them on load.
+
+    Returns (values, self_refs):
+      values    -- {freevar_name: serialized_value} for captured non-self values
+      self_refs -- [freevar_name, ...] whose cell holds the function itself
+                   (recursive closure); the rebuilt enclosing def provides these,
+                   so they are not passed in as values.
+
+    Raises a clear error at STORE time for a cell we cannot round-trip (an empty
+    cell), so a user never receives a silently-broken callable back."""
+    code = getattr(func, '__code__', None)
+    closure = getattr(func, '__closure__', None)
+    if code is None or not closure or not code.co_freevars:
+        return None, None
+    values = {}
+    self_refs = []
+    for name, cell in zip(code.co_freevars, closure):
+        try:
+            value = cell.cell_contents
+        except ValueError:
+            raise ValueError(
+                f"cannot serialize closure "
+                f"{getattr(func, '__qualname__', getattr(func, '__name__', func))!r}: "
+                f"its captured variable {name!r} is an empty cell (bound later in the "
+                f"enclosing scope). Define the function at module level or pass the "
+                f"value as an argument."
+            )
+        if value is func:
+            self_refs.append(name)          # recursive self-reference
+        else:
+            values[name] = _serialize_custom(value)
+    return (values or None), (self_refs or None)
+
+
+def recreate_function_from_src(source, func_name, closure=None, closure_self=None):
+    if closure or closure_self:
+        return _recreate_closure_function(
+            source, func_name, closure or {}, closure_self or []
+        )
+
     # Handle lambda functions
     if source.startswith('lambda'):
         lambda_expr = source.split(':')[0] + ':' + source.split(':')[1].split(',')[0]
@@ -1063,22 +1134,79 @@ def recreate_function_from_src(source, func_name):
         func = eval(code)
         func.__source__ = source
         return func
-    
+
     code = compile(source, '<string>', 'exec')
-    
+
     try:
         namespace = globals()
         exec(code, namespace)
         func = namespace[func_name]
         func.__source__ = source
         return func
-
-        # closure = get_function_closure(func)    
-        # if closure:
-        #     func.__closure__ = tuple(cell(v) for v in closure.values())
     except Exception as e:
         log.error(f"Error creating function: {e}")
         raise
+
+
+def _recreate_closure_function(source, func_name, closure, closure_self):
+    """Rebuild a closure by compiling its source inside a synthetic enclosing
+    scope that binds the captured free variables, so they resolve as real closure
+    cells (not globals). Non-self captures are passed in as enclosing-scope
+    arguments; self-references (recursive closures) are supplied by the enclosing
+    def itself, so recursion resolves naturally."""
+    values = {name: _deserialize_custom(v) for name, v in closure.items()}
+    params = list(values.keys())  # self-refs are intentionally NOT parameters
+
+    if source.startswith('lambda'):
+        lambda_expr = source.split(':')[0] + ':' + source.split(':')[1].split(',')[0]
+        ret_name = '__hashstash_lambda__'
+        body = f"    {ret_name} = {lambda_expr}"
+    else:
+        ret_name = func_name
+        body = '\n'.join('    ' + line for line in source.splitlines())
+
+    wrapper_src = (
+        f"def __hashstash_outer__({', '.join(params)}):\n"
+        f"{body}\n"
+        f"    return {ret_name}"
+    )
+    try:
+        code = compile(wrapper_src, '<string>', 'exec')
+        ns = {}
+        exec(code, globals(), ns)
+        func = ns['__hashstash_outer__'](*[values[p] for p in params])
+        func.__source__ = source
+        return func
+    except Exception as e:
+        log.error(f"Error creating closure function: {e}")
+        raise
+
+
+class PartialSerializer(CustomSerializer):
+    """functools.partial — store the wrapped callable plus the bound positional
+    args and keywords, and rebuild with functools.partial() on load. The generic
+    callable path used to store only the 'functools.partial' address and hand back
+    the partial CLASS, losing func/args/keywords entirely."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': 'functools.partial',
+            '__pytype__': 'partial',
+            '__data__': {
+                'func': _serialize_custom(obj.func),
+                'args': [_serialize_custom(a) for a in obj.args],
+                'keywords': {k: _serialize_custom(v) for k, v in obj.keywords.items()},
+            },
+        }
+
+    @staticmethod
+    def deserialize(data):
+        d = data['__data__']
+        func = _deserialize_custom(d['func'])
+        args = [_deserialize_custom(a) for a in d['args']]
+        keywords = {k: _deserialize_custom(v) for k, v in d['keywords'].items()}
+        return functools.partial(func, *args, **keywords)
 
 
 class ClassSerializer(CustomSerializer):
