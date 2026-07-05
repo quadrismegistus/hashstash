@@ -17,9 +17,14 @@ real pre-1.0 caches.
     could not), returns a `{'total','migrated','failed','dest'}` report to diff
     against expected counts, and `dry_run=True` counts without writing (safe on a
     huge stash). It re-appends every stored version, so an append-mode source's
-    **edit history is preserved** (into an append-mode dest). If it finds nothing
-    but a sibling layout dir has data, it warns that the source was opened with the
-    wrong `b64`/`compress`/engine kwargs (the layout is encoded in the path).
+    **edit history is preserved** (into an append-mode dest). `dest` may be a path
+    string/`Path` — a stash is built there **inheriting the source layout**
+    (engine/serializer/compress/b64) so the data reads back the same way; a
+    non-stash, non-path `dest` now raises `TypeError` up front instead of silently
+    failing every write. The report includes `first_error`, and an all-failed run
+    warns loudly. If it finds nothing but a sibling layout dir has data, it warns
+    that the source was opened with the wrong `b64`/`compress`/engine kwargs (the
+    layout is encoded in the path).
     *(Return type changed from the dest stash to the report dict —
     `report['dest']` holds the destination.)*
   - **`legacy_read=True`** on a stash falls back to a decode-and-match read of the

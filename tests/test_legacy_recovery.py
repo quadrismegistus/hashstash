@@ -103,6 +103,40 @@ def test_migrate_preserves_append_history(engine):
     assert dest.get_all({"k": 1}, all_results=True) == ["v1", "v2"]  # history kept
 
 
+@pytest.mark.parametrize("engine", ["lmdb", "pairtree"])
+def test_migrate_accepts_path_dest_inheriting_layout(engine):
+    # migrate(dest="/path") must build a stash there inheriting the SOURCE layout
+    # (engine/serializer/compress/b64), not silently fail on the str
+    if engine == "lmdb":
+        pytest.importorskip("lmdb")
+    s, _root, orig = _drifted_stash(engine)
+    destpath = tempfile.mkdtemp()
+    rep = s.migrate(dest=destpath, dry_run=False)
+    assert rep["migrated"] == 15 and rep["failed"] == 0
+    assert rep["first_error"] is None
+    dest = rep["dest"]
+    assert dest.engine == engine  # inherited, not the default engine
+    assert dest.get({"model": "gpt", "idx": 3}) == {"result": 30}
+
+
+def test_migrate_rejects_non_stash_dest():
+    # a non-stash, non-path dest used to be accepted, then every set() failed and
+    # was swallowed to {migrated:0, failed:N} — now it errors up front
+    s = HashStash(engine="memory", root_dir=tempfile.mkdtemp())
+    s.clear()
+    s[{"a": 1}] = "v"
+    with pytest.raises(TypeError, match="HashStash or a path"):
+        s.migrate(dest=12345)
+
+
+def test_migrate_report_includes_first_error_key():
+    s = HashStash(engine="memory", root_dir=tempfile.mkdtemp())
+    s.clear()
+    s[{"a": 1}] = "v"
+    rep = s.migrate(dest=HashStash(engine="memory", root_dir=tempfile.mkdtemp()))
+    assert "first_error" in rep and rep["first_error"] is None
+
+
 def test_migrate_warns_when_layout_kwargs_wrong(caplog):
     # the layout (b64/compress/...) is in the dirname; opening with the wrong
     # kwargs resolves to an empty sibling path — warn instead of silent total=0

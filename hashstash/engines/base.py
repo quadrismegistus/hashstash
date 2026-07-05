@@ -1869,15 +1869,35 @@ class BaseHashStash(MutableMapping):
         Returns a report ``{'total', 'migrated', 'failed', 'dest'}`` (previously
         returned the dest stash — it is now ``report['dest']``).
         """
-        if not dry_run and dest is None:
-            dest = HashStash(**kwargs)
+        # a bare path as dest: build a stash there that INHERITS this stash's
+        # layout (engine/serializer/compress/b64) so the data reads back the same
+        # way. Without this, dest[key]=value raised on the str for every entry and
+        # was swallowed to a silent {migrated:0, failed:N}.
+        if isinstance(dest, (str, os.PathLike)):
+            opts = self.to_dict()
+            opts["root_dir"] = str(dest)
+            opts.pop("filename", None)  # recompute from the new root_dir
+            opts.pop("is_tmp", None)  # a migration target is not a temp stash
+            opts.update(kwargs)
+            dest = HashStash(**opts)
+        if not dry_run:
+            if dest is None:
+                dest = HashStash(**kwargs)
+            elif not isinstance(dest, BaseHashStash):
+                raise TypeError(
+                    f"migrate(dest=...) expects a HashStash or a path str/Path, "
+                    f"not {type(dest).__name__}"
+                )
         total = migrated = failed = 0
+        first_error = None
         for enc_key, enc_val in self._raw_items():
             total += 1
             try:
                 key = self.decode_key(enc_key)
                 values, _ = _unwrap_envelope(self.decode_value(enc_val))
             except Exception as e:
+                if first_error is None:
+                    first_error = f"decode: {type(e).__name__}: {e}"
                 log.debug(f"migrate: skipping an unreadable entry: {e}")
                 failed += 1
                 continue
@@ -1892,15 +1912,29 @@ class BaseHashStash(MutableMapping):
                     dest.set(key, value, append=True)
                     migrated += 1
                 except Exception as e:
+                    if first_error is None:
+                        first_error = f"write: {type(e).__name__}: {e}"
                     log.debug(f"migrate: could not re-store an entry: {e}")
                     failed += 1
         if not total:
             self._warn_empty_migrate()
+        elif not dry_run and migrated == 0 and failed:
+            # every entry failed — surface it loudly instead of debug-only logs
+            self._warn_data_integrity(
+                f"migrate wrote 0 of {total} entries (all failed). First error: "
+                f"{first_error}"
+            )
         log.info(
             f"migrate(dry_run={dry_run}): {migrated} migrated, {failed} failed "
             f"/ {total} entries"
         )
-        return {"total": total, "migrated": migrated, "failed": failed, "dest": dest}
+        return {
+            "total": total,
+            "migrated": migrated,
+            "failed": failed,
+            "first_error": first_error,
+            "dest": dest,
+        }
 
     def _warn_empty_migrate(self):
         """Nothing to migrate — but if a SIBLING layout dir (same parent, different
