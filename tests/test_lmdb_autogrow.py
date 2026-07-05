@@ -75,6 +75,22 @@ def test_lmdb_grow_respects_cap(tmp_path):
     stash.close()
 
 
+def test_lmdb_same_path_two_instances_share_env(tmp_path):
+    """Issue #9: opening the same LMDB dir twice in one process must return the
+    shared env handle, not raise 'environment already open' (stricter on newer
+    LMDB/Python 3.14). Two spellings of the same dir (trailing slash) resolve to
+    one handle via realpath keying."""
+    root = str(tmp_path / "shared")
+    a = HashStash(engine="lmdb", root_dir=root, dbname="x")
+    a.clear()
+    a["k"] = "v1"
+    b = HashStash(engine="lmdb", root_dir=root, dbname="x")      # 2nd opener
+    assert b["k"] == "v1"
+    c = HashStash(engine="lmdb", root_dir=root + "/", dbname="x")  # same realpath
+    assert c["k"] == "v1"
+    a.close()
+
+
 def test_lmdb_max_map_size_is_configurable(tmp_path):
     """max_map_size can be set at construction and survives to_dict serialization
     (so the cap the user chose is honored by rebuilt/pickled stashes)."""

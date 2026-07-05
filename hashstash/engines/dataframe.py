@@ -255,4 +255,9 @@ class DataFrameHashStash(PairtreeHashStash):
 
             stash.sql("SELECT city, avg(temp) FROM data GROUP BY city")
         """
-        return self.duckdb(table=table).sql(query).df()
+        # hold the connection in a local until the result is materialized: on
+        # some duckdb versions the relation doesn't keep the connection alive, so
+        # chaining .duckdb().sql(q).df() let it get GC'd/closed before .df() ran
+        # ("Connection has already been closed").
+        con = self.duckdb(table=table)
+        return con.sql(query).df()
