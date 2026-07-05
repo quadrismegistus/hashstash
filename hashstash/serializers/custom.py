@@ -1154,6 +1154,16 @@ def _recreate_closure_function(source, func_name, closure, closure_self):
     cells (not globals). Non-self captures are passed in as enclosing-scope
     arguments; self-references (recursive closures) are supplied by the enclosing
     def itself, so recursion resolves naturally."""
+    if not str(source).strip():
+        # no retrievable source (defined in a REPL / `python -c` / exec) — fail
+        # loudly with guidance instead of building a wrapper whose `return
+        # <name>` references an undefined name and dies with a cryptic NameError
+        raise ValueError(
+            f"cannot reconstruct closure {func_name!r}: its source was not "
+            f"available when it was stored (functions defined in a REPL, "
+            f"`python -c`, or exec have no retrievable source). Define it at "
+            f"module level, or pass the captured values as plain arguments."
+        )
     values = {name: _deserialize_custom(v) for name, v in closure.items()}
     params = list(values.keys())  # self-refs are intentionally NOT parameters
 
@@ -1178,7 +1188,7 @@ def _recreate_closure_function(source, func_name, closure, closure_self):
         func.__source__ = source
         return func
     except Exception as e:
-        log.error(f"Error creating closure function: {e}")
+        log.debug(f"Error creating closure function: {e}")
         raise
 
 

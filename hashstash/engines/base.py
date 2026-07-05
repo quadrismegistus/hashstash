@@ -1407,9 +1407,13 @@ class BaseHashStash(MutableMapping):
 
     @property
     def stats(self):
-        """Access counters for this stash instance: hits, misses, sets, deletes.
-        Per-instance and in-memory only (not shared across processes)."""
-        return dict(self._stats)
+        """Counters for this stash instance: hits, misses, sets, deletes (all
+        four keys always present). Per-instance and in-memory only (not shared
+        across processes). Note: `stash.run(...)` / `@stashed_result` count on
+        the function's own sub-stash (`func.stash.stats`), not on this one."""
+        base = {"hits": 0, "misses": 0, "sets": 0, "deletes": 0}
+        base.update(self._stats)
+        return base
 
     def reset_stats(self):
         self._stats.clear()
@@ -1485,7 +1489,11 @@ class BaseHashStash(MutableMapping):
 
     def __repr__(self):
         path = self.path.replace(os.path.expanduser("~"), "~")
-        return f"""{self.__class__.__name__}({path})"""
+        # append a compact summary of any non-zero activity counters
+        st = self.stats
+        active = " ".join(f"{k}={st[k]}" for k in ("hits", "misses", "sets", "deletes") if st[k])
+        suffix = f" [{active}]" if active else ""
+        return f"{self.__class__.__name__}({path}){suffix}"
 
     def _repr_html_(self):
         selfstr = repr(self)
@@ -1742,7 +1750,12 @@ class BaseHashStash(MutableMapping):
         )
         if not dry_run:
             for key in matched:
-                del self[key]
+                # delete the physical entry directly: `del self[key]` goes
+                # through has(), which is TTL-aware and would raise KeyError on a
+                # TTL-expired-but-present key — exactly the entries prune targets.
+                # prune already iterated keys(), so existence is not in question.
+                self._del(self.encode_key(key))
+                self._stats["deletes"] += 1
         return len(matched)
 
 

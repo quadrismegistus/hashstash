@@ -71,6 +71,14 @@ Driven by real production feedback + fresh-user review passes.
   round-trip as real lists/dicts; only genuinely unserializable columns fall back
   to `str()`, per column. `assemble_df` renders readable keys (`_key = "Animal
   1"`) instead of bytes.
+- `prune(dry_run=False)` no longer raises `KeyError` on a TTL-expired key (it
+  deleted through the TTL-aware `has()`; now deletes the physical entry directly).
+- Closures whose source can't be retrieved (REPL / `python -c` / exec) now fail
+  loudly with an actionable `ValueError` at read time instead of a cryptic
+  `NameError` (module-level and notebook closures round-trip fine).
+- `stash.stats` always reports all four keys (`hits`/`misses`/`sets`/`deletes`)
+  and documents that `run`/`@stashed_result` count on the function's sub-stash.
+  `repr(stash)` now appends a compact summary of any non-zero counters.
 - `__dir__`/lazy-probe/logging changes are behavior-only; stored bytes for
   existing caches are unaffected.
 
