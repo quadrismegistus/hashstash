@@ -2,6 +2,7 @@
 # circular, and whether a name has landed in the package namespace yet
 # depends on import order (spawn workers + editable installs order imports
 # differently). Never rely on the star-chain for stdlib names.
+import enum
 import importlib
 import inspect
 import os
@@ -219,13 +220,28 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
             '__data__': _serialize_custom(data)
         }
 
+    # Enum BEFORE the primitive check: IntEnum/IntFlag are int subclasses, so the
+    # primitive branch would coerce them to a bare int and lose the type; a plain
+    # Enum otherwise fell to the instance path and recursed forever (serializing
+    # the class re-serializes its members). Stored as class-address + member name.
+    if isinstance(obj, enum.Enum):
+        return {
+            '__py__': get_obj_addr(type(obj)),
+            '__pytype__': 'enum',
+            '__data__': obj.name,
+        }
 
     if isinstance(obj, float):
         # non-finite floats round-trip through a tagged form: orjson emits null
         # for inf/nan (silent data loss) and stdlib json emits non-standard
-        # Infinity/NaN. The tag survives any JSON backend.
-        if obj != obj or obj == float("inf") or obj == float("-inf"):
-            return {'__pytype__': 'float', '__val__': repr(obj)}
+        # Infinity/NaN. Store a CANONICAL token, not repr(obj): a float subclass
+        # like np.float64 reprs as 'np.float64(inf)', which float() can't parse.
+        if obj != obj:
+            return {'__pytype__': 'float', '__val__': 'nan'}
+        if obj == float("inf"):
+            return {'__pytype__': 'float', '__val__': 'inf'}
+        if obj == float("-inf"):
+            return {'__pytype__': 'float', '__val__': '-inf'}
         return obj
 
     if isinstance(obj, (str, int, bool)):
@@ -355,6 +371,13 @@ def _deserialize_custom(data: Any) -> Any:
         if pytype == 'float':
             return float(data['__val__'])
 
+        if pytype == 'enum':
+            # reconstructing an enum member requires importing its class, which
+            # (like any import reference) can execute module-level code
+            if _safe_mode_active():
+                _refuse_unsafe(f"an enum ({addr!r})")
+            return flexible_import(addr)[data['__data__']]
+
         if pytype == 'instance':
             if _safe_mode_active():
                 _refuse_unsafe(f"an instance of {addr!r}")
@@ -479,53 +502,65 @@ def pandas_installed():
 
 
 class PandasDataFrameSerializer(CustomSerializer):
+    """Column-wise: each column is serialized as its own Series (preserving that
+    column's exact dtype — nullable/categorical/tz/object all survive), alongside
+    the row index and the columns Index. This avoids df.values, which collapses
+    every column to one common dtype and can't be recovered faithfully."""
+
     @staticmethod
     def serialize(obj):
         assert pandas_installed(), "Pandas is required for this serializer."
-        if pandas_extension_activated():
-            # log.debug("serializing MetaDataFrame")
-            mdf = MetaDataFrame(obj)
-            return {
-                '__py__': get_obj_addr(obj),
-                '__data__': MetaDataFrameSerializer.serialize(mdf)
-            }
-        else:
-            df, index = reset_index_misc(obj, _index=True)
-            return {
-                '__py__': get_obj_addr(obj),
-                '__data__': {
-                    'values': NumpySerializer.serialize(df.values),
-                    'columns': NumpySerializer.serialize(df.columns.values),
-                    'index_columns': _serialize_custom(index),
-                    'dtypes': _serialize_custom({k:str(v) for k,v in df.dtypes.to_dict().items()})
-                }
-            }
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'pd_dataframe',
+            '__data__': {
+                'columns': PandasIndexSerializer.serialize(obj.columns),
+                'index': PandasIndexSerializer.serialize(obj.index),
+                # positional column-Series (handles duplicate/ non-str column labels)
+                'series': [
+                    PandasSeriesSerializer.serialize(obj.iloc[:, i])
+                    for i in range(obj.shape[1])
+                ],
+            },
+        }
 
     @staticmethod
     def deserialize(data):
         assert pandas_installed(), "Pandas is required for this serializer."
+        import pandas as pd
 
-        if pandas_extension_activated():
-            # log.info("deserializing MetaDataFrame")
-            mdf = MetaDataFrameSerializer.deserialize(data['__data__'])
-            # log.debug(f"deserialized MetaDataFrame with shape {mdf.data.shape}")
-            return mdf.data
+        d = data['__data__']
+        columns = PandasIndexSerializer.deserialize(d['columns'])
+        index = PandasIndexSerializer.deserialize(d['index'])
+        cols = [PandasSeriesSerializer.deserialize(s) for s in d['series']]
+        if cols:
+            df = pd.concat(cols, axis=1, keys=range(len(cols)))
+            df.columns = columns          # restore real labels (incl. duplicates / dtype)
         else:
-            import pandas as pd
-            values = NumpySerializer.deserialize(data['__data__']['values'])
-            columns = NumpySerializer.deserialize(data['__data__']['columns'])
-            index_columns = _deserialize_custom(data['__data__'].get('index_columns'))
-            dtypes = _deserialize_custom(data['__data__']['dtypes'])
-            
-            df = pd.DataFrame(values, columns=columns)
-            for col, dtype in dtypes.items():
-                df[col] = df[col].astype(dtype)
-            
-            if index_columns:
-                df = df.set_index(index_columns)
-            if index_columns == ['_index']:
-                df = df.rename_axis(None)
-            return df
+            df = pd.DataFrame(index=index, columns=columns)
+        df.index = index
+        return df
+
+def _dtype_to_data(dtype):
+    # structured dtypes have field names; str(dtype) of a structured dtype is not
+    # reparseable by np.dtype, so store the descr (a list of field tuples). Plain
+    # dtypes round-trip fine as their string.
+    return dtype.descr if dtype.names else str(dtype)
+
+
+def _data_to_dtype(spec):
+    import numpy as np
+    if isinstance(spec, list):
+        # JSON turned each field tuple (and any subarray shape) into a list
+        fields = []
+        for f in spec:
+            if len(f) >= 3 and isinstance(f[2], list):
+                fields.append((f[0], f[1], tuple(f[2])))
+            else:
+                fields.append(tuple(f))
+        return np.dtype(fields)
+    return np.dtype(spec)
+
 
 class NumpySerializer(CustomSerializer):
     @staticmethod
@@ -533,7 +568,7 @@ class NumpySerializer(CustomSerializer):
         outd = {
             '__py__': get_obj_addr(obj),
             '__data__': {
-                'dtype': str(obj.dtype),
+                'dtype': _dtype_to_data(obj.dtype),
                 'shape': obj.shape
             }
         }
@@ -549,8 +584,8 @@ class NumpySerializer(CustomSerializer):
             import numpy as np
         except ImportError:
             raise ImportError("NumPy is required for this deserializer.")
-        dtype = data['__data__']['dtype']
-        shape = data['__data__']['shape']
+        dtype = _data_to_dtype(data['__data__']['dtype'])
+        shape = tuple(data['__data__']['shape'])
         if 'bytes' in data['__data__']:
             arr_bytes = decode(data['__data__']['bytes'], compress=False, b64=True)
             return np.frombuffer(arr_bytes, dtype=dtype).reshape(shape)
@@ -648,15 +683,105 @@ class PandasNaTSerializer(CustomSerializer):
             raise ImportError("pandas is required for this deserializer.")
         return pd.NaT
 
-class PandasSeriesSerializer(CustomSerializer):
+
+class NumpyDatetime64Serializer(CustomSerializer):
+    """numpy.datetime64 / numpy.timedelta64 — like the other numpy scalars they
+    fell to the generic reducer and failed to reconstruct. Stored as the raw
+    int64 view plus the dtype (which carries the time unit); rebuilt by viewing
+    the int back as that dtype, preserving unit and value (incl. NaT)."""
+
     @staticmethod
     def serialize(obj):
         return {
             '__py__': get_obj_addr(obj),
+            '__pytype__': 'np_datetime64',
+            '__data__': {'dtype': str(obj.dtype), 'value': int(obj.view('int64'))},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        try:
+            import numpy as np
+        except ImportError:
+            raise ImportError("NumPy is required for this deserializer.")
+        d = data['__data__']
+        return np.int64(d['value']).view(d['dtype'])
+
+
+class PandasPeriodSerializer(CustomSerializer):
+    """pandas.Period — took the generic instance path and silently round-tripped
+    to NaT. Stored as its ordinal + frequency string and rebuilt exactly."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'pd_period',
+            '__data__': {'ordinal': obj.ordinal, 'freq': obj.freqstr},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("pandas is required for this deserializer.")
+        d = data['__data__']
+        return pd.Period(ordinal=d['ordinal'], freq=d['freq'])
+
+
+class ZoneInfoSerializer(CustomSerializer):
+    """zoneinfo.ZoneInfo — the reducer couldn't reconstruct it. Stored as its IANA
+    key and rebuilt with ZoneInfo(key)."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'zoneinfo',
+            '__data__': {'key': obj.key},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(data['__data__']['key'])
+
+
+class PandasSeriesSerializer(CustomSerializer):
+    """Preserves the Series' exact dtype (incl. nullable Int64/boolean/string,
+    categorical, datetime-with-tz), its name, and its index. numpy-backed
+    numeric data takes the fast bytes path; ExtensionArray-backed data is stored
+    as elements + dtype (categoricals keep their category order via the
+    Categorical serializer)."""
+
+    @staticmethod
+    def serialize(obj):
+        import numpy as np
+        import pandas as pd
+        values = obj.values
+        if isinstance(values, pd.Categorical):
+            vdata = {'kind': 'categorical', 'data': PandasCategoricalSerializer.serialize(values)}
+        elif isinstance(obj.dtype, np.dtype) and obj.dtype.kind != 'O':
+            # a genuine numpy dtype (int/float/bool/naive-datetime): fast bytes path.
+            # Checked on obj.dtype, NOT values.dtype: a tz-aware series is an
+            # ExtensionDtype whose .values is a NAIVE numpy array — routing it here
+            # would silently drop the timezone.
+            vdata = {'kind': 'numpy', 'data': NumpySerializer.serialize(values)}
+        else:
+            # object ndarray, or an ExtensionArray (nullable Int64/boolean/string,
+            # tz-aware datetime, period, interval): a plain element list round-trips
+            # every element; the exact dtype is re-applied on load.
+            vdata = {'kind': 'list', 'data': _serialize_custom(obj.tolist())}
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'pd_series',
             '__data__': {
-                'values': NumpySerializer.serialize(obj.values),
-                'index': NumpySerializer.serialize(obj.index.values)
-            }
+                'values': vdata,
+                'dtype': str(obj.dtype),
+                'name': _serialize_custom(obj.name),
+                'index': PandasIndexSerializer.serialize(obj.index),
+            },
         }
 
     @staticmethod
@@ -665,9 +790,97 @@ class PandasSeriesSerializer(CustomSerializer):
             import pandas as pd
         except ImportError:
             raise ImportError("Pandas is required for this deserializer.")
-        return pd.Series(
-            NumpySerializer.deserialize(data['__data__']['values']),
-            index=NumpySerializer.deserialize(data['__data__']['index'])
+        d = data['__data__']
+        vkind = d['values']['kind']
+        if vkind == 'categorical':
+            values = PandasCategoricalSerializer.deserialize(d['values']['data'])
+        elif vkind == 'numpy':
+            values = NumpySerializer.deserialize(d['values']['data'])
+        else:
+            values = _deserialize_custom(d['values']['data'])
+        index = PandasIndexSerializer.deserialize(d['index'])
+        s = pd.Series(values, index=index, name=_deserialize_custom(d['name']))
+        # re-apply the exact dtype for the list path (nullable Int64/boolean/string)
+        if vkind == 'list' and str(s.dtype) != d['dtype']:
+            s = s.astype(d['dtype'])
+        return s
+
+
+class PandasIndexSerializer(CustomSerializer):
+    """All pandas Index flavours: MultiIndex (from tuples), RangeIndex (start/
+    stop/step), and everything else via its element list + dtype (which covers
+    Int/Float/Datetime/Period/Interval/Categorical indexes)."""
+
+    @staticmethod
+    def serialize(obj):
+        import pandas as pd
+        if isinstance(obj, pd.MultiIndex):
+            payload = {
+                'kind': 'multi',
+                'tuples': _serialize_custom([tuple(t) for t in obj]),
+                'names': _serialize_custom(list(obj.names)),
+            }
+        elif isinstance(obj, pd.RangeIndex):
+            payload = {
+                'kind': 'range',
+                'start': int(obj.start), 'stop': int(obj.stop), 'step': int(obj.step),
+                'name': _serialize_custom(obj.name),
+            }
+        else:
+            payload = {
+                'kind': 'index',
+                'values': _serialize_custom(obj.tolist()),
+                'dtype': str(obj.dtype),
+                'name': _serialize_custom(obj.name),
+            }
+        return {'__py__': get_obj_addr(obj), '__pytype__': 'pd_index', '__data__': payload}
+
+    @staticmethod
+    def deserialize(data):
+        import pandas as pd
+        d = data['__data__']
+        kind = d['kind']
+        if kind == 'multi':
+            return pd.MultiIndex.from_tuples(
+                _deserialize_custom(d['tuples']), names=_deserialize_custom(d['names'])
+            )
+        if kind == 'range':
+            return pd.RangeIndex(
+                d['start'], d['stop'], d['step'], name=_deserialize_custom(d['name'])
+            )
+        return pd.Index(
+            _deserialize_custom(d['values']), dtype=d['dtype'],
+            name=_deserialize_custom(d['name']),
+        )
+
+
+class PandasCategoricalSerializer(CustomSerializer):
+    """pandas.Categorical — stored as its categories + integer codes + ordered
+    flag, preserving category identity and order exactly (unlike inferring
+    categories from the values, which would re-sort them)."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': get_obj_addr(obj),
+            '__pytype__': 'pd_categorical',
+            '__data__': {
+                'categories': _serialize_custom(obj.categories.tolist()),
+                'codes': obj.codes.tolist(),
+                'ordered': bool(obj.ordered),
+            },
+        }
+
+    @staticmethod
+    def deserialize(data):
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("Pandas is required for this deserializer.")
+        d = data['__data__']
+        return pd.Categorical.from_codes(
+            d['codes'], categories=_deserialize_custom(d['categories']),
+            ordered=d['ordered'],
         )
 
 class ReducerSerializer(CustomSerializer):
@@ -1076,6 +1289,38 @@ for _addr in (
 ):
     CUSTOM_SERIALIZERS[_addr] = PandasNaTSerializer.serialize
     CUSTOM_DESERIALIZERS[_addr] = PandasNaTSerializer.deserialize
+for _addr in (
+    'pandas._libs.tslibs.period.Period',
+    'pandas.Period',  # pandas 3.x top-level path
+):
+    CUSTOM_SERIALIZERS[_addr] = PandasPeriodSerializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = PandasPeriodSerializer.deserialize
+CUSTOM_SERIALIZERS['zoneinfo.ZoneInfo'] = ZoneInfoSerializer.serialize
+CUSTOM_DESERIALIZERS['zoneinfo.ZoneInfo'] = ZoneInfoSerializer.deserialize
+for _addr in ('numpy.datetime64', 'numpy.timedelta64'):
+    CUSTOM_SERIALIZERS[_addr] = NumpyDatetime64Serializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = NumpyDatetime64Serializer.deserialize
+# numpy string/bytes scalars (str_ is a str subclass caught by the primitive
+# branch, so its registration is only reachable for bytes_, but both are listed)
+for _addr in ('numpy.bytes_', 'numpy.str_'):
+    CUSTOM_SERIALIZERS[_addr] = NumpyScalarSerializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = NumpyScalarSerializer.deserialize
+# pandas Index family -> one serializer (internal + pandas-3.x top-level paths)
+for _addr in (
+    'pandas.core.indexes.base.Index', 'pandas.Index',
+    'pandas.core.indexes.range.RangeIndex', 'pandas.RangeIndex',
+    'pandas.core.indexes.datetimes.DatetimeIndex', 'pandas.DatetimeIndex',
+    'pandas.core.indexes.timedeltas.TimedeltaIndex', 'pandas.TimedeltaIndex',
+    'pandas.core.indexes.period.PeriodIndex', 'pandas.PeriodIndex',
+    'pandas.core.indexes.interval.IntervalIndex', 'pandas.IntervalIndex',
+    'pandas.core.indexes.category.CategoricalIndex', 'pandas.CategoricalIndex',
+    'pandas.core.indexes.multi.MultiIndex', 'pandas.MultiIndex',
+):
+    CUSTOM_SERIALIZERS[_addr] = PandasIndexSerializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = PandasIndexSerializer.deserialize
+for _addr in ('pandas.core.arrays.categorical.Categorical', 'pandas.Categorical'):
+    CUSTOM_SERIALIZERS[_addr] = PandasCategoricalSerializer.serialize
+    CUSTOM_DESERIALIZERS[_addr] = PandasCategoricalSerializer.deserialize
 
 
 # numpy scalar types registered by ADDRESS STRING so that `import hashstash`
