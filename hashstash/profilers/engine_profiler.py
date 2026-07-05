@@ -287,7 +287,19 @@ class HashStashProfiler:
                                 "_force": _force,
                             }
                             opts.append(opt)
-        return [HashStash(**opt) for opt in opts]
+        # skip engine/serializer combos that can't even be constructed (e.g.
+        # pickle + jsonl flat mode, which forces b64=False that pickle rejects)
+        # instead of failing the whole profiling run
+        stashes = []
+        for opt in opts:
+            try:
+                stashes.append(HashStash(**opt))
+            except Exception as e:
+                log.debug(
+                    f"skipping engine/serializer combo "
+                    f"{opt.get('engine')}/{opt.get('serializer')}: {e}"
+                )
+        return stashes
 
     @classmethod
     def profile_serializers(cls, **opts):
