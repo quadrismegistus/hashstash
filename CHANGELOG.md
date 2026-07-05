@@ -34,6 +34,15 @@ stored, not its correctness).
 - Value envelopes now carry an explicit format version (`_fv`) for future
   migrations.
 
+### Parallel map
+- **BREAKING** — a `StashMap` (from `stash.map`) now **iterates and indexes the
+  computed values** (like builtin `map` / `pmap`): `list(sm)`, `for x in sm`,
+  `sm[0]`, `sm[1:3]` all return results. The `StashMapRun` wrapper objects moved
+  to `.runs` (`.results`/`.items()`/`.values()` are unchanged). Previously
+  iterating yielded the wrappers, which surprised everyone.
+- Progress bars auto-silence when output isn't a TTY (pipes/CI/redirected),
+  instead of spamming non-interactive runs.
+
 ### Profiling & docs
 - `HashStashProfiler.compare_serializers`, `scripts/bench_serializers.py`,
   `scripts/bench_engines.py`, and `BENCHMARKS.md`.

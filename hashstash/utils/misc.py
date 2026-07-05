@@ -366,6 +366,10 @@ def progress_bar(iterr=None, total=None, progress=True, leave=False, **kwargs):
                     desc = f"{self.green}{log_prefix_str(desc,reset=True)}{self.reset}"
                     super().__init__(*args, desc=desc, **kwargs)
 
+            # disable=None makes tqdm auto-silence when output isn't a TTY
+            # (pipes, CI, redirected notebooks), so progress bars only show in
+            # interactive terminals; an explicit disable= still wins
+            kwargs.setdefault("disable", None)
             if iterr is not None:
                 return ColoredTqdm(iterr, leave=leave, **kwargs)
             else:

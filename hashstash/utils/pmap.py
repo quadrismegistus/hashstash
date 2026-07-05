@@ -139,6 +139,7 @@ class StashMap(UserList):
         self.stash_map = stash_map
         self._force = _force
         self._needed_computing = None
+        self._stashed = False
         self.progress_bar = None
         if self.progress:
             from .misc import progress_bar
@@ -235,35 +236,49 @@ class StashMap(UserList):
     def __len__(self):
         return self.total
 
+    def _iter_runs(self):
+        """Yield the underlying StashMapRun wrapper objects. Subclasses (e.g.
+        StashMapSlice) override this to select a subset."""
+        return iter(self._results)
+
+    @property
+    def runs(self):
+        """The StashMapRun wrapper objects — args/kwargs, per-item cache status,
+        lazy `.result`. Iterating or indexing the StashMap itself yields the
+        computed *values* (like builtin `map` / `pmap`); use `.runs` when you
+        want the wrappers."""
+        return list(self._iter_runs())
+
     def compute(self):
-        for res in self:
+        for res in self._iter_runs():
             res.compute()
             if res._needed_computing:
                 self._needed_computing = True
 
     def __iter__(self):
-        for res in self._results:
-            yield res
-            if not res._computed:
-                res.compute()
+        # yield the computed VALUES (like builtin map / pmap); `.runs` gives the
+        # StashMapRun wrappers
+        return self.results_iter()
 
     @property
     def data(self):
-        return list(self)
+        # UserList backing store holds the run wrappers, so len()/repr stay lazy
+        # and never force computation
+        return list(self._iter_runs())
 
     @cached_property
     def results(self):
         return list(self.results_iter())
-    
+
     def items(self):
-        for res in self:
+        for res in self._iter_runs():
             yield (res.args, res.kwargs), res.result
 
     def keys(self):
         yield from (k for k,v in self.items())
     def values(self):
         yield from (v for k,v in self.items())
-    
+
     def items_l(self):
         return list(self.items())
     def values_l(self):
@@ -273,13 +288,16 @@ class StashMap(UserList):
 
     def results_iter(self):
         self.compute()
-        for res in self:
+        for res in self._iter_runs():
             yield res.result
             if res._needed_computing:
                 self._needed_computing = True
         if self.progress_bar:
             self.progress_bar.close()
-        if self._needed_computing and self.stash_map and type(self) is StashMap and self.stash is not None:
+        # stash the whole map once, and only for a top-level StashMap (not slices)
+        if (type(self) is StashMap and not self._stashed and self._needed_computing
+                and self.stash_map and self.stash is not None):
+            self._stashed = True
             log.info(f"Saving {self.total} results to stash")
             self.stash.set(self.stash_key, self)
             log.info(f"Saved {self.total} results to stash")
@@ -304,16 +322,17 @@ class StashMap(UserList):
             return self._get_single_item(key)
 
     def _get_single_item(self, index):
+        # returns the computed VALUE; use `.runs[index]` for the StashMapRun
         if index < 0:
-            index += len(self)
-        if index < 0 or index >= len(self):
+            index += self.total
+        if index < 0 or index >= self.total:
             raise IndexError("StashMap index out of range")
-
-        for i, item in enumerate(self):
-            if i == index:
-                return item
-
-        raise IndexError("StashMap index out of range")
+        res = self._results[index]
+        if not res._computed:
+            res.compute()
+            if res._needed_computing:
+                self._needed_computing = True
+        return res.result
 
     def to_dict(self):
         results = [
@@ -375,10 +394,16 @@ class StashMapSlice(StashMap):
         self.pmap = pmap
         self.start, self.stop, self.step = slice_obj.indices(len(pmap))
         self.total = len(range(self.start, self.stop, self.step))
+        # attrs the inherited compute()/results_iter() expect; a slice never
+        # owns a progress bar and never re-stashes the parent map
+        self.progress_bar = None
+        self.stash = getattr(pmap, "stash", None)
+        self.stash_map = False
+        self._needed_computing = None
+        self._stashed = True
 
-    def __iter__(self):
-        for i in range(self.start, self.stop, self.step):
-            yield self.pmap._get_single_item(i)
+    def _iter_runs(self):
+        return (self.pmap._results[i] for i in range(self.start, self.stop, self.step))
 
     def __len__(self):
         return max(0, (self.stop - self.start + self.step - 1) // self.step)
@@ -642,8 +667,10 @@ def init_worker():
 
 
 def pmap(func, *args, **kwargs):
-    for res in StashMap(func, *args, **kwargs):
-        yield res.result
+    # StashMap now iterates values directly (use .runs for the wrappers).
+    # pmap caches per-item results (stash_runs) but not the map object itself.
+    kwargs.setdefault("stash_map", False)
+    yield from StashMap(func, *args, **kwargs)
 
 
 def pmap_l(*x, **y):
