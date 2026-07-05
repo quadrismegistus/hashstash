@@ -88,8 +88,17 @@ def shutdown_global_executors():
 atexit.register(shutdown_global_executors)
 
 def get_num_proc(n=None, num_spare=2):
+    # Default to SERIAL (num_proc=1). Parallel maps use a spawn process pool,
+    # which re-imports __main__ in each worker — so an unguarded top-level
+    # stash.map() in a script would crash without `if __name__ == "__main__":`.
+    # Serial-by-default needs no guard and works everywhere (script/notebook/
+    # REPL); opt into parallelism explicitly with num_proc=N.
     num_avail = mp.cpu_count()
-    return n if n and 1<=n<=num_avail else (num_avail-num_spare) if (num_avail-num_spare)>0 else 1
+    if not n or n < 1:
+        return 1
+    if n > num_avail:
+        return max(1, num_avail - num_spare)  # clamp an oversized request
+    return n
 
 
 def _ultradict_available():

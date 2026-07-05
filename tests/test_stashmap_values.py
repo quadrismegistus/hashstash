@@ -21,6 +21,18 @@ def stash():
     return HashStash(engine="memory", root_dir=tempfile.mkdtemp())
 
 
+def test_default_num_proc_is_serial():
+    # default is serial (num_proc=1) so an unguarded top-level map() in a script
+    # never needs an `if __name__ == "__main__"` guard; parallelism is opt-in
+    from hashstash.utils.pmap import get_num_proc
+    assert get_num_proc(None) == 1
+    assert get_num_proc(0) == 1
+    m = HashStash(engine="memory", root_dir=tempfile.mkdtemp()).map(
+        _square, objects=[1, 2, 3], progress=False)
+    assert m.num_proc == 1
+    assert list(m) == [1, 4, 9]
+
+
 @pytest.mark.parametrize("num_proc", [1, 2])
 def test_iteration_yields_values(stash, num_proc):
     m = stash.map(_square, objects=[1, 2, 3, 4], num_proc=num_proc, progress=False)

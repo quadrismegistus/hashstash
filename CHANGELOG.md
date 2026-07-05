@@ -56,6 +56,12 @@ Driven by real production feedback + fresh-user review passes.
   crashing with `BrokenProcessPool` / a bootstrap `RuntimeError` / a worker
   `KeyError`. `num_proc=1` no longer round-trips the function through
   serialization, so REPL/exec-defined callables work serially.
+- **BREAKING: `stash.map` defaults to `num_proc=1` (serial).** Parallel maps use
+  a spawn pool that re-imports `__main__`, so the old parallel-by-default
+  (`cpus-2`) crashed an unguarded top-level `map()` in a script. Serial-by-
+  default needs no `if __name__ == "__main__"` guard and works everywhere; opt
+  into parallelism with `num_proc=N` (and guard the script). Maps that relied on
+  the parallel default now run serially unless they pass `num_proc`.
 - **`StashMapRun.was_cached`** — public read-only flag for whether an item came
   from cache (the "per-item cache status" the README described).
 - `stash.map` warns once when `num_proc>1` is combined with `engine='memory'`
