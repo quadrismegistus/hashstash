@@ -74,12 +74,24 @@ def get_obj_nice_name(obj):
         return get_obj_name(obj)
     return '.'.join(get_obj_addr(obj).split('.')[-2:])
 
+# memoize source lookups (incl. the "no source" outcome) so a function defined
+# in a REPL/notebook/exec — where inspect.getsource always fails — doesn't
+# re-attempt and re-log on every cached call (the failed lookup is also slow the
+# first time). Keyed by id(); the func is kept alive in the tuple so id() can't
+# be reused while cached, and `is` re-checked on hit.
+_src_cache = {}
+
+
 def get_function_src(func):
     from .logs import log
     if hasattr(func,'__source__') and func.__source__:
         return func.__source__
     if func.__name__ == '<lambda>':
         return get_lambda_src(func)
+
+    hit = _src_cache.get(id(func))
+    if hit is not None and hit[0] is func:
+        return hit[1]
 
     try:
         source = inspect.getsource(func)
@@ -93,10 +105,18 @@ def get_function_src(func):
             lines.pop(0)
 
         dedented_func = reformat_python_source("\n".join(lines))
-        return dedented_func
+        result = dedented_func
     except Exception as e:
-        log.error(e)
-        return ""
+        # DEBUG, not ERROR: a function with no retrievable source (REPL/notebook/
+        # exec) is a normal case handled by the address-based fallback, not an
+        # error to spam on stdout every call.
+        log.debug(f"no source for {getattr(func, '__qualname__', func)}: {e}")
+        result = ""
+
+    if len(_src_cache) > 4096:
+        _src_cache.clear()
+    _src_cache[id(func)] = (func, result)
+    return result
 
     
 def flexible_import(obj_or_path):
@@ -196,7 +216,7 @@ def get_lambda_src(obj):
         return 'lambda ' + (''.join(out)).rstrip(',')  # Remove trailing comma if present
     except Exception as e:
         from .logs import log
-        log.error(e)
+        log.debug(f"no lambda source: {e}")
         # Fallback for cases where we can't get the source
         return f"lambda {inspect.signature(obj)}: ..."
 

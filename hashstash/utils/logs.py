@@ -40,27 +40,35 @@ class ColoredFormatter(logging.Formatter):
         super().__init__()
         self.use_color = use_color
 
-def setup_logger(name, level=logging.INFO):
+def setup_logger(name, level=logging.WARNING):
     """Function to setup a custom logger with color output."""
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # ANSI colors only when stdout is a real terminal (and NO_COLOR unset):
-    # escape codes used to land verbatim in redirected/host logs
-    use_color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Log to STDERR, never stdout: hashstash chatter must not interleave with a
+    # program's real output on stdout (you couldn't `2>/dev/null` it otherwise).
+    # ANSI colors only when stderr is a real terminal (and NO_COLOR unset).
+    use_color = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
+    console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setFormatter(ColoredFormatter(use_color=use_color))
 
     logger.addHandler(console_handler)
     return logger
 
 
+def _resolve_default_level():
+    # HASHSTASH_LOG=DEBUG|INFO|WARNING|... overrides the (quiet) default level
+    env = os.environ.get("HASHSTASH_LOG", "").strip().upper()
+    return getattr(logging, env, None) if env else None
 
 
 
-# Setup the logger
+
+
+# Setup the logger. Default is WARNING (quiet); set HASHSTASH_LOG=INFO or
+# logging.getLogger('hashstash').setLevel(logging.INFO) for the play-by-play.
 logger = setup_logger('hashstash')
-logger.setLevel(DEFAULT_LOG_LEVEL)
+logger.setLevel(_resolve_default_level() or DEFAULT_LOG_LEVEL)
 
 
 
@@ -132,7 +140,12 @@ def log_wrapper(_func=None, level=logging.INFO):
             try:
                 result = func(*args, **kwargs)
             except Exception as e:
-                log.error(f"Error in {func.__name__}: {str(e)}")
+                # DEBUG, not ERROR: an exception propagating through a wrapped
+                # function is the CALLER's to handle (and one failure passes
+                # through many wrapped layers — deserialize->get->__getitem__ —
+                # which used to shout the same error 6x). Caught/cached
+                # exceptions must not spam stderr.
+                log.debug(f"Error in {func.__name__}: {str(e)}")
                 if logged:
                     current_depth -= 1
                 raise

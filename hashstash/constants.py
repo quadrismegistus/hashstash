@@ -29,7 +29,7 @@ DEFAULT_DBNAME = None
 DEFAULT_FILENAME = "data.db"
 DEFAULT_SUB_DBNAME = 'sub_stash'
 
-DEFAULT_LOG_LEVEL = logging.INFO
+DEFAULT_LOG_LEVEL = logging.WARNING  # quiet by default; HASHSTASH_LOG=INFO for verbose
 
 # LMDB memory-map sizing
 DEFAULT_LMDB_MAP_SIZE = 10 * 1024**3       # 10 GB initial map (auto-grows)
