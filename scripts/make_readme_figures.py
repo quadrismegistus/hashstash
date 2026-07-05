@@ -18,6 +18,13 @@ from pathlib import Path
 
 FIG_DIR = Path(__file__).resolve().parent.parent / "figures"
 
+# label repel (needs adjustText): spread colliding labels apart with thin leader
+# lines so every serializer/engine/encoding stays readable
+REPEL = {
+    "expand_points": (1.6, 1.6),
+    "arrowprops": {"arrowstyle": "-", "color": "gray", "alpha": 0.4, "lw": 0.5},
+}
+
 
 def _payload(target_bytes):
     rows, approx, i = [], 0, 0
@@ -55,14 +62,19 @@ def fig_serializers(size, iterations):
     fig["Serialized Size (KB)"] = fig["Serialized Size (B)"] / 1024
     fig["Rate (MB/s)"] = fig["Raw Size (B)"] / fig["Time (s)"] / 1024 / 1024
     p9.options.figure_size = (9, 5)
+    # label one point per serializer (the 'dict' payload) with repel; shape marks
+    # dict vs mixed; color reinforces the serializer
+    lab = fig[fig["Data Type"] == "dict"]
     g = (
-        p9.ggplot(fig, p9.aes(x="Serialized Size (KB)", y="Rate (MB/s)", label="Serializer", color="Serializer"))
+        p9.ggplot(fig, p9.aes(x="Serialized Size (KB)", y="Rate (MB/s)", color="Serializer"))
         + p9.facet_grid(". ~ Operation")
-        + p9.geom_point(p9.aes(shape="Data Type"), size=3)
-        + p9.geom_text(nudge_y=0.06, size=8)
+        + p9.geom_point(p9.aes(shape="Data Type"), size=3.5, alpha=0.9)
+        + p9.geom_text(lab, p9.aes(label="Serializer"), size=8, adjust_text=REPEL, show_legend=False)
         + p9.theme_classic()
         + p9.scale_y_log10()
-        + p9.labs(x="Serialized size (KB)", y="Throughput (MB/s, higher = faster)",
+        + p9.guides(color=False)
+        + p9.labs(x="Serialized size (KB, smaller = better)",
+                  y="Throughput (MB/s, higher = faster)",
                   title="Comparing serializers (all installed)")
     )
     _save(g, "fig.comparing_serializers_size_speed.png")
@@ -77,36 +89,47 @@ def fig_engines(size, n, serializer):
     from hashstash.config import get_working_engines
 
     payload = _payload(size)
+
+    def _ms(fn, reps):
+        t = time.perf_counter()
+        for i in range(reps):
+            fn(i)
+        return (time.perf_counter() - t) / reps * 1000
+
     rows = []
     for engine in sorted(get_working_engines()):
-        if engine == "fsspec":
-            root = f"memory://fig-{engine}"
-        else:
-            root = tempfile.mkdtemp(prefix=f"hs-fig-{engine}-")
+        root = f"memory://fig-{engine}" if engine == "fsspec" else tempfile.mkdtemp(prefix=f"hs-fig-{engine}-")
         try:
             s = HashStash(engine=engine, serializer=serializer, root_dir=root)
             s.clear()
-            t = time.perf_counter()
-            for i in range(n):
-                s[f"k{i}"] = payload
-            set_ms = (time.perf_counter() - t) / n * 1000
-            t = time.perf_counter()
-            for i in range(n):
-                _ = s[f"k{i}"]
-            get_ms = (time.perf_counter() - t) / n * 1000
-            rows.append({"Engine": engine, "Operation": "Set", "ms": set_ms})
-            rows.append({"Engine": engine, "Operation": "Get", "ms": get_ms})
+            ev = s.encode_value(payload)
+            # ISOLATE engine I/O from ser/deser: subtract the serialize+encode
+            # cost from a full set, and the decode+deserialize cost from a full
+            # get (these are what the profiler times as separate operations). The
+            # full time is ~85-95% ser/deser and hides the real engine differences.
+            enc = _ms(lambda i: (s.encode_value(payload), s.encode_key(f"k{i}")), n)
+            dec = _ms(lambda i: s.decode_value(ev), n)
+            set_full = _ms(lambda i: s.__setitem__(f"k{i}", payload), n)
+            get_full = _ms(lambda i: s[f"k{i}"], n)
+            rows.append({"Engine": engine,
+                         "Set I/O (ms)": max(set_full - enc, 0.0),
+                         "Get I/O (ms)": max(get_full - dec, 0.0)})
         except Exception as e:
             print(f"  skipping engine {engine}: {type(e).__name__}")
     d = pd.DataFrame(rows)
-    p9.options.figure_size = (8, 6)
+    # ISOLATED write vs read I/O (serialize/deserialize subtracted out). Now the
+    # engines actually spread (~25x): memory/lmdb near the origin, the SQL engines
+    # far out. Dashed diagonal is set==get I/O.
+    p9.options.figure_size = (8, 7)
     g = (
-        p9.ggplot(d, p9.aes(x="reorder(Engine, -ms)", y="ms", fill="Operation"))
-        + p9.geom_col(position="dodge")
-        + p9.coord_flip()
+        p9.ggplot(d, p9.aes(x="Set I/O (ms)", y="Get I/O (ms)"))
+        + p9.geom_abline(slope=1, intercept=0, linetype="dashed", color="gray", alpha=0.5)
+        + p9.geom_point(p9.aes(color="Engine"), size=3, show_legend=False)
+        + p9.geom_text(p9.aes(label="Engine", color="Engine"), size=8, adjust_text=REPEL, show_legend=False)
         + p9.theme_classic()
-        + p9.labs(x="", y="ms per op (lower = faster)",
-                  title=f"Comparing engines (serializer={serializer}, {size // 1000} KB values)")
+        + p9.labs(x="Write I/O — ms per set, ser/enc removed (lower = faster)",
+                  y="Read I/O — ms per get, deser/dec removed (lower = faster)",
+                  title=f"Comparing engines: pure I/O ({size // 1000} KB values, serializer={serializer})")
     )
     _save(g, "fig.comparing_engines.png")
 
@@ -124,6 +147,7 @@ def fig_encodings(size):
     serialized = base.serialize(payload)
     raw_stash = HashStash(engine="memory", compress=False, b64=False, root_dir=tempfile.mkdtemp())
     raw_kb = len(raw_stash.encode_value(serialized)) / 1024
+    mb = len(serialized) / 1024 / 1024
     rows = []
     for comp in get_working_compressers():
         try:
@@ -134,20 +158,27 @@ def fig_encodings(size):
                 t = time.perf_counter(); encoded = s.encode_value(serialized); enc += time.perf_counter() - t
                 t = time.perf_counter(); s.decode_value(encoded); dec += time.perf_counter() - t
             size_kb = len(encoded) / 1024
-            rate = len(serialized) / ((enc + dec) / n) / 1024 / 1024
-            rows.append({"Encoding": comp, "Encoded Size (KB)": size_kb, "Rate (MB/s)": rate})
+            rows.append({"Encoding": comp, "Encoded Size (KB)": size_kb,
+                         "Operation": "Encode", "Rate (MB/s)": mb / (enc / n)})
+            rows.append({"Encoding": comp, "Encoded Size (KB)": size_kb,
+                         "Operation": "Decode", "Rate (MB/s)": mb / (dec / n)})
         except Exception as e:
             print(f"  skipping compressor {comp}: {type(e).__name__}")
     d = pd.DataFrame(rows)
-    p9.options.figure_size = (8, 6)
+    d["Operation"] = pd.Categorical(d["Operation"], categories=["Encode", "Decode"])
+    p9.options.figure_size = (9, 5)
+    # biplot faceted by operation, mirroring the serializer figure: encoded size
+    # (compression) vs throughput. The dashed line marks the uncompressed size.
     g = (
-        p9.ggplot(d, p9.aes(x="Encoded Size (KB)", y="Rate (MB/s)", label="Encoding", color="Encoding"))
-        + p9.geom_point(size=3) + p9.geom_text(nudge_y=0.04, size=9)
-        + p9.geom_vline(xintercept=raw_kb, linetype="dashed", color="gray")
-        + p9.annotate("text", x=raw_kb, y=d["Rate (MB/s)"].min(), label=f"raw = {raw_kb:.0f} KB",
-                      color="gray", ha="left")
+        p9.ggplot(d, p9.aes(x="Encoded Size (KB)", y="Rate (MB/s)", color="Encoding"))
+        + p9.facet_grid(". ~ Operation")
+        + p9.geom_vline(xintercept=raw_kb, linetype="dashed", color="gray", alpha=0.6)
+        + p9.geom_point(size=3.5, alpha=0.9)
+        + p9.geom_text(p9.aes(label="Encoding"), size=8, adjust_text=REPEL, show_legend=False)
         + p9.theme_classic() + p9.scale_y_log10()
-        + p9.labs(x="Encoded size (KB, smaller = better)", y="Encode+decode throughput (MB/s)",
+        + p9.guides(color=False)
+        + p9.labs(x=f"Encoded size (KB, smaller = better; dashed = raw {raw_kb:.0f} KB)",
+                  y="Throughput (MB/s, higher = faster)",
                   title="Comparing encodings / compressors")
     )
     _save(g, "fig.comparing_encodings_size_speed.png")
