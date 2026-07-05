@@ -789,6 +789,28 @@ class ZoneInfoSerializer(CustomSerializer):
         return ZoneInfo(data['__data__']['key'])
 
 
+class FractionSerializer(CustomSerializer):
+    """fractions.Fraction — store (numerator, denominator) so the serialized form
+    is identical across Python versions. Fraction.__reduce__ changed between 3.9
+    ('22/7') and 3.11+ ((22, 7)), which gave the SAME Fraction a different cache
+    key on 3.9 vs 3.11+ (a portability break for Fraction cache keys). Rebuilding
+    with Fraction(num, den) runs no code, so it stays safe-mode friendly."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': 'fractions.Fraction',
+            '__pytype__': 'fraction',
+            '__data__': {'numerator': obj.numerator, 'denominator': obj.denominator},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        from fractions import Fraction
+        d = data['__data__']
+        return Fraction(d['numerator'], d['denominator'])
+
+
 class PandasSeriesSerializer(CustomSerializer):
     """Preserves the Series' exact dtype (incl. nullable Int64/boolean/string,
     categorical, datetime-with-tz), its name, and its index. numpy-backed
@@ -1458,6 +1480,10 @@ for _addr in (
     CUSTOM_DESERIALIZERS[_addr] = PandasPeriodSerializer.deserialize
 CUSTOM_SERIALIZERS['zoneinfo.ZoneInfo'] = ZoneInfoSerializer.serialize
 CUSTOM_DESERIALIZERS['zoneinfo.ZoneInfo'] = ZoneInfoSerializer.deserialize
+# version-independent Fraction form (see FractionSerializer) — takes precedence
+# over the reducer path whose output differs between Python 3.9 and 3.11+
+CUSTOM_SERIALIZERS['fractions.Fraction'] = FractionSerializer.serialize
+CUSTOM_DESERIALIZERS['fractions.Fraction'] = FractionSerializer.deserialize
 for _addr in ('numpy.datetime64', 'numpy.timedelta64'):
     CUSTOM_SERIALIZERS[_addr] = NumpyDatetime64Serializer.serialize
     CUSTOM_DESERIALIZERS[_addr] = NumpyDatetime64Serializer.deserialize

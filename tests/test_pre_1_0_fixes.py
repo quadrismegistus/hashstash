@@ -38,6 +38,22 @@ def test_source_unavailable_closure_fails_loud_not_cryptic():
         _ = s["f"]
 
 
+def test_fraction_serializes_version_independently():
+    # Fraction.__reduce__ differs between Python 3.9 ('22/7') and 3.11+ ((22,7)),
+    # which gave the same Fraction a different cache key across versions. Store
+    # numerator/denominator so the form (and hash) is version-stable.
+    from fractions import Fraction
+    from hashstash import serialize, deserialize, encode_hash, safe_deserialization
+
+    for fr in [Fraction(22, 7), Fraction(-3, 4), Fraction(0), Fraction(5)]:
+        s = serialize(fr, sort_keys=True)
+        assert '"numerator"' in s and '"denominator"' in s  # not the reducer form
+        assert "__args__" not in s
+        assert deserialize(serialize(fr)) == fr
+        with safe_deserialization(True):
+            assert deserialize(serialize(fr)) == fr  # data-only, safe-mode friendly
+
+
 def test_stats_always_has_all_four_keys():
     s = HashStash(engine="memory", root_dir=tempfile.mkdtemp())
     assert set(s.stats) == {"hits", "misses", "sets", "deletes"}
