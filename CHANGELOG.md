@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## 1.0.1 — 2026-07-05
+
+Fixes a release-critical backward-compat break found by production consumers on
+real pre-1.0 caches.
+
+- **Recover caches written by an older hashstash.** The cache-key encoding drifted
+  across versions, so a pre-1.0 cache would *enumerate* (`keys()`/`len()` work)
+  but `get()`/`in`/`items()` silently missed every entry — `encode_key(key)` now
+  hashes to a different address than where the value was stored. Fresh 1.0 caches
+  were never affected. Recovery:
+  - **`stash.migrate(dest=..., dry_run=True/False)`** now reads via the raw stored
+    entries (so it recovers a drifted cache, which the old `items()`-based migrate
+    could not), returns a `{'total','migrated','failed','dest'}` report to diff
+    against expected counts, and `dry_run=True` counts without writing (safe on a
+    huge stash). It re-appends every stored version, so an append-mode source's
+    **edit history is preserved** (into an append-mode dest). `dest` may be a path
+    string/`Path` — a stash is built there **inheriting the source layout**
+    (engine/serializer/compress/b64) so the data reads back the same way; a
+    non-stash, non-path `dest` now raises `TypeError` up front instead of silently
+    failing every write. The report includes `first_error`, and an all-failed run
+    warns loudly. If it finds nothing but a sibling layout dir has data, it warns
+    that the source was opened with the wrong `b64`/`compress`/engine kwargs (the
+    layout is encoded in the path).
+    *(Return type changed from the dest stash to the report dict —
+    `report['dest']` holds the destination.)*
+  - **`legacy_read=True`** on a stash falls back to a decode-and-match read of the
+    old-format entry — covering `get()`, `key in stash`, and `items()` (so the
+    common `if key in stash: stash[key]` hot path works). Read-only — it never
+    rewrites, so a large stash is never churned.
+  - **`stash.iter_recovered()`** streams `(key, value)` for every stored version.
+  - **Loud warning:** `items()` now warns when keys enumerate but nothing resolves
+    (the drift signature) instead of silently looking empty. These data-integrity
+    warnings go out on both the logger (stays loud under `filterwarnings('ignore')`)
+    and as a catchable `HashStashWarning` (for `warnings.catch_warnings`).
+- **lmdb: no more teardown `TypeError`.** Abandoning a `keys()`/`items()` generator
+  mid-iteration could raise "catching classes that do not inherit from
+  BaseException" during interpreter shutdown (the `MapResizedError` handler
+  resolved the class via attribute lookup on a half-cleared module); the exception
+  classes are now bound to locals.
+- Docs: a relative `root_dir` resolves under `~/.cache/hashstash` (not the CWD) —
+  now called out explicitly.
+
+Upgrading from a pre-1.0 cache: `report = old.migrate(dest=new, dry_run=True)` to
+count, then `dry_run=False` to recover. Or open with `legacy_read=True`. Note the
+`b64` default is `False` in 1.0 and is part of the on-disk path, so a cache
+written under the old `b64=True` default also needs `b64=True` (or migration).
+
 ## 1.0.0 — 2026-07-05
 
 First stable release. Consolidates the serializer type-coverage + speed work,

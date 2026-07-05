@@ -69,17 +69,23 @@ class LMDBHashStash(BaseHashStash):
     @contextmanager
     def get_transaction(self, write=False):
         import lmdb
+        # bind the exception classes to LOCALS: if a keys()/items() generator is
+        # abandoned mid-iteration and finalized during interpreter teardown, an
+        # `except lmdb.MapResizedError` attribute lookup resolves on a half-cleared
+        # module and raised "catching classes that do not inherit from
+        # BaseException". Locals captured in the frame stay valid.
+        _MapResized, _LmdbError = lmdb.MapResizedError, lmdb.Error
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 with self.get_db().begin(write=write) as txn:
                     yield txn
                 break
-            except lmdb.MapResizedError:
+            except _MapResized:
                 # another process grew the shared map; adopt the new size + retry
                 self._adopt_mapsize()
                 continue
-            except lmdb.Error as e:
+            except _LmdbError as e:
                 log.debug(f"LMDB transaction error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise
@@ -131,22 +137,25 @@ class LMDBHashStash(BaseHashStash):
         that get_transaction gives reads.
         """
         import lmdb
+        _MapFull, _MapResized, _LmdbError = (
+            lmdb.MapFullError, lmdb.MapResizedError, lmdb.Error
+        )
         max_retries = 3
         attempt = 0
         while True:
             try:
                 with self.get_db().begin(write=True) as txn:
                     return fn(txn)
-            except lmdb.MapFullError:
+            except _MapFull:
                 # subclass of lmdb.Error, so this must come first. Don't drop the
                 # env: grow it in place and retry the operation.
                 self._grow_map()  # raises if the cap is hit
-            except lmdb.MapResizedError:
+            except _MapResized:
                 # another process grew the shared map; adopt the new size and
                 # retry (must precede the generic lmdb.Error branch, whose
                 # drop-and-reopen-at-stale-size lost the write).
                 self._adopt_mapsize()
-            except lmdb.Error as e:
+            except _LmdbError as e:
                 attempt += 1
                 log.debug(f"LMDB write error (attempt {attempt}/{max_retries}): {e}")
                 if attempt >= max_retries:

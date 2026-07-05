@@ -182,6 +182,14 @@ class _MissingType:
 _MISSING = _MissingType()
 
 
+class HashStashWarning(UserWarning):
+    """Category for hashstash's user-actionable, data-integrity warnings (an
+    unreadable pre-1.0 cache, a wrong-layout migrate). Emitted via warnings.warn
+    AND the logger: the logger keeps it loud on stderr even when a consumer has
+    filterwarnings('ignore'), while the warning lets programmatic consumers catch
+    it with warnings.catch_warnings(record=True)."""
+
+
 class HashStashCachedError(Exception):
     """Raised for a cached exception whose original type couldn't be
     reconstructed (e.g. a non-importable custom exception)."""
@@ -365,9 +373,13 @@ class BaseHashStash(MutableMapping):
         ttl: Union[int, float, timedelta] = None,
         safe: bool = None,
         max_entries: int = None,
+        legacy_read: bool = False,
         _root_is_dir: bool = None,
         **kwargs,
     ) -> None:
+        # read caches whose keys were stored under an older encoding: on a get()
+        # miss, fall back to a decode-and-match scan (see _legacy_find). Read-only
+        self.legacy_read = legacy_read
         config = Config()
         # self.name = name if name is not None else self.name
 
@@ -766,6 +778,19 @@ class BaseHashStash(MutableMapping):
             **kwargs,
         )
         found = values is not None and (not isinstance(values, list) or bool(values))
+        if (
+            not found
+            and self.legacy_read
+            and unencoded_key is not None
+            and not with_metadata
+            and as_dataframe is None
+        ):
+            # the key may have been stored under an older encoding: find it by
+            # decode-and-match and read its value (read-only, no rewrite)
+            legacy = self._legacy_find(unencoded_key)
+            if legacy is not _MISSING:
+                self._stats["hits"] += 1
+                return self.serialize(legacy, as_string=True) if as_string else legacy
         self._stats["hits" if found else "misses"] += 1
         value = values[-1] if values else default
         return self.serialize(value, as_string=True) if as_string else value
@@ -1179,7 +1204,13 @@ class BaseHashStash(MutableMapping):
             # storage-level existence isn't enough: an expired entry must read
             # as absent everywhere, or get_set/run would trust a dead key
             return self.get(unencoded_key, default=_MISSING) is not _MISSING
-        return self._has(self.encode_key(unencoded_key))
+        if self._has(self.encode_key(unencoded_key)):
+            return True
+        if self.legacy_read:
+            # the hot path is `if key in stash: stash[key]` — legacy_read must
+            # cover membership too, or old-format entries still read as absent
+            return self._legacy_find(unencoded_key) is not _MISSING
+        return False
 
     @log.debug
     def encode_key(self, unencoded_key: Any) -> Union[str, bytes]:
@@ -1315,6 +1346,69 @@ class BaseHashStash(MutableMapping):
             for k in db:
                 yield k, db[k]
 
+    # --- legacy-cache recovery -------------------------------------------------
+    # A cache written by an OLDER hashstash whose key encoding differs (the
+    # serialized/canonical form of a key changed across versions) still
+    # decodes its keys — keys() works and len() is right — but get()/`in`/items()
+    # silently miss, because encode_key(key) now hashes to a DIFFERENT address
+    # than where the entry was stored. These read each entry via its STORED
+    # encoded key (from _keys()), which _get() hashes to the correct address,
+    # so they never depend on encode_key(key) still matching.
+
+    def _raw_items(self):
+        """Raw (encoded_key, encoded_value) pairs including ALL stored versions.
+        Engines whose _items() takes all_results (pairtree) default to latest-only,
+        which silently dropped history during recovery — ask for everything."""
+        try:
+            return self._items(all_results=True)
+        except TypeError:
+            return self._items()
+
+    def iter_recovered(self):
+        """Yield (key, value) for every stored version by reading the engine's raw
+        (encoded_key, encoded_value) pairs and unwrapping the value envelope — the
+        read path never calls encode_key(key), so it works on a cache from any
+        hashstash version whose keys/values this version can still decode. Yields
+        every version (oldest-first); migrate() re-appends them so history
+        survives. Streams; holds nothing in memory."""
+        for enc_key, enc_val in self._raw_items():
+            try:
+                key = self.decode_key(enc_key)
+                values, _ = _unwrap_envelope(self.decode_value(enc_val))
+            except Exception as e:
+                log.debug(f"recover: skipping an unreadable entry: {e}")
+                continue
+            for value in values:
+                yield key, value
+
+    def _legacy_items(self, all_results=None):
+        """items() under legacy_read: every version (oldest-first) when
+        all_results, else the latest per key."""
+        if self._all_results(all_results):
+            yield from self.iter_recovered()
+            return
+        latest = {}  # canonical-key -> (key, value); iter_recovered is oldest-first
+        for key, value in self.iter_recovered():
+            latest[serialize(key, as_string=True, sort_keys=True)] = (key, value)
+        for key, value in latest.values():
+            yield key, value
+
+    def _legacy_find(self, unencoded_key):
+        """Read the latest value whose key was stored under an older encoding, by
+        scanning the raw entries and matching the decoded key (streaming,
+        read-only, no rewrite). O(n) per call — enabled per-stash with
+        legacy_read=True; for many reads or a large cache, migrate() once."""
+        want = serialize(unencoded_key, as_string=True, sort_keys=True)
+        for enc_key, enc_val in self._items():
+            try:
+                if serialize(self.decode_key(enc_key), as_string=True, sort_keys=True) == want:
+                    values, _ = _unwrap_envelope(self.decode_value(enc_val))
+                    if values:
+                        return values[-1]
+            except Exception:
+                continue
+        return _MISSING
+
     def _ttl_after(self, after, kwargs=None):
         """Effective 'after' floor for reads: an explicit after wins; otherwise
         the ttl floor applies unless apply_ttl=False was passed (prune() needs
@@ -1367,7 +1461,14 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def items(self, all_results=None, with_metadata=False, **kwargs):
+        if self.legacy_read and not with_metadata:
+            # read old-format entries the normal path can't address; reads raw, so
+            # it also covers any new-format entries (no double-yield)
+            yield from self._legacy_items(all_results=all_results)
+            return
+        n_keys = n_yield = 0
         for key in self.keys():
+            n_keys += 1
             vals = self.get_all(
                 key,
                 all_results=all_results,
@@ -1376,7 +1477,36 @@ class BaseHashStash(MutableMapping):
             )
             if vals is not None:
                 for val in vals:
+                    n_yield += 1
                     yield key, val
+        if n_keys and not n_yield and not self.legacy_read and not self.ttl:
+            # keys enumerate but NONE resolve to a value: the tell-tale sign of a
+            # cache written by an older hashstash whose key encoding differs.
+            # Warn loudly rather than silently look empty (which risks re-spending
+            # the budget that built the cache).
+            self._warn_unaddressable(n_keys)
+
+    def _warn_unaddressable(self, n):
+        if getattr(self, "_warned_unaddressable", False):
+            return
+        self._warned_unaddressable = True
+        self._warn_data_integrity(
+            f"{type(self).__name__}: {n} stored keys enumerate but NONE could be "
+            f"read — almost certainly a cache written by an OLDER hashstash whose "
+            f"key encoding differs. Recover it with stash.migrate(dest=...) "
+            f"(dry_run=True to count first), or open the stash with "
+            f"legacy_read=True. Fresh writes are unaffected."
+        )
+
+    @staticmethod
+    def _warn_data_integrity(msg):
+        # both channels on purpose: the logger stays loud on stderr even under
+        # filterwarnings('ignore') (common in ML stacks); the warning lets
+        # programmatic consumers catch it via warnings.catch_warnings.
+        import warnings
+
+        log.warning(msg)
+        warnings.warn(msg, HashStashWarning, stacklevel=3)
 
     @log.debug
     def keys_l(self, **kwargs):
@@ -1726,14 +1856,112 @@ class BaseHashStash(MutableMapping):
             if predicate(key):
                 yield key, self[key]
 
-    def migrate(self, dest=None, **kwargs):
-        """Copy every entry from this stash into dest. If dest is None, kwargs are forwarded to
-        HashStash() to construct a new stash (e.g. engine='jsonl'). Returns the destination stash."""
-        if dest is None:
-            dest = HashStash(**kwargs)
-        for key, value in self.items():
-            dest[key] = value
-        return dest
+    def migrate(self, dest=None, dry_run=False, **kwargs):
+        """Copy every entry into ``dest``, reading via the raw (encoded) entries
+        so it also RECOVERS a cache written by an older hashstash that
+        ``items()``/``get()`` now silently miss (the key encoding changed across
+        versions — keys still decode, but ``encode_key(key)`` hashes elsewhere).
+
+        dest: destination HashStash; if None, kwargs build one (e.g.
+        ``engine='jsonl'``). dry_run: count only, no writes — safe on a huge
+        stash, and lets you diff the counts against an expected total first.
+
+        Returns a report ``{'total', 'migrated', 'failed', 'dest'}`` (previously
+        returned the dest stash — it is now ``report['dest']``).
+        """
+        # a bare path as dest: build a stash there that INHERITS this stash's
+        # layout (engine/serializer/compress/b64) so the data reads back the same
+        # way. Without this, dest[key]=value raised on the str for every entry and
+        # was swallowed to a silent {migrated:0, failed:N}.
+        if isinstance(dest, (str, os.PathLike)):
+            opts = self.to_dict()
+            opts["root_dir"] = str(dest)
+            opts.pop("filename", None)  # recompute from the new root_dir
+            opts.pop("is_tmp", None)  # a migration target is not a temp stash
+            opts.update(kwargs)
+            dest = HashStash(**opts)
+        if not dry_run:
+            if dest is None:
+                dest = HashStash(**kwargs)
+            elif not isinstance(dest, BaseHashStash):
+                raise TypeError(
+                    f"migrate(dest=...) expects a HashStash or a path str/Path, "
+                    f"not {type(dest).__name__}"
+                )
+        total = migrated = failed = 0
+        first_error = None
+        for enc_key, enc_val in self._raw_items():
+            total += 1
+            try:
+                key = self.decode_key(enc_key)
+                values, _ = _unwrap_envelope(self.decode_value(enc_val))
+            except Exception as e:
+                if first_error is None:
+                    first_error = f"decode: {type(e).__name__}: {e}"
+                log.debug(f"migrate: skipping an unreadable entry: {e}")
+                failed += 1
+                continue
+            for value in values:  # each stored version (oldest-first)
+                if dry_run:
+                    migrated += 1
+                    continue
+                try:
+                    # append so multi-version (append-mode) source history survives
+                    # regardless of dest's append_mode; a single-version key just
+                    # lands once, so a plain latest-only cache migrates unchanged.
+                    dest.set(key, value, append=True)
+                    migrated += 1
+                except Exception as e:
+                    if first_error is None:
+                        first_error = f"write: {type(e).__name__}: {e}"
+                    log.debug(f"migrate: could not re-store an entry: {e}")
+                    failed += 1
+        if not total:
+            self._warn_empty_migrate()
+        elif not dry_run and migrated == 0 and failed:
+            # every entry failed — surface it loudly instead of debug-only logs
+            self._warn_data_integrity(
+                f"migrate wrote 0 of {total} entries (all failed). First error: "
+                f"{first_error}"
+            )
+        log.info(
+            f"migrate(dry_run={dry_run}): {migrated} migrated, {failed} failed "
+            f"/ {total} entries"
+        )
+        return {
+            "total": total,
+            "migrated": migrated,
+            "failed": failed,
+            "first_error": first_error,
+            "dest": dest,
+        }
+
+    def _warn_empty_migrate(self):
+        """Nothing to migrate — but if a SIBLING layout dir (same parent, different
+        engine/serializer/encoding suffix) holds data, the stash was almost
+        certainly opened with the wrong kwargs (e.g. b64 omitted): the layout is
+        encoded in the dirname, so this path resolves empty while the data sits
+        one dir over. Point the user at it instead of silently reporting 0."""
+        try:
+            here = str(self.path)
+            parent = os.path.dirname(os.path.dirname(here))  # .../<layout>/data.db
+            layout_dir = os.path.dirname(here)
+            if not os.path.isdir(parent):
+                return
+            siblings = [
+                d for d in os.listdir(parent)
+                if os.path.join(parent, d) != layout_dir
+                and os.path.isdir(os.path.join(parent, d))
+            ]
+            if siblings:
+                self._warn_data_integrity(
+                    f"migrate found 0 entries at {layout_dir}, but sibling layout "
+                    f"dir(s) exist: {siblings}. The engine/serializer/encoding "
+                    f"(e.g. b64) is part of the path — reopen the source with the "
+                    f"kwargs matching the intended layout dir, then migrate."
+                )
+        except Exception:
+            pass
 
     def prune(self, older_than=None, dry_run=True):
         """Delete entries where the latest-write timestamp is older than ``older_than`` (a
