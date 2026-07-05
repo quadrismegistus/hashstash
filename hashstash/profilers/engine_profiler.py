@@ -738,7 +738,10 @@ class HashStashProfiler:
             + p9.geom_point(p9.aes(color="Engine"), size=3, show_legend=False)
             + p9.geom_text(p9.aes(label="Engine", color="Engine"), size=8,
                            show_legend=False, **_repel_kwargs())
-            + p9.scale_x_log10() + p9.scale_y_log10()
+            # extra room on the low side so the fastest engine (memory, at the
+            # clip floor in the bottom-left corner) and its label aren't clipped
+            + p9.scale_x_log10(expand=(0.18, 0, 0.08, 0))
+            + p9.scale_y_log10(expand=(0.18, 0, 0.08, 0))
             + p9.theme_classic()
             + p9.labs(
                 x="Write I/O — ms per set (serialize/encode removed; log; lower = faster)",
