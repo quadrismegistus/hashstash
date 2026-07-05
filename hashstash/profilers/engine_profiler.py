@@ -249,7 +249,10 @@ class HashStashProfiler:
             desc=f"Profiling {len(objects)} stashes",
             _force=_force,
         )
-        return pd.concat(smap.results)
+        # drop empty/None frames (a serializer that couldn't handle a data type
+        # yields an empty profile) so concat doesn't choke or warn
+        frames = [r for r in smap.results if r is not None and len(r)]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         # # @parallelized(num_proc=num_proc, progress=progress)
         # def process(**opt):
         #     from hashstash import HashStash
@@ -337,13 +340,15 @@ class HashStashProfiler:
                             operations=["Serialize", "Deserialize"],
                             progress=False,
                         )
-                    except Exception as e:
-                        # a data-only serializer (msgpack/cbor2) can't encode the
-                        # 'mixed' payload (sets/tuples/bytes) — a real capability
-                        # difference. Record it and keep going.
-                        log.info(
-                            f"{serializer} cannot serialize data_type={data_type!r}: {e}"
-                        )
+                    except Exception:
+                        df = None
+                    # a data-only serializer (msgpack/cbor2) can't encode the
+                    # 'mixed' payload (sets/tuples/bytes) — a real capability
+                    # difference. profile() now skips those transactions (returns
+                    # an empty frame) rather than raising, so treat empty/None as
+                    # unsupported and keep going.
+                    if df is None or len(df) == 0:
+                        log.info(f"{serializer} cannot serialize data_type={data_type!r}")
                         frames.append(
                             pd.DataFrame([{
                                 "Serializer": serializer,
@@ -587,10 +592,16 @@ class HashStashProfiler:
                 )
 
         fig = p9.ggplot(figdf, p9.aes(x=x, y=y, color=color_by))
-        # fig += p9.geom_line()
         if smooth:
-            fig += p9.geom_smooth(method="loess", se=True, alpha=0.1)
-        # fig += p9.geom_point(data=figdf[figdf.Iteration % 10 == 0], alpha=0.5)
+            # loess needs enough distinct points per group and its SE band raises
+            # on near-collinear data ("near singularities"). Guard by group size
+            # and drop the SE band; fall back to a plain line for small runs.
+            sizes = figdf.groupby(group_by).size() if group_by else pd.Series([len(figdf)])
+            if len(sizes) and sizes.min() >= 10:
+                fig += p9.geom_smooth(method="loess", se=False, span=0.6)
+            else:
+                fig += p9.geom_line()
+            fig += p9.geom_point(alpha=0.4, size=1)
 
         if label_by:
             label_df = pd.concat(
@@ -742,6 +753,7 @@ class HashStashProfiler:
         fig.save(figfn)
         return fig
 
+    @classmethod
     def plot_encodings(cls,filename=None,**opts):
         import plotnine as p9
         import pandas as pd
@@ -774,6 +786,7 @@ class HashStashProfiler:
         fig.save(figfn)
         return fig
         
+    @classmethod
     def plot_serializers(cls,filename=None,**opts):
         import plotnine as p9
         import pandas as pd
@@ -826,38 +839,45 @@ def profile_stash_transaction(
     data = generate_data(size, data_type=data_type)
     # Time serialization and encoding
     out = {**common_data, "Raw Size (B)": bytesize(data)}
-    if not operations or {"Serialize", "Deserialize", "Encode", "Decode"} & set(
-        operations
-    ):
-        serialized_data, out["Serialize Time (s)"] = time_function(
-            lambda: stash.serialize(data)
-        )
-        out["Serialized Size (B)"] = bytesize(serialized_data)
+    try:
+        if not operations or {"Serialize", "Deserialize", "Encode", "Decode"} & set(
+            operations
+        ):
+            serialized_data, out["Serialize Time (s)"] = time_function(
+                lambda: stash.serialize(data)
+            )
+            out["Serialized Size (B)"] = bytesize(serialized_data)
 
-    if not operations or {"Encode", "Decode"} & set(operations):
-        encoded_data, out["Encode Time (s)"] = time_function(
-            lambda: stash.encode(serialized_data)
-        )
-        out["Encoded Size (B)"] = bytesize(encoded_data)
+        if not operations or {"Encode", "Decode"} & set(operations):
+            encoded_data, out["Encode Time (s)"] = time_function(
+                lambda: stash.encode(serialized_data)
+            )
+            out["Encoded Size (B)"] = bytesize(encoded_data)
 
-    # Time set and get operations
-    if not operations or "Set" in operations:
-        _, out["Set Time (s)"] = time_function(lambda: stash.set(key, data))
+        # Time set and get operations
+        if not operations or "Set" in operations:
+            _, out["Set Time (s)"] = time_function(lambda: stash.set(key, data))
 
-    if not operations or "Get" in operations:
-        _, out["Get Time (s)"] = time_function(lambda: stash.get(key))
+        if not operations or "Get" in operations:
+            _, out["Get Time (s)"] = time_function(lambda: stash.get(key))
 
-    # Time decoding and deserialization
-    if not operations or "Decode" in operations:
-        _, out["Decode Time (s)"] = time_function(lambda: stash.decode(encoded_data))
+        # Time decoding and deserialization
+        if not operations or "Decode" in operations:
+            _, out["Decode Time (s)"] = time_function(lambda: stash.decode(encoded_data))
 
-    if not operations or "Deserialize" in operations:
-        _, out["Deserialize Time (s)"] = time_function(
-            lambda: stash.deserialize(serialized_data)
-        )
+        if not operations or "Deserialize" in operations:
+            _, out["Deserialize Time (s)"] = time_function(
+                lambda: stash.deserialize(serialized_data)
+            )
 
-    if not operations or "Size" in operations:
-        out["Filesize (B)"] = stash.filesize
+        if not operations or "Size" in operations:
+            out["Filesize (B)"] = stash.filesize
+    except Exception as e:
+        # a data-only serializer (msgpack/cbor2) can't encode some data types
+        # (DataFrames, sets, ...). Skip that combination instead of crashing the
+        # whole profiling run; profile() drops None results.
+        log.debug(f"profile transaction skipped ({stash.serializer}/{data_type}): {e}")
+        return None
 
     return out
 
