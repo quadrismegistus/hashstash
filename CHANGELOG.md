@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.0.0 — 2026-07-05
+
+First stable release. Consolidates the serializer type-coverage + speed work,
+the engine hardening (jsonl O(1) index, engine-aware safe defaults, LMDB config),
+GraphStash edge-property indexing, async exception caching, the MetaDataFrame
+removal (plain-pandas return types), and an extensive pre-1.0 review round — a
+security red-team, cross-version portability, networked-engine and concurrency
+stress tests — that fixed a critical `safe=True` code-execution bypass and a set
+of concurrency and ergonomics bugs. See the sections below.
+
 Serialization, engines, profiling, and hardening. Several items change stored
 bytes or default behavior — noted **BREAKING** below (cached values are
 regenerable, so these are safe to adopt; they just change where/how data is
