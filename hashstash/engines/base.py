@@ -727,13 +727,24 @@ class BaseHashStash(MutableMapping):
         """Cross-process lock scoped to one key, for single-flight computes.
 
         Locks are striped: the key hashes to one of SINGLE_FLIGHT_STRIPES file
-        locks next to the stash, so lock files stay bounded. Two different keys
-        occasionally share a stripe and serialize their computes — harmless.
-        Reentrant within a thread; spans processes on one machine (a file lock
-        cannot span hosts, so multi-host redis/mongo callers may still race)."""
+        locks, so lock files stay bounded. Two different keys occasionally share
+        a stripe and serialize their computes — harmless. Reentrant within a
+        thread; spans processes on one machine (a file lock cannot span hosts, so
+        multi-host redis/mongo callers may still race).
+
+        The lock file is always LOCAL, derived from a hash of self.path under the
+        temp dir — self.path can be a remote URL (s3://..., memory://...) for the
+        fsspec engine, and building the lock at that path materialized a bogus
+        `./s3:/...` lock tree in the working directory. Two processes on one
+        machine hash to the same path, so cross-process single-flight still
+        works."""
+        import tempfile
         encoded_key = self.encode_key(unencoded_key)
         stripe = int(encode_hash(encoded_key), 16) % SINGLE_FLIGHT_STRIPES
-        return get_lock(f"{self.path}.sf{stripe}")
+        lock_base = os.path.join(
+            tempfile.gettempdir(), "hashstash-locks", encode_hash(str(self.path))
+        )
+        return get_lock(f"{lock_base}.sf{stripe}")
 
     @log.debug
     def get(
@@ -1032,6 +1043,13 @@ class BaseHashStash(MutableMapping):
     ):
         pmap = None
         self.attach_func(func)
+        if stash_map and getattr(self, "safe", False):
+            # a stored StashMap embeds the mapped function, which safe-mode
+            # deserialize refuses — so caching the whole map on a safe stash
+            # (redis/mongo default) makes it unreadable: a repeat map(), or even
+            # keys()/items(), would raise SafeDeserializationError. Skip the
+            # map-level cache under safe mode; per-item results still cache.
+            stash_map = False
         # common_kwargs are merged into every call's options, so they must be part
         # of the map's identity or maps differing only in kwargs return stale results
         key = StashMap.get_stash_key(
