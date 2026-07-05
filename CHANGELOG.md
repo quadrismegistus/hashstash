@@ -21,6 +21,30 @@ stored, not its correctness).
   `tests/test_safe_mode_bypass.py`. If you rely on `safe=True` for untrusted
   caches, upgrade.
 
+### Concurrency (pre-1.0 stress review)
+- **pairtree same-key concurrent writes no longer lose the value.** Two writers
+  each pruned "all versions except the one I wrote", deleting each other's file
+  and leaving the key valueless (12–25% of same-key races) with `len` disagreeing
+  with `has`. Prune now keeps the newest version file (which all writers agree
+  on), so a value always survives.
+- **pairtree concurrent read+write no longer raises.** A version file pruned
+  between the exists-check and the read now reads as a clean miss instead of a
+  `TypeError`/`FileNotFoundError`.
+- **lmdb no longer loses writes when another process grows the map.**
+  `MapResizedError` is now handled with `set_mapsize(0)`+retry (adopt the grown
+  map) instead of reopening at the stale size and dropping the write.
+- **append-mode is now atomic under concurrency on the KV engines.** The
+  read-modify-write of an append was unlocked on `needs_lock=False` engines
+  (lmdb/redis/mongo/diskcache/duckdb/leveldb/fsspec/memory), so concurrent
+  appends lost versions (lmdb kept ~330/2400); it now holds a per-key lock (one
+  machine; multi-host redis/mongo appends can still race and are documented).
+- **`stash.map` no longer re-runs a hard-crashed item in the parent.** A worker
+  segfault/OOM mid-item surfaces a clear error instead of recomputing in-process
+  (which double-ran side effects and could take the parent down). Submit-time
+  pool failures, where the item never ran, still degrade to in-process compute.
+- `DEFAULT_APPEND_MODE` is now `False`, matching the actual default (the constant
+  said `True` but the `__init__` default shadowed it).
+
 ### Reliability & ergonomics (pre-1.0 review)
 Driven by real production feedback + fresh-user review passes.
 - **BREAKING (quieter): logging is now WARNING-level on stderr, not INFO on

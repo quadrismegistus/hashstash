@@ -21,7 +21,10 @@ DEFAULT_DATAFRAME_IO_ENGINE = 'csv'
 OPTIMAL_DATAFRAME_DF_ENGINE = 'pandas'
 DEFAULT_DATAFRAME_DF_ENGINE = 'pandas'
 
-DEFAULT_APPEND_MODE = True
+# Latest-only by default (prune old versions). append_mode=True keeps every
+# version as history (unbounded until compact()); opt into it explicitly. The
+# __init__ default already resolved to False — this makes the constant honest.
+DEFAULT_APPEND_MODE = False
 
 RAW_NO_COMPRESS= 'raw'
 

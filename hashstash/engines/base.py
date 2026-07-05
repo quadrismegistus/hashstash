@@ -803,18 +803,32 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def set(self, unencoded_key: Any, unencoded_value: Any, append=None) -> None:
-        # hold the lock across the whole read-modify-write: append mode reads the
-        # old envelope and writes it back, and an unlocked gap loses concurrent appends
-        with self:
-            encoded_key = self.encode_key(unencoded_key)
-            new_unencoded_value = self.new_unencoded_value(
-                unencoded_value,
-                unencoded_key=unencoded_key,
-                append=append,
-            )
+        # Append is a read-modify-write: it reads the old envelope, appends, and
+        # writes it back. `with self:` locks that RMW for needs_lock=True engines
+        # (sqlite/pairtree/shelve). The needs_lock=False KV engines (lmdb, redis,
+        # mongo, diskcache, duckdb, leveldb, fsspec, memory) rely on their own
+        # per-op locking, which does NOT span the two ops of an RMW — so an
+        # unlocked concurrent append lost versions. Hold a per-key cross-process
+        # lock around the RMW for append on those engines. (A file lock only
+        # coordinates one machine; multi-host redis/mongo appends can still race.)
+        is_append = append if append is not None else self.append_mode
+        rmw_lock = self.key_lock(unencoded_key) if (is_append and not self.needs_lock) else None
+        if rmw_lock is not None:
+            rmw_lock.acquire()
+        try:
+            with self:
+                encoded_key = self.encode_key(unencoded_key)
+                new_unencoded_value = self.new_unencoded_value(
+                    unencoded_value,
+                    unencoded_key=unencoded_key,
+                    append=append,
+                )
 
-            encoded_value = self.encode_value(new_unencoded_value)
-            self._set(encoded_key, encoded_value)
+                encoded_value = self.encode_value(new_unencoded_value)
+                self._set(encoded_key, encoded_value)
+        finally:
+            if rmw_lock is not None:
+                rmw_lock.release()
         self._stats["sets"] += 1
         if self.max_entries is not None:
             self._enforce_max_entries()

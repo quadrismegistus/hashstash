@@ -705,14 +705,23 @@ class StashMapRun:
                 try:
                     self._result = future_or_result.result()
                 except BrokenExecutor:
-                    # the pool broke (e.g. an unguarded __main__ that only fails
-                    # once a worker starts): recompute this item in-process rather
-                    # than surface a cryptic BrokenProcessPool to the caller
-                    self._pmap_instance._warn_spawn_fallback()
-                    try:
-                        self._result = _run_item(self._item_dict())
-                    except Exception as e:
-                        self._error = e
+                    # the pool broke while THIS item was already submitted/running
+                    # — a worker HARD-crashed (segfault/OOM/os._exit). Do NOT
+                    # recompute in the parent: the item may have partially run
+                    # (double side effects), and a deterministic crash on this
+                    # input would take the parent down too. Surface a clear error
+                    # for the item instead. (Submit-time BrokenExecutor, where the
+                    # item never ran, still degrades to in-process compute in
+                    # _start_processing/_start_preloading.)
+                    if self._pmap_instance.num_proc > 1:
+                        taint_global_executor(self._pmap_instance.num_proc)
+                    self._error = RuntimeError(
+                        "stash.map: a worker process crashed while computing this "
+                        "item (segfault/OOM, or an unguarded num_proc>1 map in a "
+                        "script). It was NOT recomputed in the parent, to avoid "
+                        "double side effects. Guard a module-level map() with "
+                        "if __name__=='__main__', or use num_proc=1."
+                    )
                 except Exception as e:
                     # raising here would be swallowed by add_done_callback:
                     # remember the failure and re-raise when .result is read

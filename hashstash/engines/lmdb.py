@@ -75,6 +75,10 @@ class LMDBHashStash(BaseHashStash):
                 with self.get_db().begin(write=write) as txn:
                     yield txn
                 break
+            except lmdb.MapResizedError:
+                # another process grew the shared map; adopt the new size + retry
+                self._adopt_mapsize()
+                continue
             except lmdb.Error as e:
                 log.debug(f"LMDB transaction error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
@@ -102,6 +106,21 @@ class LMDBHashStash(BaseHashStash):
         self.get_db().set_mapsize(self.map_size)
         log.debug(f"grew LMDB map_size to {self.map_size} bytes for {self.path}")
 
+    def _adopt_mapsize(self):
+        """Adopt the current on-disk map size after ANOTHER process grew it.
+
+        LMDB raises MapResizedError (MDB_MAP_RESIZED) on begin() when the shared
+        file's map grew beyond this env's view. set_mapsize(0) tells LMDB to read
+        the current size from the file; we must NOT _drop_env() and reopen at our
+        stale self.map_size (which can't map the grown file — that silently lost
+        writes under concurrent growth)."""
+        env = self.get_db()
+        env.set_mapsize(0)  # 0 => adopt the size currently on disk
+        try:
+            self.map_size = env.info()["map_size"]
+        except Exception:
+            pass
+
     def _write(self, fn):
         """Run fn(txn) inside a write transaction, growing the map on MapFullError.
 
@@ -122,6 +141,11 @@ class LMDBHashStash(BaseHashStash):
                 # subclass of lmdb.Error, so this must come first. Don't drop the
                 # env: grow it in place and retry the operation.
                 self._grow_map()  # raises if the cap is hit
+            except lmdb.MapResizedError:
+                # another process grew the shared map; adopt the new size and
+                # retry (must precede the generic lmdb.Error branch, whose
+                # drop-and-reopen-at-stale-size lost the write).
+                self._adopt_mapsize()
             except lmdb.Error as e:
                 attempt += 1
                 log.debug(f"LMDB write error (attempt {attempt}/{max_retries}): {e}")
