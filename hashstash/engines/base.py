@@ -365,9 +365,13 @@ class BaseHashStash(MutableMapping):
         ttl: Union[int, float, timedelta] = None,
         safe: bool = None,
         max_entries: int = None,
+        legacy_read: bool = False,
         _root_is_dir: bool = None,
         **kwargs,
     ) -> None:
+        # read caches whose keys were stored under an older encoding: on a get()
+        # miss, fall back to a decode-and-match scan (see _legacy_find). Read-only
+        self.legacy_read = legacy_read
         config = Config()
         # self.name = name if name is not None else self.name
 
@@ -766,6 +770,19 @@ class BaseHashStash(MutableMapping):
             **kwargs,
         )
         found = values is not None and (not isinstance(values, list) or bool(values))
+        if (
+            not found
+            and self.legacy_read
+            and unencoded_key is not None
+            and not with_metadata
+            and as_dataframe is None
+        ):
+            # the key may have been stored under an older encoding: find it by
+            # decode-and-match and read its value (read-only, no rewrite)
+            legacy = self._legacy_find(unencoded_key)
+            if legacy is not _MISSING:
+                self._stats["hits"] += 1
+                return self.serialize(legacy, as_string=True) if as_string else legacy
         self._stats["hits" if found else "misses"] += 1
         value = values[-1] if values else default
         return self.serialize(value, as_string=True) if as_string else value
@@ -1315,6 +1332,49 @@ class BaseHashStash(MutableMapping):
             for k in db:
                 yield k, db[k]
 
+    # --- legacy-cache recovery -------------------------------------------------
+    # A cache written by an OLDER hashstash whose key encoding differs (the
+    # serialized/canonical form of a key changed across versions) still
+    # decodes its keys — keys() works and len() is right — but get()/`in`/items()
+    # silently miss, because encode_key(key) now hashes to a DIFFERENT address
+    # than where the entry was stored. These read each entry via its STORED
+    # encoded key (from _keys()), which _get() hashes to the correct address,
+    # so they never depend on encode_key(key) still matching.
+
+    def iter_recovered(self):
+        """Yield (key, value) for every stored version by reading the engine's raw
+        (encoded_key, encoded_value) pairs (self._items()) and unwrapping the value
+        envelope — the read path never calls encode_key(key), so it works on a
+        cache from any hashstash version whose keys/values this version can still
+        decode. Yields each version (oldest-first) so migrate() into an
+        append-mode dest preserves history; a plain dest keeps the latest. Streams;
+        holds nothing in memory."""
+        for enc_key, enc_val in self._items():
+            try:
+                key = self.decode_key(enc_key)
+                values, _ = _unwrap_envelope(self.decode_value(enc_val))
+            except Exception as e:
+                log.debug(f"recover: skipping an unreadable entry: {e}")
+                continue
+            for value in values:
+                yield key, value
+
+    def _legacy_find(self, unencoded_key):
+        """Read the latest value whose key was stored under an older encoding, by
+        scanning the raw entries and matching the decoded key (streaming,
+        read-only, no rewrite). O(n) per call — enabled per-stash with
+        legacy_read=True; for many reads or a large cache, migrate() once."""
+        want = serialize(unencoded_key, as_string=True, sort_keys=True)
+        for enc_key, enc_val in self._items():
+            try:
+                if serialize(self.decode_key(enc_key), as_string=True, sort_keys=True) == want:
+                    values, _ = _unwrap_envelope(self.decode_value(enc_val))
+                    if values:
+                        return values[-1]
+            except Exception:
+                continue
+        return _MISSING
+
     def _ttl_after(self, after, kwargs=None):
         """Effective 'after' floor for reads: an explicit after wins; otherwise
         the ttl floor applies unless apply_ttl=False was passed (prune() needs
@@ -1367,7 +1427,9 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def items(self, all_results=None, with_metadata=False, **kwargs):
+        n_keys = n_yield = 0
         for key in self.keys():
+            n_keys += 1
             vals = self.get_all(
                 key,
                 all_results=all_results,
@@ -1376,7 +1438,26 @@ class BaseHashStash(MutableMapping):
             )
             if vals is not None:
                 for val in vals:
+                    n_yield += 1
                     yield key, val
+        if n_keys and not n_yield and not self.legacy_read and not self.ttl:
+            # keys enumerate but NONE resolve to a value: the tell-tale sign of a
+            # cache written by an older hashstash whose key encoding differs.
+            # Warn loudly rather than silently look empty (which risks re-spending
+            # the budget that built the cache).
+            self._warn_unaddressable(n_keys)
+
+    def _warn_unaddressable(self, n):
+        if getattr(self, "_warned_unaddressable", False):
+            return
+        self._warned_unaddressable = True
+        log.warning(
+            f"{type(self).__name__}: {n} stored keys enumerate but NONE could be "
+            f"read — almost certainly a cache written by an OLDER hashstash whose "
+            f"key encoding differs. Recover it with stash.migrate(dest=...) "
+            f"(dry_run=True to count first), or open the stash with "
+            f"legacy_read=True. Fresh writes are unaffected."
+        )
 
     @log.debug
     def keys_l(self, **kwargs):
@@ -1726,14 +1807,46 @@ class BaseHashStash(MutableMapping):
             if predicate(key):
                 yield key, self[key]
 
-    def migrate(self, dest=None, **kwargs):
-        """Copy every entry from this stash into dest. If dest is None, kwargs are forwarded to
-        HashStash() to construct a new stash (e.g. engine='jsonl'). Returns the destination stash."""
-        if dest is None:
+    def migrate(self, dest=None, dry_run=False, **kwargs):
+        """Copy every entry into ``dest``, reading via the raw (encoded) entries
+        so it also RECOVERS a cache written by an older hashstash that
+        ``items()``/``get()`` now silently miss (the key encoding changed across
+        versions — keys still decode, but ``encode_key(key)`` hashes elsewhere).
+
+        dest: destination HashStash; if None, kwargs build one (e.g.
+        ``engine='jsonl'``). dry_run: count only, no writes — safe on a huge
+        stash, and lets you diff the counts against an expected total first.
+
+        Returns a report ``{'total', 'migrated', 'failed', 'dest'}`` (previously
+        returned the dest stash — it is now ``report['dest']``).
+        """
+        if not dry_run and dest is None:
             dest = HashStash(**kwargs)
-        for key, value in self.items():
-            dest[key] = value
-        return dest
+        total = migrated = failed = 0
+        for enc_key, enc_val in self._items():
+            total += 1
+            try:
+                key = self.decode_key(enc_key)
+                values, _ = _unwrap_envelope(self.decode_value(enc_val))
+            except Exception as e:
+                log.debug(f"migrate: skipping an unreadable entry: {e}")
+                failed += 1
+                continue
+            for value in values:  # each stored version (oldest-first)
+                if dry_run:
+                    migrated += 1
+                    continue
+                try:
+                    dest[key] = value
+                    migrated += 1
+                except Exception as e:
+                    log.debug(f"migrate: could not re-store an entry: {e}")
+                    failed += 1
+        log.info(
+            f"migrate(dry_run={dry_run}): {migrated} migrated, {failed} failed "
+            f"/ {total} entries"
+        )
+        return {"total": total, "migrated": migrated, "failed": failed, "dest": dest}
 
     def prune(self, older_than=None, dry_run=True):
         """Delete entries where the latest-write timestamp is older than ``older_than`` (a
