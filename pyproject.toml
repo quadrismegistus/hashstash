@@ -93,7 +93,7 @@ dev = [
   "scikit-misc",
 
   # dev tools
-  "pytest", "pytest-cov", "pytest-timeout", "hypothesis", "setuptools-scm", "ipython",
+  "pytest", "pytest-cov", "pytest-timeout", "pytest-rerunfailures", "hypothesis", "setuptools-scm", "ipython",
 ]
 all = [
   # engines
