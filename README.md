@@ -933,6 +933,25 @@ print(append_stash.assemble_df(with_metadata=True))
     1        1.725653e+09  cat     good
     2        1.725653e+09  cat      bad
 
+### Querying cached DataFrames with SQL
+
+The `dataframe` engine stores each DataFrame value as a native columnar file. With `io_engine="parquet"`, `stash.sql(...)` runs a DuckDB query across **all** cached frames in place — no deserialization — and returns a pandas DataFrame:
+
+```python
+weather = HashStash(engine="dataframe", io_engine="parquet")
+weather["NYC"] = pd.DataFrame({"city": ["NYC"]*3, "hour": [9,12,15], "temp": [22,25,23]})
+weather["LA"]  = pd.DataFrame({"city": ["LA"]*3,  "hour": [9,12,15], "temp": [30,33,31]})
+
+# SQL across everything cached, exposed as a table named `data`:
+weather.sql("SELECT city, avg(temp) AS avg_temp FROM data GROUP BY city ORDER BY avg_temp DESC")
+
+# or grab a DuckDB connection for multiple queries / joins:
+con = weather.duckdb()
+con.sql("SELECT max(temp) FROM data").fetchone()
+```
+
+DuckDB scans the parquet files directly, so the stash stays a plain key-value cache underneath. Requires `hashstash[duckdb]` + `hashstash[dataframe]`.
+
 ### Temporary Caches
 
 HashStash provides a `tmp` method for creating temporary caches that are automatically cleaned up. The temporary cache is automatically cleared and removed after the with block:

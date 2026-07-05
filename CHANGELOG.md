@@ -48,6 +48,12 @@ stored, not its correctness).
 - Value envelopes now carry an explicit format version (`_fv`) for future
   migrations.
 
+### DataFrames
+- `dataframe`-engine stashes gain `stash.sql(query)` / `stash.duckdb()`: with
+  `io_engine='parquet'`, run DuckDB SQL across all cached DataFrames in place
+  (no deserialization), returning a pandas DataFrame. The stash stays a plain
+  key-value cache underneath.
+
 ### GraphStash
 - Edge queries gained an **edge-property equality index**: `edges_where(field=value)`
   now narrows sources via a secondary index (like the existing rel index) instead

@@ -194,3 +194,42 @@ class DataFrameHashStash(PairtreeHashStash):
         )
         ld = reset_index(to_pandas(mdf)).to_dict(orient="records")
         return filter_ld(ld, no_nan=True)
+
+    def _parquet_files(self):
+        import glob
+        return sorted(
+            glob.glob(os.path.join(self.path_dirname, "**", "*.parquet"), recursive=True)
+        )
+
+    def duckdb(self, table="data"):
+        """Return a DuckDB connection with every DataFrame stored by this engine
+        exposed as a single view named `table` (default 'data'), for SQL over the
+        cache without deserializing — DuckDB scans the parquet files in place.
+
+        Requires ``io_engine='parquet'``. Use for multiple queries / joins;
+        ``sql()`` is the one-shot convenience.
+        """
+        import duckdb
+
+        if self.io_engine != "parquet":
+            raise ValueError(
+                "stash.duckdb()/sql() needs io_engine='parquet' "
+                f"(this stash uses {self.io_engine!r}); "
+                "open it with HashStash(engine='dataframe', io_engine='parquet')"
+            )
+        con = duckdb.connect()
+        files = self._parquet_files()
+        if files:
+            con.read_parquet(files).create_view(table)
+        else:
+            con.sql("SELECT NULL WHERE 0").create_view(table)  # empty view
+        return con
+
+    def sql(self, query, table="data"):
+        """Run a DuckDB SQL query over the DataFrames stored by this engine
+        (exposed as `table`, default 'data') and return a pandas DataFrame.
+        Reads the parquet files in place — no deserialization.
+
+            stash.sql("SELECT city, avg(temp) FROM data GROUP BY city")
+        """
+        return self.duckdb(table=table).sql(query).df()
