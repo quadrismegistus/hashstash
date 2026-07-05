@@ -56,9 +56,8 @@ def generate_data(
         return generate_list(min(target_size // 10, 1000))
     elif choice == "dict":
         return generate_dict(target_size)
-    elif choice == "pandas_df" or choice == "meta_df":
-        df = generate_data_dataframe(target_size)
-        return MetaDataFrame(df) if choice == "meta_df" else (df.df if isinstance(df, MetaDataFrame) else df)
+    elif choice == "pandas_df":
+        return generate_data_dataframe(target_size)
     elif choice == "mixed":
         return generate_mixed(target_size)
     else:

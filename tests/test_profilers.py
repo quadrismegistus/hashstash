@@ -17,7 +17,7 @@ def test_generate_primitive():
 
 
 @pytest.mark.parametrize("data_type", [
-    "primitive", "list", "dict",  "pandas_df",  "meta_df"
+    "primitive", "list", "dict",  "pandas_df"
 ])
 def test_generate_data(data_type):
     result = generate_data(1000, data_type=data_type)
@@ -28,13 +28,10 @@ def test_generate_data(data_type):
     elif data_type == "dict":
         assert isinstance(result, dict)
     elif data_type == "pandas_df":
-        #print(type(result))
         assert isinstance(result, pd.DataFrame)
-    elif data_type == "meta_df":
-        assert isinstance(result, MetaDataFrame)
 
 def test_generate_data_dataframe():
-    result = generate_data_dataframe(1000).df
+    result = generate_data_dataframe(1000)
     assert isinstance(result, pd.DataFrame)
     assert result.shape[0] > 0
     assert result.shape[1] > 0

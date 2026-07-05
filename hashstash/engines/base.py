@@ -1587,15 +1587,18 @@ class BaseHashStash(MutableMapping):
         df_engine="pandas",
         **kwargs,
     ):
+        import pandas as pd
+        from ..utils.dataframes import set_index
+
         ld = self.assemble_ld(
             all_results=all_results,
             with_metadata=with_metadata,
             **kwargs,
         )
         if not ld:
-            return MetaDataFrame([], df_engine=df_engine)
-        mdf = MetaDataFrame(ld, df_engine=df_engine)
-        return mdf.set_index()
+            return pd.DataFrame()
+        # key columns are '_'-prefixed; promote them to the index
+        return set_index(pd.DataFrame(ld), prefix_columns="_")
 
     @property
     def df(self):

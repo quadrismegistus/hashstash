@@ -1,225 +1,125 @@
-import pytest
-import pandas as pd
-import polars as pl
+"""hashstash.utils.dataframes — pandas-only io + index helpers.
+
+The MetaDataFrame pandas/polars wrapper was removed; the dataframe engine and
+assemble_df now return plain pandas DataFrames. A polars DataFrame given as
+input is converted to pandas (to_pandas)."""
 import tempfile
-import os
-from hashstash.utils.dataframes import *
-logger.setLevel(logging.CRITICAL+1)
+
+import pytest
+
+pd = pytest.importorskip("pandas")
+
+from hashstash.utils.dataframes import (
+    to_pandas, write_df, read_df, concat_dfs,
+    reset_index, set_index, has_index,
+)
+from hashstash.config import (
+    get_io_engine, check_io_engine, get_working_io_engines,
+    get_df_engine, check_df_engine, get_dataframe_engine,
+)
+
 
 @pytest.fixture
-def sample_data():
-    return {
-        'A': [1, 2, 3],
-        'B': ['a', 'b', 'c'],
-        'C': [4.0, 5.0, 6.0]
-    }
+def df():
+    return pd.DataFrame({"A": [1, 2, 3], "B": ["a", "b", "c"], "C": [4.0, 5.0, 6.0]})
 
-def test_metadataframe_init(sample_data):
-    mdf = MetaDataFrame(sample_data)
-    assert isinstance(mdf.df, (pd.DataFrame, pl.DataFrame))
-    assert list(mdf.columns) == ['A', 'B', 'C']
 
-def test_metadataframe_to_pandas(sample_data):
-    mdf = MetaDataFrame(sample_data, df_engine='polars')
-    pandas_df = mdf.to_pandas()
-    assert isinstance(pandas_df.df, pd.DataFrame)
-
-def test_metadataframe_to_polars(sample_data):
-    mdf = MetaDataFrame(sample_data, df_engine='pandas')
-    polars_df = mdf.to_polars()
-    assert isinstance(polars_df.df, pl.DataFrame)
-
-def test_metadataframe_filter(sample_data):
-    mdf = MetaDataFrame(sample_data)
-    filtered = mdf.filter(mdf['A'] > 1)
-    assert len(filtered) == 2
-
-def test_metadataframe_select_columns(sample_data):
-    mdf = MetaDataFrame(sample_data)
-    selected = mdf.select_columns(['A', 'B'])
-    assert list(selected.columns) == ['A', 'B']
-
-# New tests
-
-def test_metadataframe_getitem(sample_data):
-    mdf = MetaDataFrame(sample_data)
-    assert mdf['A'].tolist() == [1, 2, 3]
-    assert isinstance(mdf[['A', 'B']], MetaDataFrame)
-
-def test_metadataframe_setitem(sample_data):
-    mdf = MetaDataFrame(sample_data)
-    mdf['D'] = [7, 8, 9]
-    assert 'D' in mdf.columns
-    assert mdf['D'].tolist() == [7, 8, 9]
-
-def test_metadataframe_len(sample_data):
-    mdf = MetaDataFrame(sample_data)
-    assert len(mdf) == 3
-
-def test_metadataframe_applymap():
-    mdf = MetaDataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
-    result = mdf.applymap(lambda x: x * 2)
-    assert result['A'].tolist() == [2, 4, 6]
-    assert result['B'].tolist() == [8, 10, 12]
-
-def test_metadataframe_max(sample_data):
-    mdf = MetaDataFrame(sample_data)
-    assert mdf.max()['A'] == 3
-    assert mdf.max()['C'] == 6.0
-
-def test_metadataframe_eq(sample_data):
-    mdf1 = MetaDataFrame(sample_data)
-    mdf2 = MetaDataFrame(sample_data)
-    assert mdf1 == mdf2
-
-def test_metadataframe_merge():
-    mdf1 = MetaDataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']})
-    mdf2 = MetaDataFrame({'A': [2, 3, 4], 'C': ['x', 'y', 'z']})
-    merged = mdf1.merge(mdf2, on='A')
-    assert list(merged.columns) == ['A', 'B', 'C']
-    assert len(merged) == 2
+# -- io round-trip --
 
 @pytest.mark.parametrize("io_engine", ["csv", "parquet", "json", "feather", "pickle"])
-def test_metadataframe_write_read(sample_data, io_engine):
-    mdf = MetaDataFrame(sample_data)
-    with tempfile.NamedTemporaryFile(suffix=f".{io_engine}") as tmp:
-        mdf.write(tmp.name, io_engine=io_engine, compression=RAW_NO_COMPRESS)
-        read_mdf = MetaDataFrame.read(tmp.name, io_engine=io_engine, compression=RAW_NO_COMPRESS)
-        assert list(read_mdf.columns) == list(mdf.columns)
-        assert read_mdf.shape == mdf.shape
+def test_write_read_df_roundtrip(df, io_engine, tmp_path):
+    path = str(tmp_path / f"t.{io_engine}")
+    write_df(df, path, io_engine=io_engine, compression=None)
+    got = read_df(path, io_engine=io_engine, compression=None)
+    assert list(got.columns) == list(df.columns)
+    assert got.shape == df.shape
 
-def test_set_index_with_prefix():
-    df = pd.DataFrame({'_A': [1, 2, 3], 'B': ['a', 'b', 'c']})
-    indexed_df = set_index(df, prefix_columns='_', reset_prefix=True)
-    assert has_index(indexed_df) == True
-    assert indexed_df.index.name == 'A'
+
+@pytest.mark.parametrize("io_engine", ["feather", "parquet"])
+def test_native_io_preserves_nullable_dtypes(io_engine, tmp_path):
+    df = pd.DataFrame({"a": pd.array([1, 2, None], dtype="Int64"), "b": ["x", "y", "z"]})
+    path = str(tmp_path / f"t.{io_engine}")
+    write_df(df, path, io_engine=io_engine)
+    got = read_df(path, io_engine=io_engine)
+    assert str(got["a"].dtype) == "Int64"
+
+
+def test_write_invalid_engine(df, tmp_path):
+    with pytest.raises(ValueError):
+        write_df(df, str(tmp_path / "t.x"), io_engine="invalid_engine")
+
+
+# -- polars input is converted to pandas --
+
+def test_to_pandas_converts_polars():
+    pl = pytest.importorskip("polars")
+    got = to_pandas(pl.DataFrame({"A": [1, 2, 3]}))
+    assert isinstance(got, pd.DataFrame)
+    assert got["A"].tolist() == [1, 2, 3]
+
+
+def test_to_pandas_passthrough(df):
+    assert to_pandas(df) is df
+
+
+# -- concat --
+
+def test_concat_dfs():
+    a = pd.DataFrame({"A": [1, 2], "B": ["a", "b"]})
+    b = pd.DataFrame({"A": [3, 4], "B": ["c", "d"]})
+    got = concat_dfs([a, b])
+    assert len(got) == 4
+    assert list(got.columns) == ["A", "B"]
+
+
+# -- index helpers --
 
 def test_reset_index_with_prefix():
-    df = pd.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']}).set_index('A')
-    reset_df = reset_index(df, prefix_columns='_')
-    assert '_A' in reset_df.columns
-    assert has_index(reset_df) == False
+    df = pd.DataFrame({"A": [1, 2, 3], "B": ["a", "b", "c"]}).set_index("A")
+    got = reset_index(df, prefix_columns="_")
+    assert "_A" in got.columns
+    assert has_index(got) is False
 
-# Add more tests as needed for other functions and edge cases
 
-def test_metadataframe_to_dict(sample_data):
-    mdf = MetaDataFrame(sample_data)
-    result = mdf.to_dict()
-    assert isinstance(result, dict)
-    assert 'data' in result
-    assert 'df_engine' in result
+def test_set_index_columns():
+    got = set_index(pd.DataFrame({"A": [1, 2, 3], "B": ["a", "b"] + ["c"]}), index_columns=["A"])
+    assert has_index(got) is True
+    assert got.index.name == "A"
 
-@pytest.mark.parametrize("file_format", ["csv", "parquet", "json", "feather"])
-def test_metadataframe_write_methods(sample_data, file_format, tmp_path):
-    mdf = MetaDataFrame(sample_data)
-    file_path = tmp_path / f"test.{file_format}"
-    
-    if file_format == "csv":
-        mdf.to_csv(file_path)
-    elif file_format == "parquet":
-        mdf.to_parquet(file_path)
-    elif file_format == "json":
-        mdf.to_json(file_path)
-    elif file_format == "feather":
-        mdf.to_feather(file_path)
-    
-    assert file_path.exists()
 
-def test_metadataframe_concat():
-    mdf1 = MetaDataFrame({'A': [1, 2], 'B': ['a', 'b']})
-    mdf2 = MetaDataFrame({'A': [3, 4], 'B': ['c', 'd']})
-    result = mdf1.concat(mdf2)
-    assert len(result) == 4
-    assert list(result.columns) == ['A', 'B']
+def test_set_index_with_prefix():
+    got = set_index(pd.DataFrame({"_A": [1, 2, 3], "B": ["a", "b", "c"]}),
+                    prefix_columns="_", reset_prefix=True)
+    assert has_index(got) is True
+    assert got.index.name == "A"
 
-def test_metadataframe_assign():
-    mdf = MetaDataFrame({'A': [1, 2, 3]})
-    result = mdf.assign(B=lambda x: x['A'] * 2, C=10)
-    assert list(result.columns) == ['A', 'B', 'C']
-    assert result['B'].tolist() == [2, 4, 6]
-    assert result['C'].tolist() == [10, 10, 10]
 
-def test_get_working_io_engines():
-    engines = get_working_io_engines()
-    assert isinstance(engines, set)
-    assert 'csv' in engines
-    assert 'json' in engines
-
-def test_get_io_engine():
-    assert get_io_engine('csv') == 'csv'
-    with pytest.raises(ValueError):
-        get_io_engine('invalid_engine')
-
-def test_check_io_engine():
-    assert check_io_engine('csv') == True
-    assert check_io_engine('invalid_engine') == False
-
-def test_get_working_df_engines():
-    engines = get_working_df_engines()
-    assert isinstance(engines, set)
-    assert 'pandas' in engines
-    assert 'polars' in engines
-
-def test_check_df_engine():
-    assert check_df_engine('pandas') == True
-    assert check_df_engine('polars') == True
-    assert check_df_engine('invalid_engine') == False
-
-def test_get_df_engine():
-    assert get_df_engine('pandas') == 'pandas'
-    with pytest.raises(ValueError):
-        get_df_engine('invalid_engine')
-
-def test_get_dataframe_engine():
-    pd_df = pd.DataFrame({'A': [1, 2, 3]})
-    pl_df = pl.DataFrame({'A': [1, 2, 3]})
-    mdf = MetaDataFrame({'A': [1, 2, 3]})
-    
-    assert get_dataframe_engine(pd_df) == 'pandas'
-    assert get_dataframe_engine(pl_df) == 'polars'
-    assert get_dataframe_engine(mdf) == mdf.df_engine
-    assert get_dataframe_engine([1, 2, 3]) is None
-
-def test_reset_index():
-    df = pd.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']}).set_index('A')
-    result = reset_index(df, prefix_columns='_')
-    assert '_A' in result.columns
-    assert has_index(result) == False
-
-def test_set_index():
-    df = pd.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']})
-    result = set_index(df, index_columns=['A'])
-    assert has_index(result) == True
-    assert result.index.name == 'A'
-
-    df = pd.DataFrame({'_A': [1, 2, 3], 'B': ['a', 'b', 'c']})
-    result = set_index(df, prefix_columns='_', reset_prefix=True)
-    assert has_index(result) == True
-    assert result.index.name == 'A'
-
-def test_has_index():
-    pd_df = pd.DataFrame({'A': [1, 2, 3]}).set_index('A')
-    pl_df = pl.DataFrame({'A': [1, 2, 3]})
-    
-    assert has_index(pd_df) == True
-    assert has_index(pl_df) == False
+def test_has_index_errors_on_non_df():
     with pytest.raises(ValueError):
         has_index([1, 2, 3])
 
-    with pytest.raises(ValueError):
-        has_index("invalid_df")
 
-# Add more tests for edge cases and error handling
-def test_metadataframe_invalid_engine():
-    with pytest.raises(ValueError):
-        MetaDataFrame({'A': [1, 2, 3]}, df_engine='invalid_engine')
+# -- engine detection (polars still detected as input) --
 
-def test_metadataframe_read_invalid_engine():
-    with pytest.raises(ValueError):
-        MetaDataFrame.read('test.csv', io_engine='invalid_engine')
+def test_get_dataframe_engine(df):
+    assert get_dataframe_engine(df) == "pandas"
+    assert get_dataframe_engine([1, 2, 3]) is None
+    pl = pytest.importorskip("polars")
+    assert get_dataframe_engine(pl.DataFrame({"A": [1]})) == "polars"
 
-def test_metadataframe_write_invalid_engine(sample_data, tmp_path):
-    mdf = MetaDataFrame(sample_data)
-    file_path = tmp_path / "test.invalid"
+
+def test_io_engine_helpers():
+    engines = get_working_io_engines()
+    assert isinstance(engines, set) and "csv" in engines
+    assert get_io_engine("csv") == "csv"
     with pytest.raises(ValueError):
-        mdf.write(file_path, io_engine='invalid_engine')
+        get_io_engine("invalid_engine")
+    assert check_io_engine("csv") is True
+    assert check_io_engine("invalid_engine") is False
+
+
+def test_df_engine_helpers():
+    assert check_df_engine("pandas") is True
+    assert get_df_engine("pandas") == "pandas"
+    with pytest.raises(ValueError):
+        get_df_engine("invalid_engine")

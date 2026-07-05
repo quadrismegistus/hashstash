@@ -31,6 +31,12 @@ stored, not its correctness).
   ~33% size + CPU overhead; text-only engines (jsonl/redis/mongo/shelve) still
   force it on. Because `b64` is part of the on-disk path, existing caches sit at
   their old path after upgrade (not found, not corrupted).
+- **BREAKING** — dropped the pandas/polars `MetaDataFrame` wrapper. The
+  `dataframe` engine and `assemble_df()` now return **plain pandas DataFrames**
+  instead of a wrapper object; a polars DataFrame passed as a value is converted
+  to pandas on store. This removes ~600 lines (the `__getattr__` re-wrapping and
+  serialize-to-compare `__eq__`) and makes the return type predictable. Polars is
+  no longer a first-class backend (it was opt-in and untested through a stash).
 - **dataframe engine** now preserves dtypes. It was blanket-`str()`-ing every
   cell before a feather/parquet write and re-inferring types on read, which
   silently dropped nullable `Int64`/`boolean`, datetime, and categorical dtypes.

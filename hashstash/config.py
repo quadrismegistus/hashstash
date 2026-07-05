@@ -297,12 +297,9 @@ def get_df_engine(df_engine=None):
 
 def get_dataframe_engine(df):
     from .utils.misc import is_dataframe
-    from .utils.dataframes import MetaDataFrame
     from .utils.addrs import get_obj_addr
     if not is_dataframe(df):
         return
-    if isinstance(df, MetaDataFrame):
-        return df.df_engine
     return get_obj_addr(df).split(".")[0]
 
 

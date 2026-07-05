@@ -8,7 +8,7 @@ import os
 from . import *
 from .pairtree import PairtreeHashStash
 from .base import _filter_by_time
-from ..utils.dataframes import MetaDataFrame
+from ..utils.dataframes import to_pandas, write_df, read_df, concat_dfs, set_index, reset_index
 
 class DataFrameHashStash(PairtreeHashStash):
     engine = "dataframe"
@@ -30,16 +30,16 @@ class DataFrameHashStash(PairtreeHashStash):
             log.debug(f"Input is not a DataFrame")
             return super().set(unencoded_key, unencoded_value, append=append)
 
-        # Handle DataFrame values
-        mdf = MetaDataFrame(unencoded_value)
-        log.debug(f"Input is a {mdf.df_engine} DataFrame with shape: {mdf.shape}")
+        # Handle DataFrame values (converted to pandas; polars input is welcome)
+        df = to_pandas(unencoded_value)
+        log.debug(f"Input is a DataFrame with shape: {df.shape}")
 
         encoded_key = self.encode_key(unencoded_key)
         self._set_key(encoded_key)
         # the io-engine extension marks this version file as a dataframe; plain
         # pairtree versions end in '.<pid>' and are routed to the base decoder
         filepath_value = f"{self._get_path_new_value(encoded_key)}.{self.io_engine}"
-        mdf.write(filepath_value, io_engine=self.io_engine, compression=self.compress)
+        write_df(df, filepath_value, io_engine=self.io_engine, compression=self.compress)
         if not (append or self.append_mode):
             # honor overwrite semantics like pairtree: without this, every set()
             # accumulated another version file forever
@@ -87,10 +87,8 @@ class DataFrameHashStash(PairtreeHashStash):
                 else:
                     obj = decoded_value
                 if as_dataframe and not as_list:
-                    obj = MetaDataFrame(
-                        flatten_ld([obj]),
-                        df_engine=self.df_engine,
-                    )
+                    import pandas as pd
+                    obj = pd.DataFrame(flatten_ld([obj]))
 
                 out_l.append(obj)
 
@@ -98,7 +96,7 @@ class DataFrameHashStash(PairtreeHashStash):
             return default
 
         if as_dataframe and not as_list:
-            return out_l[0].concat(*out_l[1:]) if len(out_l) > 1 else out_l[0]
+            return concat_dfs(out_l) if len(out_l) > 1 else out_l[0]
         else:
             return out_l
 
@@ -140,12 +138,7 @@ class DataFrameHashStash(PairtreeHashStash):
         # here silently masked corrupted entries.
         ext = os.path.splitext(filepath)[1].lstrip(".").lower()
         if ext in get_working_io_engines():
-            return MetaDataFrame.read(
-                filepath,
-                io_engine=ext,
-                df_engine=self.df_engine,
-                compression=self.compress,
-            )
+            return read_df(filepath, io_engine=ext, compression=self.compress)
         return super().decode_value_from_filepath(filepath)
 
     @log.debug
@@ -183,9 +176,10 @@ class DataFrameHashStash(PairtreeHashStash):
                 df.assign(**{k:serialize(v) for k,v in flatten_args_kwargs(key).items()})
             )
         if not dfs:
-            return MetaDataFrame([], self.df_engine)
-        combined_df = dfs[0].concat(*dfs[1:])
-        return combined_df.set_index()
+            import pandas as pd
+            return pd.DataFrame()
+        combined_df = concat_dfs(dfs)
+        return set_index(combined_df, prefix_columns=self.prefix_index_cols)
 
     def assemble_ld(
         self,
@@ -198,5 +192,5 @@ class DataFrameHashStash(PairtreeHashStash):
             with_metadata=with_metadata,
             **kwargs,
         )
-        ld = mdf.reset_index().to_pandas().df.to_dict(orient="records")
+        ld = reset_index(to_pandas(mdf)).to_dict(orient="records")
         return filter_ld(ld, no_nan=True)
