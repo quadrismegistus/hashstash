@@ -1196,7 +1196,13 @@ class BaseHashStash(MutableMapping):
             # storage-level existence isn't enough: an expired entry must read
             # as absent everywhere, or get_set/run would trust a dead key
             return self.get(unencoded_key, default=_MISSING) is not _MISSING
-        return self._has(self.encode_key(unencoded_key))
+        if self._has(self.encode_key(unencoded_key)):
+            return True
+        if self.legacy_read:
+            # the hot path is `if key in stash: stash[key]` — legacy_read must
+            # cover membership too, or old-format entries still read as absent
+            return self._legacy_find(unencoded_key) is not _MISSING
+        return False
 
     @log.debug
     def encode_key(self, unencoded_key: Any) -> Union[str, bytes]:
@@ -1341,15 +1347,23 @@ class BaseHashStash(MutableMapping):
     # encoded key (from _keys()), which _get() hashes to the correct address,
     # so they never depend on encode_key(key) still matching.
 
+    def _raw_items(self):
+        """Raw (encoded_key, encoded_value) pairs including ALL stored versions.
+        Engines whose _items() takes all_results (pairtree) default to latest-only,
+        which silently dropped history during recovery — ask for everything."""
+        try:
+            return self._items(all_results=True)
+        except TypeError:
+            return self._items()
+
     def iter_recovered(self):
         """Yield (key, value) for every stored version by reading the engine's raw
-        (encoded_key, encoded_value) pairs (self._items()) and unwrapping the value
-        envelope — the read path never calls encode_key(key), so it works on a
-        cache from any hashstash version whose keys/values this version can still
-        decode. Yields each version (oldest-first) so migrate() into an
-        append-mode dest preserves history; a plain dest keeps the latest. Streams;
-        holds nothing in memory."""
-        for enc_key, enc_val in self._items():
+        (encoded_key, encoded_value) pairs and unwrapping the value envelope — the
+        read path never calls encode_key(key), so it works on a cache from any
+        hashstash version whose keys/values this version can still decode. Yields
+        every version (oldest-first); migrate() re-appends them so history
+        survives. Streams; holds nothing in memory."""
+        for enc_key, enc_val in self._raw_items():
             try:
                 key = self.decode_key(enc_key)
                 values, _ = _unwrap_envelope(self.decode_value(enc_val))
@@ -1358,6 +1372,18 @@ class BaseHashStash(MutableMapping):
                 continue
             for value in values:
                 yield key, value
+
+    def _legacy_items(self, all_results=None):
+        """items() under legacy_read: every version (oldest-first) when
+        all_results, else the latest per key."""
+        if self._all_results(all_results):
+            yield from self.iter_recovered()
+            return
+        latest = {}  # canonical-key -> (key, value); iter_recovered is oldest-first
+        for key, value in self.iter_recovered():
+            latest[serialize(key, as_string=True, sort_keys=True)] = (key, value)
+        for key, value in latest.values():
+            yield key, value
 
     def _legacy_find(self, unencoded_key):
         """Read the latest value whose key was stored under an older encoding, by
@@ -1427,6 +1453,11 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def items(self, all_results=None, with_metadata=False, **kwargs):
+        if self.legacy_read and not with_metadata:
+            # read old-format entries the normal path can't address; reads raw, so
+            # it also covers any new-format entries (no double-yield)
+            yield from self._legacy_items(all_results=all_results)
+            return
         n_keys = n_yield = 0
         for key in self.keys():
             n_keys += 1
@@ -1823,7 +1854,7 @@ class BaseHashStash(MutableMapping):
         if not dry_run and dest is None:
             dest = HashStash(**kwargs)
         total = migrated = failed = 0
-        for enc_key, enc_val in self._items():
+        for enc_key, enc_val in self._raw_items():
             total += 1
             try:
                 key = self.decode_key(enc_key)
@@ -1837,16 +1868,48 @@ class BaseHashStash(MutableMapping):
                     migrated += 1
                     continue
                 try:
-                    dest[key] = value
+                    # append so multi-version (append-mode) source history survives
+                    # regardless of dest's append_mode; a single-version key just
+                    # lands once, so a plain latest-only cache migrates unchanged.
+                    dest.set(key, value, append=True)
                     migrated += 1
                 except Exception as e:
                     log.debug(f"migrate: could not re-store an entry: {e}")
                     failed += 1
+        if not total:
+            self._warn_empty_migrate()
         log.info(
             f"migrate(dry_run={dry_run}): {migrated} migrated, {failed} failed "
             f"/ {total} entries"
         )
         return {"total": total, "migrated": migrated, "failed": failed, "dest": dest}
+
+    def _warn_empty_migrate(self):
+        """Nothing to migrate — but if a SIBLING layout dir (same parent, different
+        engine/serializer/encoding suffix) holds data, the stash was almost
+        certainly opened with the wrong kwargs (e.g. b64 omitted): the layout is
+        encoded in the dirname, so this path resolves empty while the data sits
+        one dir over. Point the user at it instead of silently reporting 0."""
+        try:
+            here = str(self.path)
+            parent = os.path.dirname(os.path.dirname(here))  # .../<layout>/data.db
+            layout_dir = os.path.dirname(here)
+            if not os.path.isdir(parent):
+                return
+            siblings = [
+                d for d in os.listdir(parent)
+                if os.path.join(parent, d) != layout_dir
+                and os.path.isdir(os.path.join(parent, d))
+            ]
+            if siblings:
+                log.warning(
+                    f"migrate found 0 entries at {layout_dir}, but sibling layout "
+                    f"dir(s) exist: {siblings}. The engine/serializer/encoding "
+                    f"(e.g. b64) is part of the path — reopen the source with the "
+                    f"kwargs matching the intended layout dir, then migrate."
+                )
+        except Exception:
+            pass
 
     def prune(self, older_than=None, dry_run=True):
         """Delete entries where the latest-write timestamp is older than ``older_than`` (a

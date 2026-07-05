@@ -16,11 +16,16 @@ real pre-1.0 caches.
     entries (so it recovers a drifted cache, which the old `items()`-based migrate
     could not), returns a `{'total','migrated','failed','dest'}` report to diff
     against expected counts, and `dry_run=True` counts without writing (safe on a
-    huge stash). *(Return type changed from the dest stash to the report dict —
+    huge stash). It re-appends every stored version, so an append-mode source's
+    **edit history is preserved** (into an append-mode dest). If it finds nothing
+    but a sibling layout dir has data, it warns that the source was opened with the
+    wrong `b64`/`compress`/engine kwargs (the layout is encoded in the path).
+    *(Return type changed from the dest stash to the report dict —
     `report['dest']` holds the destination.)*
-  - **`legacy_read=True`** on a stash falls back, on a `get()` miss, to a
-    decode-and-match read of the old-format entry. Read-only — it never rewrites,
-    so a large stash is never churned.
+  - **`legacy_read=True`** on a stash falls back to a decode-and-match read of the
+    old-format entry — covering `get()`, `key in stash`, and `items()` (so the
+    common `if key in stash: stash[key]` hot path works). Read-only — it never
+    rewrites, so a large stash is never churned.
   - **`stash.iter_recovered()`** streams `(key, value)` for every stored version.
   - **Loud warning:** `items()` now warns when keys enumerate but nothing resolves
     (the drift signature) instead of silently looking empty.

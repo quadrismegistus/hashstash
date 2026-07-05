@@ -69,6 +69,54 @@ def test_legacy_read_flag_reads_through_drift(engine):
     assert s2.get({"model": "gpt", "idx": 999}, "MISS") == "MISS"  # genuine miss
 
 
+@pytest.mark.parametrize("engine", ENGINES)
+def test_legacy_read_covers_contains_and_items(engine):
+    # the real hot path is `if key in stash: stash[key]` — legacy_read must cover
+    # __contains__ and items(), not just __getitem__
+    s, root, orig = _drifted_stash(engine)
+    s2 = HashStash(engine=engine, root_dir=root, dbname=s.dbname, legacy_read=True)
+    s2.encode_key = lambda k: orig(k) + b"DRIFT"
+    assert {"model": "gpt", "idx": 5} in s2
+    assert {"model": "gpt", "idx": 999} not in s2
+    items = dict((tuple(sorted(k.items())), v) for k, v in s2.items())
+    assert len(items) == 15
+    assert items[(("idx", 5), ("model", "gpt"))] == {"result": 50}
+
+
+@pytest.mark.parametrize("engine", ["pairtree", "lmdb"])
+def test_migrate_preserves_append_history(engine):
+    if engine == "lmdb":
+        pytest.importorskip("lmdb")
+    root = tempfile.mkdtemp()
+    src = HashStash(engine=engine, root_dir=root, append_mode=True)
+    src.clear()
+    src[{"k": 1}] = "v1"
+    src[{"k": 1}] = "v2"  # two versions of one key
+    orig = src.encode_key
+    src.encode_key = lambda k: orig(k) + b"DRIFT"  # drift
+    dest = HashStash(engine=engine, root_dir=tempfile.mkdtemp(), append_mode=True)
+    dest.clear()
+    rep = src.migrate(dest=dest, dry_run=False)
+    # both versions migrated (total counts raw entries: pairtree=2 version files,
+    # lmdb=1 envelope holding both — so assert on migrated + the preserved history)
+    assert rep["migrated"] == 2
+    assert dest.get_all({"k": 1}, all_results=True) == ["v1", "v2"]  # history kept
+
+
+def test_migrate_warns_when_layout_kwargs_wrong(caplog):
+    # the layout (b64/compress/...) is in the dirname; opening with the wrong
+    # kwargs resolves to an empty sibling path — warn instead of silent total=0
+    root = tempfile.mkdtemp()
+    good = HashStash(engine="pairtree", root_dir=root, compress="lz4", b64=True)
+    good.clear()
+    good[{"a": 1}] = "x"
+    wrong = HashStash(engine="pairtree", root_dir=root, compress="lz4", b64=False)
+    with caplog.at_level(logging.WARNING, logger="hashstash"):
+        rep = wrong.migrate(dry_run=True)
+    assert rep["total"] == 0
+    assert any("sibling layout" in r.message for r in caplog.records)
+
+
 def test_items_warns_loudly_when_unaddressable(caplog):
     s, _root, _orig = _drifted_stash("memory")
     with caplog.at_level(logging.WARNING, logger="hashstash"):
