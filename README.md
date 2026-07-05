@@ -688,7 +688,9 @@ assert stashed_result7 == stashed_result8 == stashed_result5 == stashed_result6
 
 ### Mapping functions
 
-You can also map functions across many objects, with stashed results, with `stash.map`. By default it uses (number of CPUs - 2) processes to start computing results in the background. In the meantime it returns a `StashMap` object. **Iterating or indexing it gives you the computed values** (like the builtin `map`) — `list(stash_map)`, `for x in stash_map`, `stash_map[0]`, `stash_map[1:3]` all return results, blocking as needed. Use `.runs` for the `StashMapRun` wrapper objects (args/kwargs, per-item cache status). If a mapped function raises, the exception propagates when you read that result.
+You can also map functions across many objects, with stashed results, with `stash.map`. By default it uses (number of CPUs - 2) processes to start computing results in the background. In the meantime it returns a `StashMap` object. **Iterating or indexing it gives you the computed values** (like the builtin `map`) — `list(stash_map)`, `for x in stash_map`, `stash_map[0]`, `stash_map[1:3]` all return results, blocking as needed. Use `.runs` for the `StashMapRun` wrapper objects (`.was_cached`, args/kwargs). If a mapped function raises, the exception propagates when you read that result.
+
+> **Multiprocessing note.** `num_proc>1` uses a spawn process pool, so for real parallelism call `stash.map` from a script guarded by `if __name__ == "__main__":` (or a notebook), with the mapped function importable/defined at module level. From a bare REPL / `python -c`, an unguarded module top level, or with a function whose source can't be retrieved, `stash.map` **falls back to `num_proc=1` with a warning** rather than crashing. The `memory` engine is process-local without `ultradict`, so combine `num_proc>1` with a disk engine for the incremental cache to pay off.
 
 ```python
 def expensive_computation3(name, goodnesses=['good']):
@@ -942,15 +944,15 @@ weather = HashStash(engine="dataframe", io_engine="parquet")
 weather["NYC"] = pd.DataFrame({"city": ["NYC"]*3, "hour": [9,12,15], "temp": [22,25,23]})
 weather["LA"]  = pd.DataFrame({"city": ["LA"]*3,  "hour": [9,12,15], "temp": [30,33,31]})
 
-# SQL across everything cached, exposed as a table named `data`:
+# SQL across everything cached, unioned into one table named `data`:
 weather.sql("SELECT city, avg(temp) AS avg_temp FROM data GROUP BY city ORDER BY avg_temp DESC")
 
-# or grab a DuckDB connection for multiple queries / joins:
+# or grab a DuckDB connection for multiple queries against that table:
 con = weather.duckdb()
 con.sql("SELECT max(temp) FROM data").fetchone()
 ```
 
-DuckDB scans the parquet files directly, so the stash stays a plain key-value cache underneath. Requires `hashstash[duckdb]` + `hashstash[dataframe]`.
+All cached frames are unioned into the single `data` table, so this is for **many same-schema frames** you want to treat as one partitioned table (self-joins and aggregations work). It is not a warehouse: heterogeneous frames stored under different keys can't be joined as separate tables. DuckDB scans the parquet files directly, so the stash stays a plain key-value cache underneath. Requires `hashstash[duckdb]` + `hashstash[dataframe]`.
 
 ### Temporary Caches
 

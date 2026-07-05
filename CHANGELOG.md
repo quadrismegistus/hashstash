@@ -7,6 +7,67 @@ bytes or default behavior — noted **BREAKING** below (cached values are
 regenerable, so these are safe to adopt; they just change where/how data is
 stored, not its correctness).
 
+### Reliability & ergonomics (pre-1.0 review)
+Driven by real production feedback + fresh-user review passes.
+- **BREAKING (quieter): logging is now WARNING-level on stderr, not INFO on
+  stdout.** hashstash chatter no longer interleaves with your program's stdout
+  (you can `2>/dev/null` it), and caught/cached exceptions no longer shout —
+  one failure passing through the wrapped get/deserialize layers used to ERROR-
+  log 6×. Set `HASHSTASH_LOG=INFO` (or `logging.getLogger('hashstash')
+  .setLevel(...)`) for the play-by-play. Source lookups for REPL/notebook
+  functions are cached (no per-call spam or slow first hit).
+- **Unrecognized constructor kwargs now warn** instead of silently vanishing
+  (a `dir=`/`ttll=`/`compres=` typo used to send data to the default cache or
+  disable a setting with no signal). `name=` is accepted as an alias for
+  `dbname=`.
+- **BREAKING: `items()`/`values()` default to latest-per-key**, consistent with
+  `len()` and `stash[key]`. In `append_mode` they used to yield every version,
+  so DataFrames built from `items()` double-counted rewritten keys. Pass
+  `all_results=True` for the full history.
+- **fix(jsonl): `items()`/`values()` no longer leak TTL-expired entries** (the
+  logical read view now applies the stash's ttl like the get-path; `keys()`/
+  `len()` stay the raw maintenance view, matching memory/sqlite). Flat-mode
+  error messages now advise `flat=False` for datetime/bytes values instead of
+  the unactionable "pass b64=True".
+- `len()` documents its lazy-TTL semantics (physical count; expired entries are
+  hidden by `in`/`get`/iteration but counted until overwritten).
+- **lmdb** env registry is keyed by realpath, so two spellings of the same
+  directory share one handle (was a double-open corruption hazard).
+- New `stash.filter_keys(model="x", ...)` — convenience scan for dict keys
+  containing given field=value pairs.
+- `dir(hashstash)` is curated to the public surface (was leaking `os`/`sys`/
+  `json`/... from the internal star-imports); `from hashstash import *` is
+  unchanged.
+- **Callables no longer silently corrupt.** Closures that capture variables and
+  `functools.partial` used to serialize fine but come back as broken callables
+  that raised only at call time (`NameError` / returned the `partial` class).
+  Closures now restore their free-variable cells (incl. recursive self-refs) and
+  `partial` round-trips its func/args/keywords; a genuinely un-round-trippable
+  case (empty closure cell) fails loudly at *store* time with an actionable
+  message.
+- **~60× faster first `serialize()`/`encode_hash()` per process** (~310 ms →
+  ~5 ms): backend availability is probed lazily and cached per backend, so
+  constructing a `Config` no longer eagerly imports every optional dependency
+  (pandas/blosc/duckdb/pymongo/redis/cbor2/msgpack/…) just to serialize.
+- **`stash.map` handles spawn footguns gracefully.** With `num_proc>1`, a
+  function that can't be safely reconstructed in a worker (interactive REPL /
+  `python -c` / piped stdin, unguarded module top-level, or source-unretrievable
+  callable) now falls back to `num_proc=1` with one actionable warning instead of
+  crashing with `BrokenProcessPool` / a bootstrap `RuntimeError` / a worker
+  `KeyError`. `num_proc=1` no longer round-trips the function through
+  serialization, so REPL/exec-defined callables work serially.
+- **`StashMapRun.was_cached`** — public read-only flag for whether an item came
+  from cache (the "per-item cache status" the README described).
+- `stash.map` warns once when `num_proc>1` is combined with `engine='memory'`
+  without ultradict (worker results can't reach the process-local parent).
+- **dataframe engine (feather/parquet): stop silently stringifying object
+  columns.** list-of-primitive and dict columns now store natively via Arrow and
+  round-trip as real lists/dicts; only genuinely unserializable columns fall back
+  to `str()`, per column. `assemble_df` renders readable keys (`_key = "Animal
+  1"`) instead of bytes.
+- `__dir__`/lazy-probe/logging changes are behavior-only; stored bytes for
+  existing caches are unaffected.
+
 ### Serializer
 - **Comprehensive type coverage** — numpy scalars/`datetime64`/`timedelta64`/
   structured arrays, pandas `Timestamp`/`Timedelta`/`Period`/`NaT`/`Categorical`/
