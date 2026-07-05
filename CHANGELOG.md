@@ -7,6 +7,20 @@ bytes or default behavior — noted **BREAKING** below (cached values are
 regenerable, so these are safe to adopt; they just change where/how data is
 stored, not its correctness).
 
+### Security
+- **Fixed an arbitrary-code-execution bypass in `safe=True` mode** (found by a
+  pre-1.0 red-team). `_deserialize_custom` dispatched `CUSTOM_DESERIALIZERS[addr]`
+  — keyed by the payload's own `__py__` — before the code-type refusals, and four
+  registered addresses (`function`/`type`/`object`/`ReusableGenerator`) route to
+  `exec`/`compile` reconstruction, so a 2-key payload (`{"__py__":"function",
+  "__source__":...}`) executed code under `safe=True` / `HASHSTASH_SAFE=1` through
+  every read path (`get`/`[]`/`get_all`/`items`/`values`/`assemble_df`). The
+  dispatch now refuses those code-reconstructing deserializers in safe mode. Also
+  hardened the numpy deserializer to reject an object dtype from a byte buffer
+  (a memory-corruption primitive). Regression tests in
+  `tests/test_safe_mode_bypass.py`. If you rely on `safe=True` for untrusted
+  caches, upgrade.
+
 ### Reliability & ergonomics (pre-1.0 review)
 Driven by real production feedback + fresh-user review passes.
 - **BREAKING (quieter): logging is now WARNING-level on stderr, not INFO on

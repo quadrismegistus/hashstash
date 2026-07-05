@@ -422,9 +422,16 @@ def _deserialize_custom(data: Any) -> Any:
             return InstanceSerializer.deserialize(data)
 
         if addr and addr in CUSTOM_DESERIALIZERS:
-            # fixed, vetted dispatch table (numpy/pandas/containers): the code
-            # that runs is ours, not payload-chosen — allowed in safe mode
-            return CUSTOM_DESERIALIZERS[addr](data)
+            fn = CUSTOM_DESERIALIZERS[addr]
+            # CRITICAL: the dispatch KEY is the payload's attacker-controlled
+            # __py__, and a few registered addresses ('function'/'type'/'object'/
+            # ReusableGenerator) route to exec/compile-based reconstruction. This
+            # table branch runs BEFORE the pytype refusals below, so without this
+            # guard a payload could set __py__='function' and execute code under
+            # safe mode. Refuse the code-executing deserializers here too.
+            if _safe_mode_active() and fn in _UNSAFE_CUSTOM_DESERIALIZERS:
+                _refuse_unsafe(f"a code-reconstructing type via __py__={addr!r}")
+            return fn(data)
 
         if pytype == 'reducer':
             return ReducerSerializer.deserialize(data)
@@ -612,6 +619,15 @@ class NumpySerializer(CustomSerializer):
         dtype = _data_to_dtype(data['__data__']['dtype'])
         shape = tuple(data['__data__']['shape'])
         if 'bytes' in data['__data__']:
+            if getattr(dtype, "hasobject", False):
+                # frombuffer with an object-containing dtype would reinterpret
+                # raw bytes as Python object POINTERS — a memory-corruption
+                # primitive. Refuse it (defense in depth: numpy blocks object
+                # frombuffer today, but don't rely on that). Legit object arrays
+                # take the 'values' path below, which rebuilds from safe items.
+                raise ValueError(
+                    "refusing to deserialize a numpy array with an object dtype from a byte buffer"
+                )
             arr_bytes = decode(data['__data__']['bytes'], compress=False, b64=True)
             return np.frombuffer(arr_bytes, dtype=dtype).reshape(shape)
         else:
@@ -1466,6 +1482,18 @@ for _addr in (
 for _addr in ('pandas.core.arrays.categorical.Categorical', 'pandas.Categorical'):
     CUSTOM_SERIALIZERS[_addr] = PandasCategoricalSerializer.serialize
     CUSTOM_DESERIALIZERS[_addr] = PandasCategoricalSerializer.deserialize
+
+
+# Deserializers in CUSTOM_DESERIALIZERS that RECONSTRUCT CODE (exec/compile).
+# The dispatch is keyed by the payload's own __py__, so these must be refused in
+# safe mode even though the table is otherwise "vetted" (see the guard in
+# _deserialize_custom). Add any new exec-capable serializer here.
+_UNSAFE_CUSTOM_DESERIALIZERS = {
+    FunctionSerializer.deserialize,
+    ClassSerializer.deserialize,
+    InstanceSerializer.deserialize,
+    ReusableGeneratorSerializer.deserialize,
+}
 
 
 # numpy scalar types registered by ADDRESS STRING so that `import hashstash`
