@@ -1100,6 +1100,8 @@ g.preload()
 g.edges_where(rel="sft_of", resistance__gt=2.0)
 ```
 
+`edges_where` is index-accelerated: an exact `rel=` filter **and** edge-property **equality** filters (`field=value`) are served from secondary indexes (built lazily, maintained on add), so the query visits only sources that could match instead of scanning the whole graph. Range and other operators (`resistance__gt`, `rel__startswith`) are then applied within that narrowed set.
+
 GraphStash caches adjacency lists in memory after first read. For write-once-read-many workloads, call `preload()` after bulk loading. Two caveats:
 
 - **Incremental `add_edge` rewrites the node's whole adjacency list per call** — O(degree) I/O per insert, quadratic when building a hub node edge-by-edge. Use `add_edges_bulk`, or wrap a normal `add_edge` loop in `with g.batch():` — the batch buffers writes and persists each touched node's adjacency list once on exit, keeping the per-edge call style at bulk speed:

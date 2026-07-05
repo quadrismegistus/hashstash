@@ -42,6 +42,12 @@ stored, not its correctness).
 - Value envelopes now carry an explicit format version (`_fv`) for future
   migrations.
 
+### GraphStash
+- Edge queries gained an **edge-property equality index**: `edges_where(field=value)`
+  now narrows sources via a secondary index (like the existing rel index) instead
+  of scanning every source. Range/other operators still apply within the narrowed
+  set. Built lazily, maintained on add, invalidated on remove.
+
 ### Async
 - `arun()` now has exception-caching parity with sync `run()`: for `async def`
   functions it honors `_cache_exceptions`/`_exception_ttl` (negative-caches a
