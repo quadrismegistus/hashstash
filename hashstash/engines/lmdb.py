@@ -32,20 +32,28 @@ class LMDBHashStash(BaseHashStash):
         )
         super().__init__(*args, **kwargs)
 
+    def _env_key(self):
+        # Key the process-wide env registry by REAL path so two spellings of the
+        # same directory (symlink, relative-vs-absolute, trailing slash) share
+        # one handle — opening the same LMDB dir twice in a process corrupts
+        # reads (issue #9).
+        return os.path.realpath(self.path)
+
     @log.debug
     def get_db(self):
+        key = self._env_key()
         with _lmdb_envs_guard:
-            env = _lmdb_envs.get(self.path)
+            env = _lmdb_envs.get(key)
             if env is None:
                 import lmdb
                 os.makedirs(self.path_dirname, exist_ok=True)
                 env = lmdb.open(self.path, map_size=self.map_size)
-                _lmdb_envs[self.path] = env
+                _lmdb_envs[key] = env
             return env
 
     def _drop_env(self):
         with _lmdb_envs_guard:
-            env = _lmdb_envs.pop(self.path, None)
+            env = _lmdb_envs.pop(self._env_key(), None)
         if env is not None:
             try:
                 env.close()

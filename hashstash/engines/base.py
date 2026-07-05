@@ -1217,6 +1217,11 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __len__(self) -> int:
+        # Physical count of stored keys. TTL is applied LAZILY: an expired entry
+        # is hidden by `in`/`get` and skipped by iteration, but still counted
+        # here until it is overwritten/deleted (or compacted). So on a TTL'd
+        # stash, len() can exceed the number of live entries — matching how disk
+        # caches generally treat expiry (no eager background sweep).
         with self as cache, cache.db as db:
             return len(db)
 
@@ -1291,7 +1296,12 @@ class BaseHashStash(MutableMapping):
         return None
 
     def _all_results(self, all_results=None):
-        return all_results if all_results is not None else self.append_mode
+        # Default to LATEST-per-key — consistent with len() and stash[key].
+        # Pass all_results=True for every appended version (append_mode history).
+        # This used to default to self.append_mode, so items()/values() in an
+        # append_mode stash yielded ALL versions while len()/getitem were latest,
+        # and DataFrames built from items() double-counted rewritten keys.
+        return all_results if all_results is not None else False
 
     @log.debug
     def keys(self, as_string=False):
@@ -1301,6 +1311,22 @@ class BaseHashStash(MutableMapping):
             except Exception as e:
                 log.error(f"Error decoding key: {e}")
                 raise e
+
+    def filter_keys(self, _subdict=None, **field_values):
+        """Yield stored keys that are dicts containing all the given field=value
+        pairs — a convenience over scanning ``keys()`` yourself when you use
+        structured dict keys (``stash[{"model": m, "prompt": p}] = ...``).
+
+            for key in stash.filter_keys(model="gpt-4"):
+                ...
+
+        This is an O(n) scan (there is no per-field key index); it just saves the
+        boilerplate. Pass fields as kwargs or a dict: ``filter_keys({"model": m})``.
+        """
+        query = {**(_subdict or {}), **field_values}
+        for key in self.keys():
+            if isinstance(key, dict) and all(key.get(k) == v for k, v in query.items()):
+                yield key
 
     @log.debug
     def values(self, all_results=None, with_metadata=False, **kwargs):
@@ -1776,6 +1802,18 @@ def HashStash(
         ) from e
     cls = getattr(module, class_name)
 
+    # name= is a friendly alias for dbname= (the real param): several users
+    # reached for name= and had it silently swallowed into a shared default stash
+    if "name" in kwargs and dbname is None:
+        dbname = kwargs.pop("name")
+    elif "name" in kwargs:
+        kwargs.pop("name")
+
+    # Reject-by-warning on unknown kwargs instead of silently dropping them: a
+    # typo like dir= / ttll= / compres= otherwise sends data to the default
+    # cache or disables a setting with no signal — a data-safety footgun.
+    _warn_unknown_stash_kwargs(cls, kwargs)
+
     return cls(
         root_dir=root_dir,
         compress=compress,
@@ -1784,6 +1822,45 @@ def HashStash(
         dbname=dbname,
         **kwargs,
     )
+
+
+def _accepted_kwarg_names(cls):
+    import inspect
+    names = set()
+    for klass in cls.__mro__:
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        try:
+            for pname, p in inspect.signature(init).parameters.items():
+                if pname != "self" and p.kind in (
+                    p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY
+                ):
+                    names.add(pname)
+        except (ValueError, TypeError):
+            pass
+    return names
+
+
+def _warn_unknown_stash_kwargs(cls, kwargs):
+    known = _accepted_kwarg_names(cls)
+    known |= set(getattr(cls, "to_dict_attrs", []))
+    # factory params + common engine params that flow through as **kwargs
+    known |= {
+        "root_dir", "engine", "dbname", "name", "compress", "b64", "serializer",
+        "filename", "df_engine", "io_engine", "map_size", "max_map_size", "flat",
+    }
+    # underscore kwargs are internal (from_dict round-trips) — never flag them
+    unknown = [k for k in kwargs if k not in known and not k.startswith("_")]
+    if unknown:
+        import warnings
+        warnings.warn(
+            f"HashStash: ignoring unrecognized argument(s) {unknown} — check for "
+            f"typos (e.g. root_dir not dir, dbname/name, ttl, compress). An "
+            f"unrecognized argument is dropped, which can silently write to the "
+            f"default cache or leave a setting off.",
+            stacklevel=3,
+        )
 
 
 def attach_stash_to_function(func, stash=None, **stash_kwargs):
