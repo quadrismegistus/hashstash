@@ -34,7 +34,11 @@ DEFAULT_LOG_LEVEL = logging.INFO
 # Default settings
 OPTIMAL_COMPRESS = 'lz4'
 DEFAULT_COMPRESS = RAW_NO_COMPRESS
-DEFAULT_B64 = True
+# b64 base64-encodes the encoded value so it is text-safe, at ~33% size cost.
+# Default OFF: binary-capable engines (pairtree/lmdb/leveldb/diskcache/duckdb/
+# memory/...) store bytes fine and shouldn't pay it. Text-only engines
+# (jsonl/redis/mongo/shelve, which set string_values=True) auto-force it on.
+DEFAULT_B64 = False
 
 COMPRESSERS = ['zlib','lz4','blosc','gzip','bz2']
 

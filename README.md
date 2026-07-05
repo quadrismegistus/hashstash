@@ -1166,7 +1166,7 @@ Set with `HashStash(serializer=...)`. Only `hashstash` supports `safe=True`.
 
 ### Compression & encoding
 
-Set with `HashStash(compress=..., b64=...)`. **Compression (encode) is the expensive half; decode is cheap for every codec.** Default is `compress='raw'` (none); `lz4` is recommended.
+Set with `HashStash(compress=..., b64=...)`. **Compression (encode) is the expensive half; decode is cheap for every codec.** Defaults: `compress='raw'` (none) and `b64=False`; `lz4` is the recommended compressor.
 
 - **`lz4`** — fastest compressor, solid ratios; the general-purpose choice. *Dep:* `hashstash[best]` (lmdb + lz4), or via `[all]`/`[dev]` (`python-lz4`).
 - **`blosc`** — fast, block-oriented (good on numeric bytes). *Dep:* `pip install blosc` (also in `[all]`/`[dev]`).
@@ -1174,7 +1174,7 @@ Set with `HashStash(compress=..., b64=...)`. **Compression (encode) is the expen
 - **`gzip`** — stdlib gzip (deterministic, `mtime=0`). *Dep:* none.
 - **`bz2`** — stdlib; **smallest output but slowest**. *Dep:* none.
 - **`raw`** — no compression (the default); fastest writes. *Dep:* none.
-- **`b64`** — *not* a compressor: an orthogonal toggle that base64-encodes output to be **text-safe** (needed by string-only engines), at ~33% size cost. Set `b64=True/False`.
+- **`b64`** — *not* a compressor: an orthogonal toggle that base64-encodes output to be **text-safe**, at ~33% size cost. **Defaults off** — binary-capable engines skip it, and the text-only engines (jsonl/redis/mongo/shelve) force it on automatically. Set `b64=True/False` to override.
 
 ## Development
 
