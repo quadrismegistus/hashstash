@@ -49,6 +49,14 @@ count, then `dry_run=False` to recover. Or open with `legacy_read=True`. Note th
 `b64` default is `False` in 1.0 and is part of the on-disk path, so a cache
 written under the old `b64=True` default also needs `b64=True` (or migration).
 
+You may see **fewer keys after migrating** — that's a fix, not data loss. Some
+older caches wrote logically-identical keys under different addresses (a latent
+key-address instability that caused silent misses and duplicate re-computation);
+1.0's deterministic canonical-key addressing collapses those duplicates. All
+stored *versions* are preserved — only the redundant addresses merge. (A
+production migration of 34 stashes saw one stash go from 24,856 to 23,056 keys,
+with all 24,894 stored versions intact.)
+
 ## 1.0.0 — 2026-07-05
 
 First stable release. Consolidates the serializer type-coverage + speed work,
