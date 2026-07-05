@@ -3,6 +3,7 @@
 # depends on import order (spawn workers + editable installs order imports
 # differently). Never rely on the star-chain for stdlib names.
 from pathlib import Path
+import os
 import time
 import uuid
 
@@ -74,6 +75,32 @@ RAW_SIZE_KEY = "Raw Size (B)"
 
 
 profiler_stash = HashStash("profilers", compress=False, b64=False)
+
+
+def _repel_kwargs():
+    """geom_text label-repel config when adjustText is installed, else {} (plain
+    labels). adjustText is an optional (dev/all) dependency."""
+    try:
+        import adjustText  # noqa: F401
+        return {"adjust_text": {
+            "expand_points": (1.6, 1.6),
+            "arrowprops": {"arrowstyle": "-", "color": "gray", "alpha": 0.4, "lw": 0.5},
+        }}
+    except Exception:
+        return {}
+
+
+def _save_fig(fig, filename, default, dpi=300):
+    """Save a figure at 300 dpi; an absolute filename goes there verbatim, a bare
+    name lands in the profiler stash's figures/ dir."""
+    if filename is None:
+        filename = default
+    figfn = Path(filename) if os.path.isabs(str(filename)) else (
+        Path(profiler_stash.path).parent / "figures" / filename
+    )
+    figfn.parent.mkdir(parents=True, exist_ok=True)
+    fig.save(figfn, dpi=dpi, verbose=False)
+    return fig
 
 
 def time_function(func, *args, **kwargs):
@@ -662,53 +689,64 @@ class HashStashProfiler:
         return fig
 
     @classmethod
-    def plot_engines(
-        cls,
-        df=None,
-        color_by="Engine",
-        operations=["Set + Get", "Set", "Get"],
-        label_by="Engine",
-        log_y=False,
-        x="Iteration",
-        y="Speed (MB/s)",
-        height=6,
-        width=8,
-        ncol=None,
-        nrow=1,
-        scales="free_y",
-        group_by=None,
-        moving_window=100,
-        facet_by=None,
-        facet_grid_by="Data Type ~ Operation",
-        facet_order=None,
-        filename="fig.comparing_engines.png",
-        **opts,
-    ):
+    def plot_engines(cls, df=None, serializer="hashstash",
+                     filename="fig.comparing_engines.png", **opts):
+        """Compare engines by ISOLATED I/O: write cost vs read cost with the
+        serializer's work subtracted out.
+
+        The full set/get time is ~85-95% serialize/deserialize (a near-constant
+        cost across engines), which masks the real engine differences — so we
+        subtract, per transaction, Serialize+Encode from Set and Decode+
+        Deserialize from Get (the components profile_stash_transaction already
+        times) and plot the medians. The dashed diagonal is set==get I/O: points
+        below it read faster than they write (e.g. jsonl, the SQL/file engines).
+        """
+        import pandas as pd
+        import plotnine as p9
+
+        p9.options.figure_size = (7.5, 6)
         if df is None:
-            df = cls.profile_engines(**opts).reset_index()
-            # df = df[df.Operation.isin(["Set + Get"])]
-            df = df[df['Data Type']=='Average']
-        return cls.plot(
-            df=df,
-            color_by=color_by,
-            operations=operations,
-            label_by=label_by,
-            log_y=log_y,
-            x=x,
-            y=y,
-            height=height,
-            width=width,
-            ncol=ncol,
-            nrow=nrow,
-            scales=scales,
-            group_by=group_by,
-            moving_window=moving_window,
-            facet_by=facet_by,
-            facet_grid_by=facet_grid_by,
-            facet_order=facet_order,
-            filename=filename,
-            **opts,
+            # a single JSON-native 'dict' payload: the I/O subtraction is only
+            # valid when set() actually goes serialize->encode->store, which
+            # jsonl-flat and the dataframe engine bypass for richer types.
+            df = cls.run_profiles(**{
+                **opts_engines, "operations": None, "serializers": [serializer],
+                "data_types": ["dict"], **opts,
+            })
+
+        def _col(name):
+            return df[name] if name in df.columns else 0.0
+
+        df = df.copy()
+        df["Set I/O (ms)"] = (
+            _col("Set Time (s)") - _col("Serialize Time (s)") - _col("Encode Time (s)")
+        ) * 1000
+        df["Get I/O (ms)"] = (
+            _col("Get Time (s)") - _col("Decode Time (s)") - _col("Deserialize Time (s)")
+        ) * 1000
+        # floor at a small positive value so near-zero engines (memory/lmdb) and
+        # slow ones (jsonl-flat on a wide dict) both fit on a log-log scale
+        agg = (
+            df.groupby("Engine")[["Set I/O (ms)", "Get I/O (ms)"]]
+            .median()
+            .clip(lower=0.02)
+            .reset_index()
         )
+        fig = (
+            p9.ggplot(agg, p9.aes("Set I/O (ms)", "Get I/O (ms)"))
+            + p9.geom_abline(slope=1, intercept=0, linetype="dashed", color="gray", alpha=0.5)
+            + p9.geom_point(p9.aes(color="Engine"), size=3, show_legend=False)
+            + p9.geom_text(p9.aes(label="Engine", color="Engine"), size=8,
+                           show_legend=False, **_repel_kwargs())
+            + p9.scale_x_log10() + p9.scale_y_log10()
+            + p9.theme_classic()
+            + p9.labs(
+                x="Write I/O — ms per set (serialize/encode removed; log; lower = faster)",
+                y="Read I/O — ms per get (deserialize/decode removed; log; lower = faster)",
+                title=f"Comparing engines: pure I/O (serializer={serializer})",
+            )
+        )
+        return _save_fig(fig, filename, "fig.comparing_engines.png")
     
     @classmethod
     def plot_all(cls,filename=None,**opts):
@@ -770,72 +808,59 @@ class HashStashProfiler:
         import plotnine as p9
         import pandas as pd
         p9.options.figure_size = (8, 6)
-        df = cls.run_profiles(**opts_encoders).reset_index()
+        df = cls.run_profiles(**{**opts_encoders, **opts}).reset_index()
         df['Rate (MB/s)'] = df['Raw Size (B)'] / (df['Encode Time (s)'] + df['Decode Time (s)']) / 1024 / 1024
         df=df[df.Encoding!='raw']
-        df['Label'] = df['Engine'] + ' + ' + (df['Encoding'].str.replace('+b64',''))
         df['Encoded Size (KB)'] = df['Encoded Size (B)'] / 1024
         figdf = df.groupby('Encoding').agg({'Rate (MB/s)': 'median', 'Encoded Size (KB)': 'last'}).reset_index()
         figdf['Encoding Type'] = figdf['Encoding'].str.replace('+b64','')
         fig = p9.ggplot(figdf, p9.aes(x='Encoded Size (KB)', y='Rate (MB/s)', label='Encoding', color='Encoding Type'))
-        fig+=p9.geom_text()
+        fig+=p9.geom_point(size=3, alpha=0.9)
+        fig+=p9.geom_text(size=8, show_legend=False, **_repel_kwargs())
         fig+=p9.theme_classic()
         fig+=p9.scale_y_log10()
-        fig+=p9.scale_color_brewer(type='qual', palette=2)
         rawsize = df['Raw Size (B)'].median()/1024
         fig += p9.geom_vline(xintercept=rawsize, linetype='dashed', color='gray')
         fig += p9.annotate("text", x=rawsize, nudge_x=.5, y=1, label=f'Raw size = {rawsize:.0f} KB', color='gray', alpha=1, ha='left')
         fig+=p9.labs(
-            x=f'Encoded Size (KB)',
-            y='Rate (MB/s)',
+            x=f'Encoded Size (KB, smaller = better)',
+            y='Rate (MB/s, higher = faster)',
             color='Encoding',
-            title='Comparing encodings'
+            title='Comparing encodings / compressors'
         )
-        if filename is None:
-            filename = f"fig.comparing_encodings_size_speed.png"
-        figfn = Path(profiler_stash.path).parent / "figures" / filename
-        figfn.parent.mkdir(parents=True, exist_ok=True)
-        fig.save(figfn)
-        return fig
+        return _save_fig(fig, filename, "fig.comparing_encodings_size_speed.png")
         
     @classmethod
     def plot_serializers(cls,filename=None,**opts):
         import plotnine as p9
         import pandas as pd
-        p9.options.figure_size = (8, 6)
-        df = cls.run_profiles(**opts_serializers).reset_index()
+        p9.options.figure_size = (9, 5)
+        df = cls.run_profiles(**{**opts_serializers, **opts}).reset_index()
         figdf = df.groupby(['Serializer','Data Type']).median(numeric_only=True).reset_index().melt(
-            id_vars=['Serializer','Data Type','Raw Size (B)', 'Serialized Size (B)'], 
-            value_vars=['Serialize Time (s)', 'Deserialize Time (s)'], 
-            value_name='Time (s)', 
+            id_vars=['Serializer','Data Type','Raw Size (B)', 'Serialized Size (B)'],
+            value_vars=['Serialize Time (s)', 'Deserialize Time (s)'],
+            value_name='Time (s)',
             var_name='Operation'
         )
-        figdf['Operation'] = figdf['Operation'].str.replace(' Time (s)', '')
+        figdf['Operation'] = figdf['Operation'].str.replace(' Time (s)', '', regex=False)
         figdf['Operation'] = pd.Categorical(figdf['Operation'], categories=['Serialize', 'Deserialize'])
-        figdf['Serialized Size (MB)'] = figdf['Serialized Size (B)'] / 1024 / 1024
+        figdf['Serialized Size (KB)'] = figdf['Serialized Size (B)'] / 1024
         figdf['Rate (MB/s)'] = figdf['Raw Size (B)'] / figdf['Time (s)'] / 1024 / 1024
-        fig = p9.ggplot(figdf, p9.aes(x='Serialized Size (MB)', y='Rate (MB/s)', label='Serializer', color='Serializer'))
+        # label one point per serializer (repelled) so labels don't stack
+        lab = figdf.sort_values('Data Type').drop_duplicates(['Serializer', 'Operation'])
+        fig = p9.ggplot(figdf, p9.aes(x='Serialized Size (KB)', y='Rate (MB/s)', color='Serializer'))
         fig+=p9.facet_grid('. ~ Operation')
-        fig+=p9.geom_text(nudge_y=.05)
-        fig+=p9.geom_point(p9.aes(shape='Data Type'))
+        fig+=p9.geom_point(p9.aes(shape='Data Type'), size=3.5, alpha=0.9)
+        fig+=p9.geom_text(p9.aes(label='Serializer'), data=lab, size=8, show_legend=False, **_repel_kwargs())
         fig+=p9.theme_classic()
         fig+=p9.scale_y_log10()
-        fig+=p9.scale_color_brewer(type='qual', palette=2)
+        fig+=p9.guides(color=False)
         fig+=p9.labs(
-            x=f'Serialized Size (MB)',
-            y='Rate (MB/s)',
-            color='Serializer',
+            x='Serialized size (KB, smaller = better)',
+            y='Throughput (MB/s, higher = faster)',
             title='Comparing serializers'
         )
-        rawsize = df['Raw Size (B)'].median()/1024/1024
-        fig += p9.geom_vline(xintercept=rawsize, linetype='dashed', color='gray')
-        fig += p9.annotate("text", x=rawsize, y=5, nudge_x=.001, label=f'Raw size = {rawsize:.1f} MB', color='gray', alpha=1, ha='left')
-        if filename is None:
-            filename = f"fig.comparing_serializers_size_speed.png"
-        figfn = Path(profiler_stash.path).parent / "figures" / filename
-        figfn.parent.mkdir(parents=True, exist_ok=True)
-        fig.save(figfn)
-        return fig
+        return _save_fig(fig, filename, "fig.comparing_serializers_size_speed.png")
 
 
 

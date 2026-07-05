@@ -90,6 +90,7 @@ dev = [
   # utils
   "tqdm",
   "plotnine",
+  "adjustText",
   "scikit-misc",
 
   # dev tools
@@ -119,6 +120,7 @@ all = [
   # utils
   "tqdm",
   "plotnine",
+  "adjustText",
   "scikit-misc",
 ]
 rec = ["pandas","pyarrow","lz4","ultradict"]
