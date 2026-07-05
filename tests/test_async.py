@@ -119,3 +119,59 @@ def test_sync_stashed_result_still_sync():
 
     assert not asyncio.iscoroutinefunction(plain)
     assert plain(3) == 6
+
+
+# --- async exception caching (parity with sync run()) ----------------------
+
+_afail_calls = []
+
+
+async def _afail(x):
+    _afail_calls.append(x)
+    await asyncio.sleep(0)
+    raise ValueError(f"boom-{x}")
+
+
+def test_arun_caches_exception(tmp_path):
+    """With _cache_exceptions, a failed coroutine is negative-cached: the second
+    arun re-raises the SAME exception type without re-executing."""
+    stash = HashStash(root_dir=str(tmp_path / "c"))
+    _afail_calls.clear()
+
+    async def go():
+        for _ in range(2):
+            with pytest.raises(ValueError, match="boom-7"):
+                await stash.arun(_afail, 7, _cache_exceptions=True)
+
+    _run(go())
+    assert _afail_calls == [7]  # executed once, replayed from cache the 2nd time
+
+
+def test_arun_without_cache_exceptions_reexecutes(tmp_path):
+    stash = HashStash(root_dir=str(tmp_path / "c2"))
+    _afail_calls.clear()
+
+    async def go():
+        for _ in range(2):
+            with pytest.raises(ValueError):
+                await stash.arun(_afail, 9)  # no _cache_exceptions -> re-runs
+
+    _run(go())
+    assert _afail_calls == [9, 9]
+
+
+def test_arun_exception_ttl_expires(tmp_path):
+    import time
+
+    stash = HashStash(root_dir=str(tmp_path / "c3"))
+    _afail_calls.clear()
+
+    async def go():
+        with pytest.raises(ValueError):
+            await stash.arun(_afail, 3, _cache_exceptions=True, _exception_ttl=0.1)
+        time.sleep(0.15)  # the cached exception expires
+        with pytest.raises(ValueError):
+            await stash.arun(_afail, 3, _cache_exceptions=True, _exception_ttl=0.1)
+
+    _run(go())
+    assert _afail_calls == [3, 3]  # recomputed after the cached exception expired

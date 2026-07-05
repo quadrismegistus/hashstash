@@ -968,15 +968,19 @@ class BaseHashStash(MutableMapping):
         import asyncio
         return await asyncio.to_thread(self.has, *args, **kwargs)
 
-    async def arun(self, func, *args, _force=False, _store_args=True, **kwargs):
+    async def arun(self, func, *args, _force=False, _store_args=True,
+                   _cache_exceptions=False, _exception_ttl=None, **kwargs):
         import asyncio
 
         funcx = unwrap_func(func)
         if not asyncio.iscoroutinefunction(funcx):
-            # plain callable: just run() off-thread
+            # plain callable: just run() off-thread (which handles exception
+            # caching itself)
             return await asyncio.to_thread(
                 self.run, func, *args,
-                _force=_force, _store_args=_store_args, **kwargs,
+                _force=_force, _store_args=_store_args,
+                _cache_exceptions=_cache_exceptions, _exception_ttl=_exception_ttl,
+                **kwargs,
             )
 
         fstash = self.attach_func(func)
@@ -987,9 +991,25 @@ class BaseHashStash(MutableMapping):
         if not _force:
             res = await asyncio.to_thread(fstash.get, unencoded_key, default=_MISSING)
             if res is not _MISSING:
-                return res
-        # await the coroutine, then store its result off-thread
-        result = await funcx(*args, **func_kwargs)
+                # re-raise a still-valid cached exception; expired -> _MISSING ->
+                # recompute (parity with sync run())
+                res = fstash._resolve_hit(res)
+                if res is not _MISSING:
+                    return res
+        # await the coroutine; negative-cache a failure like run() does so a
+        # later await replays it instead of re-executing
+        try:
+            result = await funcx(*args, **func_kwargs)
+        except Exception as e:
+            if _cache_exceptions:
+                try:
+                    expires_at = (time.time() + _exception_ttl) if _exception_ttl else None
+                    await asyncio.to_thread(
+                        fstash.set, unencoded_key, _make_cached_exc(e, expires_at)
+                    )
+                except Exception:
+                    log.debug("could not negative-cache exception")
+            raise
         await asyncio.to_thread(fstash.set, unencoded_key, result)
         return result
 

@@ -42,6 +42,12 @@ stored, not its correctness).
 - Value envelopes now carry an explicit format version (`_fv`) for future
   migrations.
 
+### Async
+- `arun()` now has exception-caching parity with sync `run()`: for `async def`
+  functions it honors `_cache_exceptions`/`_exception_ttl` (negative-caches a
+  failed await), and it re-raises a still-valid cached exception on a hit
+  instead of leaking the marker as a value.
+
 ### Parallel map
 - **BREAKING** — a `StashMap` (from `stash.map`) now **iterates and indexes the
   computed values** (like builtin `map` / `pmap`): `list(sm)`, `for x in sm`,
