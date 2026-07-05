@@ -162,6 +162,24 @@ class DataFrameHashStash(PairtreeHashStash):
                     for val in vals:
                         yield key, val
 
+    def _key_columns(self, df, key):
+        """Readable key columns for one stored frame, matching the base engine.
+
+        Base assemble_ld/flatten_args_kwargs builds key columns from the decoded
+        key value itself (``_key = "Animal 1"``); the old code here serialized
+        each value to bytes (``b'"Animal 1"'``). Scalars broadcast across the
+        frame's rows; a tuple/list/dict key part is placed whole in every cell
+        (not spread element-wise, which pandas would otherwise do for array-likes).
+        """
+        import pandas as pd
+        cols = {}
+        for k, v in flatten_args_kwargs(key).items():
+            if isinstance(v, (list, tuple, dict, set)) or is_dataframe(v):
+                cols[k] = pd.Series([v] * len(df), index=df.index, dtype=object)
+            else:
+                cols[k] = v
+        return cols
+
     def assemble_df(
         self,
         all_results=None,
@@ -172,9 +190,7 @@ class DataFrameHashStash(PairtreeHashStash):
         for key, df in progress_bar(self.items(
             all_results=all_results, with_metadata=with_metadata, as_dataframe=True
         ), total=len(self), desc='concatenating dataframes across values'):
-            dfs.append(
-                df.assign(**{k:serialize(v) for k,v in flatten_args_kwargs(key).items()})
-            )
+            dfs.append(df.assign(**self._key_columns(df, key)))
         if not dfs:
             import pandas as pd
             return pd.DataFrame()
@@ -202,12 +218,15 @@ class DataFrameHashStash(PairtreeHashStash):
         )
 
     def duckdb(self, table="data"):
-        """Return a DuckDB connection with every DataFrame stored by this engine
-        exposed as a single view named `table` (default 'data'), for SQL over the
-        cache without deserializing — DuckDB scans the parquet files in place.
+        """Return a DuckDB connection for SQL across all cached frames as one
+        table, without deserializing — DuckDB scans the parquet files in place.
 
-        Requires ``io_engine='parquet'``. Use for multiple queries / joins;
-        ``sql()`` is the one-shot convenience.
+        Every stored DataFrame is unioned into a single view named `table`
+        (default 'data'), so this is SQL over the whole cache as one homogeneous
+        table. Cross-schema joins of different keys are NOT supported: the frames
+        share one view, and unioning heterogeneous schemas raises a parquet
+        schema mismatch. Requires ``io_engine='parquet'``. Reuse the returned
+        connection for several queries; ``sql()`` is the one-shot convenience.
         """
         import duckdb
 
@@ -226,9 +245,13 @@ class DataFrameHashStash(PairtreeHashStash):
         return con
 
     def sql(self, query, table="data"):
-        """Run a DuckDB SQL query over the DataFrames stored by this engine
-        (exposed as `table`, default 'data') and return a pandas DataFrame.
-        Reads the parquet files in place — no deserialization.
+        """Run one DuckDB SQL query across all cached frames as a single table
+        (`table`, default 'data') and return a pandas DataFrame. Reads the
+        parquet files in place — no deserialization.
+
+        All stored frames union into one view, so this is SQL over the whole
+        cache as one homogeneous table; cross-schema joins of different keys are
+        not supported (heterogeneous schemas raise a parquet schema mismatch).
 
             stash.sql("SELECT city, avg(temp) FROM data GROUP BY city")
         """

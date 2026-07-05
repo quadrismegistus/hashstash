@@ -22,14 +22,30 @@ def to_pandas(df):
     return df
 
 
-def _stringify_object_columns(df):
-    """Coerce only object-dtype columns to str (they may hold lists/dicts arrow
-    can't store); typed columns keep their dtype."""
-    obj_cols = [c for c in df.columns if str(df[c].dtype) == "object"]
-    if not obj_cols:
+def _object_columns(df):
+    return [c for c in df.columns if str(df[c].dtype) == "object"]
+
+
+def _arrays_to_lists(df):
+    """Arrow (feather/parquet) reads its list columns back as numpy ndarrays;
+    convert those cells to real Python lists so a list-of-strings column
+    round-trips as ``["a", "b"]`` rather than ``array(['a', 'b'])``. Non-array
+    object cells (strings, dicts, None) are left untouched."""
+    import numpy as np
+
+    for c in _object_columns(df):
+        s = df[c]
+        if any(isinstance(x, np.ndarray) for x in s):
+            df[c] = [x.tolist() if isinstance(x, np.ndarray) else x for x in s]
+
+
+def _stringify_columns(df, columns):
+    """Coerce the named columns to their str() form (they hold values arrow
+    can't store natively); every other column keeps its dtype."""
+    if not columns:
         return df
     df = df.copy()
-    for c in obj_cols:
+    for c in columns:
         df[c] = df[c].astype(str)
     return df
 
@@ -40,12 +56,75 @@ def _stringify_all(df):
     return (mapper if callable(mapper) else df.applymap)(str)
 
 
+def _is_arrow_conversion_error(e):
+    """True for the errors Arrow raises when a column holds values it can't
+    serialize (mixed list/dict, custom objects, ...)."""
+    try:
+        import pyarrow as pa
+
+        if isinstance(e, (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError)):
+            return True
+    except Exception:
+        pass
+    return isinstance(e, (ValueError, TypeError))
+
+
+def _arrow_unserializable_object_columns(df):
+    """Object-dtype columns Arrow can't natively store, found by attempting the
+    per-column Arrow conversion. list-of-primitive and struct (dict) columns
+    convert fine and are left untouched; only genuinely unserializable columns
+    (mixed list/dict, custom objects) come back."""
+    try:
+        import pyarrow as pa
+    except Exception:
+        return _object_columns(df)
+    bad = []
+    for c in _object_columns(df):
+        try:
+            pa.array(df[c])
+        except Exception as e:
+            if _is_arrow_conversion_error(e):
+                bad.append(c)
+            else:
+                raise
+    return bad
+
+
+def _reset_buffer(path_or_buffer):
+    # a failed native write to a buffer may have left bytes behind; rewind +
+    # truncate so the stringified retry doesn't append to a partial stream
+    if not isinstance(path_or_buffer, str):
+        try:
+            path_or_buffer.seek(0)
+            path_or_buffer.truncate()
+        except Exception:
+            pass
+
+
+def _write_arrow(df, path_or_buffer, write_fn):
+    """Write via Arrow (feather/parquet), which stores object columns holding
+    lists-of-primitives or dicts natively — so a list column round-trips as a
+    real list, not its str() repr. Only if the native write raises an Arrow
+    conversion error do we stringify the offending object columns and retry, so
+    a genuinely unserializable column degrades to str() instead of crashing."""
+    try:
+        return write_fn(df, path_or_buffer)
+    except Exception as e:
+        if not _is_arrow_conversion_error(e):
+            raise
+        bad = _arrow_unserializable_object_columns(df) or _object_columns(df)
+        _reset_buffer(path_or_buffer)
+        return write_fn(_stringify_columns(df, bad), path_or_buffer)
+
+
 def write_df(df, path_or_buffer, io_engine=None, compression=None, string_values=None):
     """Write a DataFrame to path/buffer with the given io engine.
 
     feather/parquet preserve dtypes natively (incl. nullable Int64/boolean,
-    datetime, categorical), so only object columns are coerced to str; csv/json
-    are text formats and lose dtypes (re-inferred on read).
+    datetime, categorical) and store object columns holding lists/dicts as real
+    Arrow list/struct values — so those columns are written natively first and
+    only stringified (per column) if Arrow can't serialize them; csv/json are
+    text formats and lose dtypes (re-inferred on read).
     """
     df = to_pandas(df)
     io_engine = get_io_engine(io_engine)
@@ -57,8 +136,6 @@ def write_df(df, path_or_buffer, io_engine=None, compression=None, string_values
 
     if string_values:
         df = _stringify_all(df)
-    elif io_engine in {"feather", "parquet"}:
-        df = _stringify_object_columns(df)
 
     # None means no compression here (symmetric with read_df); each format then
     # drops tokens it doesn't understand (e.g. the 'raw' the engines pass)
@@ -69,7 +146,10 @@ def write_df(df, path_or_buffer, io_engine=None, compression=None, string_values
     elif io_engine == "parquet":
         if compression not in {'snappy', 'gzip', 'brotli', None}:
             compression = None
-        return df.to_parquet(path_or_buffer, compression=compression)
+        return _write_arrow(
+            df, path_or_buffer,
+            lambda d, p: d.to_parquet(p, compression=compression),
+        )
     elif io_engine == "json":
         if compression not in {'infer', 'gzip', 'bz2', 'zip', 'xz', None}:
             compression = None
@@ -77,7 +157,10 @@ def write_df(df, path_or_buffer, io_engine=None, compression=None, string_values
     elif io_engine == "feather":
         if compression not in {'zstd', 'lz4', 'uncompressed'}:
             compression = None
-        return df.to_feather(path_or_buffer, compression=compression)
+        return _write_arrow(
+            df, path_or_buffer,
+            lambda d, p: d.to_feather(p, compression=compression),
+        )
     elif io_engine == "pickle":
         if compression not in {'infer', 'gzip', 'bz2', 'zip', 'xz', None}:
             compression = None
@@ -117,6 +200,10 @@ def read_df(path_or_buffer, io_engine=None, compression=None):
     # legit string columns (e.g. '1','2' -> ints).
     if io_engine in {"csv", "json"}:
         reinfer_types(df)
+    # Arrow returns its native list columns as numpy ndarrays; hand back real
+    # Python lists so a list column round-trips as a list, not an ndarray.
+    if io_engine in {"feather", "parquet"}:
+        _arrays_to_lists(df)
     return df
 
 

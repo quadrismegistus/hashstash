@@ -52,3 +52,30 @@ def test_dataframe_engine_object_columns_still_stored(tmp_path):
     stash = HashStash(engine="dataframe", io_engine="feather", root_dir=str(tmp_path / "obj"))
     stash["k"] = df
     assert stash["k"]["i"].dtype == "Int64"
+
+
+@pytest.mark.parametrize("io_engine", ["feather", "parquet"])
+def test_assemble_df_renders_readable_keys(io_engine, tmp_path):
+    # assemble_df must render the key as its readable value ("Animal 1"), not the
+    # serialized bytes (b'"Animal 1"') the engine used to emit.
+    stash = HashStash(engine="dataframe", io_engine=io_engine, root_dir=str(tmp_path / io_engine))
+    stash["Animal 1"] = pd.DataFrame({"v": [1, 2]})
+    adf = stash.assemble_df()
+    assert adf.index.name == "_key"
+    assert set(adf.index) == {"Animal 1"}
+    ld = stash.assemble_ld()
+    assert all(row["_key"] == "Animal 1" for row in ld)
+
+
+@pytest.mark.parametrize("io_engine", ["feather", "parquet"])
+def test_dataframe_engine_list_column_roundtrips_as_list(io_engine, tmp_path):
+    # Arrow stores list-of-primitive columns natively, so a list column must come
+    # back as real lists -- NOT silently coerced to its str() repr ("['a', 'b']")
+    # by a blanket object->str stringify on write.
+    df = pd.DataFrame({"id": [1, 2], "tags": [["a", "b"], ["c"]]})
+    stash = HashStash(engine="dataframe", io_engine=io_engine, root_dir=str(tmp_path / io_engine))
+    stash["k"] = df
+    got = stash["k"]
+    assert got["tags"].iloc[0] == ["a", "b"]
+    assert got["tags"].iloc[1] == ["c"]
+    assert all(isinstance(v, list) for v in got["tags"])
