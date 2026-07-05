@@ -810,26 +810,35 @@ class HashStashProfiler:
     def plot_encodings(cls,filename=None,**opts):
         import plotnine as p9
         import pandas as pd
-        p9.options.figure_size = (8, 6)
+        p9.options.figure_size = (9, 5)
         df = cls.run_profiles(**{**opts_encoders, **opts}).reset_index()
-        df['Rate (MB/s)'] = df['Raw Size (B)'] / (df['Encode Time (s)'] + df['Decode Time (s)']) / 1024 / 1024
-        df=df[df.Encoding!='raw']
+        df = df[df.Encoding != 'raw']
         df['Encoded Size (KB)'] = df['Encoded Size (B)'] / 1024
-        figdf = df.groupby('Encoding').agg({'Rate (MB/s)': 'median', 'Encoded Size (KB)': 'last'}).reset_index()
-        figdf['Encoding Type'] = figdf['Encoding'].str.replace('+b64','')
-        fig = p9.ggplot(figdf, p9.aes(x='Encoded Size (KB)', y='Rate (MB/s)', label='Encoding', color='Encoding Type'))
-        fig+=p9.geom_point(size=3, alpha=0.9)
-        fig+=p9.geom_text(size=8, show_legend=False, **_repel_kwargs())
-        fig+=p9.theme_classic()
-        fig+=p9.scale_y_log10()
-        rawsize = df['Raw Size (B)'].median()/1024
-        fig += p9.geom_vline(xintercept=rawsize, linetype='dashed', color='gray')
-        fig += p9.annotate("text", x=rawsize, nudge_x=.5, y=1, label=f'Raw size = {rawsize:.0f} KB', color='gray', alpha=1, ha='left')
-        fig+=p9.labs(
-            x=f'Encoded Size (KB, smaller = better)',
-            y='Rate (MB/s, higher = faster)',
-            color='Encoding',
-            title='Comparing encodings / compressors'
+        agg = df.groupby('Encoding').agg(
+            Encode=('Encode Time (s)', 'median'),
+            Decode=('Decode Time (s)', 'median'),
+            **{'Encoded Size (KB)': ('Encoded Size (KB)', 'last')},
+        ).reset_index()
+        figdf = agg.melt(
+            id_vars=['Encoding', 'Encoded Size (KB)'],
+            value_vars=['Encode', 'Decode'], var_name='Operation', value_name='Time (s)',
+        )
+        figdf['Operation'] = pd.Categorical(figdf['Operation'], categories=['Encode', 'Decode'])
+        figdf['Time (ms)'] = figdf['Time (s)'] * 1000
+        rawsize = df['Raw Size (B)'].median() / 1024
+        # faceted biplot, both axes "lower = better" (consistent with serializers)
+        fig = p9.ggplot(figdf, p9.aes(x='Encoded Size (KB)', y='Time (ms)', color='Encoding'))
+        fig += p9.facet_grid('. ~ Operation')
+        fig += p9.geom_vline(xintercept=rawsize, linetype='dashed', color='gray', alpha=0.6)
+        fig += p9.geom_point(size=3.5, alpha=0.9)
+        fig += p9.geom_text(p9.aes(label='Encoding'), size=8, show_legend=False, **_repel_kwargs())
+        fig += p9.theme_classic()
+        fig += p9.scale_y_log10()
+        fig += p9.guides(color=False)
+        fig += p9.labs(
+            x=f'Encoded size (KB, smaller = better; dashed = raw {rawsize:.0f} KB)',
+            y='Time (ms, lower = faster)',
+            title='Comparing encodings / compressors',
         )
         return _save_fig(fig, filename, "fig.comparing_encodings_size_speed.png")
         
@@ -848,10 +857,12 @@ class HashStashProfiler:
         figdf['Operation'] = figdf['Operation'].str.replace(' Time (s)', '', regex=False)
         figdf['Operation'] = pd.Categorical(figdf['Operation'], categories=['Serialize', 'Deserialize'])
         figdf['Serialized Size (KB)'] = figdf['Serialized Size (B)'] / 1024
-        figdf['Rate (MB/s)'] = figdf['Raw Size (B)'] / figdf['Time (s)'] / 1024 / 1024
+        figdf['Time (ms)'] = figdf['Time (s)'] * 1000
         # label one point per serializer (repelled) so labels don't stack
         lab = figdf.sort_values('Data Type').drop_duplicates(['Serializer', 'Operation'])
-        fig = p9.ggplot(figdf, p9.aes(x='Serialized Size (KB)', y='Rate (MB/s)', color='Serializer'))
+        # both axes "lower = better" (bottom-left is best), consistent with the
+        # engine and encoding figures
+        fig = p9.ggplot(figdf, p9.aes(x='Serialized Size (KB)', y='Time (ms)', color='Serializer'))
         fig+=p9.facet_grid('. ~ Operation')
         fig+=p9.geom_point(p9.aes(shape='Data Type'), size=3.5, alpha=0.9)
         fig+=p9.geom_text(p9.aes(label='Serializer'), data=lab, size=8, show_legend=False, **_repel_kwargs())
@@ -860,7 +871,7 @@ class HashStashProfiler:
         fig+=p9.guides(color=False)
         fig+=p9.labs(
             x='Serialized size (KB, smaller = better)',
-            y='Throughput (MB/s, higher = faster)',
+            y='Time (ms, lower = faster)',
             title='Comparing serializers'
         )
         return _save_fig(fig, filename, "fig.comparing_serializers_size_speed.png")
