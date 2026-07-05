@@ -35,7 +35,6 @@ HashStash is a versatile caching library for Python that supports multiple stora
   - [Engines](#engines)
   - [Serializers](#serializers)
   - [Encodings](#encodings)
-  - [All together](#all-together)
 - [Development](#development)
   - [Tests](#tests)
   - [Contributing](#contributing)
@@ -1092,31 +1091,25 @@ g.neighbors("alice")  # → ["bob"]
 
 ## Profiling
 
+All figures read the same way: **lower = faster, bottom-left = best**. Regenerate with `python scripts/make_readme_figures.py` (they come straight from `HashStashProfiler.plot_serializers` / `plot_engines` / `plot_encodings`).
+
 ### Engines
 
-LMDB is the fastest engine, followed by the custom "pairtree" implementation.
+This plots **pure engine I/O** — the serialize/deserialize cost is subtracted out (write I/O = set − serialize − encode, read I/O = get − deserialize − decode), because at typical payload sizes the *full* get/set time is ~85–95% serialization and would otherwise hide the engines' real differences (see [BENCHMARKS.md](./BENCHMARKS.md)). `memory` is fastest, then `lmdb` and `leveldb`; the SQL engines (`sqlite`, `duckdb`) and file-per-key engines carry more per-op overhead. The dashed line is set = get: points below it read faster than they write — e.g. `jsonl`, whose key→offset index makes reads an O(1) seek while writing a wide record is slower.
 
 ![Engines](./figures/fig.comparing_engines.png)
 
 ### Serializers
 
-Pickle is by far the fastest serializer, but it is not transportable between Python versions. HashStash is generally faster than jsonpickle, and can serialize more data types (including lambdas and functions within functions), but it produces larger file sizes.
-
-See [BENCHMARKS.md](./BENCHMARKS.md) for an up-to-date serialize/deserialize speed and size comparison across all serializers (JSON-native vs full-path payloads), regenerable with `python scripts/bench_serializers.py`.
+Time (lower = faster) vs output size (smaller = better), faceted by serialize/deserialize. `pickle` and `msgpack` are fastest and most compact but limited (pickle isn't portable across Python versions; msgpack/cbor2 are data-only). `jsonpickle` is slowest. `hashstash` sits in the middle but round-trips far more — lambdas, functions, numpy/pandas, the full type zoo — and stays portable. See [BENCHMARKS.md](./BENCHMARKS.md) for a table across payload types, regenerable with `python scripts/bench_serializers.py`.
 
 ![Serializers](./figures/fig.comparing_serializers_size_speed.png)
 
 ### Encodings
 
-LZ4 is the fastest compressor, but it requires an external dependency. BZ2 is the slowest, but it provides the best compression ratio.
+Faceted by encode vs decode: **compression (encode) is the expensive half** — `bz2` compresses smallest but slowest, `lz4`/`blosc` are fast — while decoding is cheap for all. `+b64` variants trade ~33% size for text-safe output.
 
 ![Compressors](./figures/fig.comparing_encodings_size_speed.png)
-
-### All together
-
-LMDB engine, with pickle serializer, with no compression (raw) or LZ4 or blosc compression is the fastest combination of parameters; followed by pairtree with the same. 
-
-![All together](./figures/fig.comparing_engines_serializers_encodings.png)
 
 ## Development
 
