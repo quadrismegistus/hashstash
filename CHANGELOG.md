@@ -31,6 +31,12 @@ stored, not its correctness).
   ~33% size + CPU overhead; text-only engines (jsonl/redis/mongo/shelve) still
   force it on. Because `b64` is part of the on-disk path, existing caches sit at
   their old path after upgrade (not found, not corrupted).
+- **dataframe engine** now preserves dtypes. It was blanket-`str()`-ing every
+  cell before a feather/parquet write and re-inferring types on read, which
+  silently dropped nullable `Int64`/`boolean`, datetime, and categorical dtypes.
+  Now typed columns are written natively (arrow preserves them) and only object
+  columns are coerced; re-inference is limited to the text formats (csv/json)
+  that actually need it.
 - Value envelopes now carry an explicit format version (`_fv`) for future
   migrations.
 

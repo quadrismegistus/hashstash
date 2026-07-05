@@ -150,6 +150,21 @@ class MetaDataFrame:
         else:
             return MetaDataFrame(self.df.select(columns), self.df_engine)
 
+    def _stringify_object_columns(self):
+        """Coerce only object-dtype columns to str (they may hold lists/dicts
+        arrow can't store); typed columns keep their dtype. pandas only —
+        polars has no object dtype and writes arrow natively."""
+        if not self.is_pandas:
+            return self
+        pdf = self.df
+        obj_cols = [c for c in pdf.columns if str(pdf[c].dtype) == "object"]
+        if not obj_cols:
+            return self
+        pdf = pdf.copy()
+        for c in obj_cols:
+            pdf[c] = pdf[c].astype(str)
+        return MetaDataFrame(pdf, self.df_engine)
+
     def applymap(self, func):
         if self.is_pandas:
             # pandas 2.1+ renamed DataFrame.applymap to DataFrame.map;
@@ -357,11 +372,16 @@ class MetaDataFrame:
             path_or_buffer = path_or_buffer + "." + io_engine
 
         log.debug(f"writing with {io_engine}")
-        if io_engine in {"feather", "parquet"}:
-            string_values = True
-
         if string_values:
+            # explicit request: coerce every cell to str
             self = self.applymap(str)
+        elif io_engine in {"feather", "parquet"}:
+            # arrow (feather/parquet) preserves typed columns natively — incl.
+            # nullable Int64/boolean, datetime, categorical — so only object
+            # columns (which may hold lists/dicts arrow can't store) get coerced
+            # to str. Previously this blanket-stringified everything and the
+            # reader guessed types back, silently dropping every extension dtype.
+            self = self._stringify_object_columns()
 
         if compression is None:
             compression = DEFAULT_COMPRESS
@@ -440,7 +460,11 @@ class MetaDataFrame:
             else:
                 raise ValueError(f"Unsupported I/O engine: {io_engine}")
 
-            reinfer_types(df)
+            # csv/json are text formats that lose dtypes -> re-infer them.
+            # feather/parquet/pickle carry their own schema; re-inferring there
+            # would corrupt legit string columns (e.g. '1','2' -> ints).
+            if io_engine in {"csv", "json"}:
+                reinfer_types(df)
         else:  # polars
             import polars as pl
 
