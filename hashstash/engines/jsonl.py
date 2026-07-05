@@ -39,6 +39,16 @@ class JSONLHashStash(BaseHashStash):
         serializer = kwargs.get("serializer") or DEFAULT_SERIALIZER
         if not b64:
             if serializer in self.BINARY_SERIALIZERS:
+                if flat:
+                    # flat mode stores values as native JSON and forces b64=False,
+                    # so "Pass b64=True" is not actionable here — point at flat=False.
+                    raise ValueError(
+                        f"JSONLHashStash flat mode stores values as native JSON and "
+                        f"cannot use a binary serializer (serializer={serializer!r} "
+                        f"produces binary output); b64/compression do not apply in flat "
+                        f"mode. To use a binary serializer or to store rich Python objects "
+                        f"(datetime, bytes, Decimal, ...), open the stash with flat=False."
+                    )
                 raise ValueError(
                     f"JSONLHashStash: b64=False requires a text serializer "
                     f"('hashstash' or 'jsonpickle'), but serializer={serializer!r} "
@@ -211,7 +221,22 @@ class JSONLHashStash(BaseHashStash):
             os.makedirs(self.path_dirname, exist_ok=True)
         except Exception:
             pass
-        line = json.dumps(obj) + "\n"
+        try:
+            line = json.dumps(obj) + "\n"
+        except TypeError as e:
+            # In flat mode the value dict is written as native JSON, so a value
+            # containing a datetime/bytes/Decimal/etc. is not serializable and
+            # nothing gets written. Replace the bare json TypeError with accurate
+            # guidance (b64/serializer do not help in flat mode — flat=False does).
+            if self.flat:
+                raise TypeError(
+                    f"JSONLHashStash flat mode requires JSON-native values "
+                    f"(str, int, float, bool, None, and lists/dicts of those). The value "
+                    f"contains an object that is not JSON-serializable ({e}). To store rich "
+                    f"Python objects such as datetime, bytes, or Decimal, open the stash "
+                    f"with flat=False."
+                ) from e
+            raise
         with open(self.path, "a", encoding="utf-8") as fh:
             fh.write(line)
 
@@ -353,6 +378,12 @@ class JSONLHashStash(BaseHashStash):
 
     @log.debug
     def items(self, all_results=None, with_metadata=False, before=None, after=None, **kwargs):
+        # Fold the stash's ttl into the time-filter floor, exactly as the get-path
+        # does (get_all -> _ttl_after), so iteration never yields entries that
+        # get()/`in` already hide as expired. keys()/__len__ intentionally stay
+        # raw: that maintenance view is what prune()/eviction/compact rely on to
+        # reclaim expired rows (the memory/sqlite engines behave the same way).
+        after = self._ttl_after(after, kwargs)
         key2entries = defaultdict(list)
         for row in iter_jsonl(self.path):
             rk = row[self.key_name]

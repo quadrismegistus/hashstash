@@ -5,6 +5,7 @@
 from typing import List
 from typing import Set
 from typing import Union
+import importlib
 import os
 
 from . import *
@@ -91,75 +92,60 @@ class Config:
 
 
 
+# --- lazy, per-backend availability ------------------------------------------
+#
+# Optional-backend availability is resolved LAZILY and cached PER BACKEND, so
+# constructing a Config (which resolves serializer/engine/compress) never imports
+# a backend it isn't actually asked for. The old get_working_* helpers eagerly
+# probed EVERY optional backend on their first call — importing pandas/blosc/
+# duckdb/pymongo/redis/jsonpickle/... — which made the first serialize() in a
+# process pay ~300ms for imports it never used. Now each backend is import-probed
+# only when it is requested (get_engine/get_serializer_type/get_compresser), and
+# the full working-set is enumerated only when genuinely needed (listings /
+# error messages). Correctness is unchanged: the same modules gate the same
+# backends, just imported on demand.
+
+@fcache
+def _can_import(module_name):
+    """Cached: is this module importable? Imports ONLY that module, not the world."""
+    try:
+        importlib.import_module(module_name)
+        return True
+    except ImportError:
+        return False
+
+
+# each optional engine -> the module(s) that must import for it to be usable
+_ENGINE_REQUIRES = {
+    "sqlite": ("sqlitedict",),
+    "redis": ("redis", "redis_dict"),
+    "diskcache": ("diskcache",),
+    "lmdb": ("lmdb",),
+    "mongo": ("pymongo",),
+    "dataframe": ("pandas", "numpy"),
+    "fsspec": ("fsspec",),
+    "duckdb": ("duckdb",),
+    "leveldb": ("plyvel",),
+}
+
+
+@fcache
+def _engine_available(engine):
+    # builtins (incl. jsonl) are stdlib-only and always available
+    if engine in BUILTIN_ENGINES:
+        return True
+    reqs = _ENGINE_REQUIRES.get(engine)
+    if reqs is None:
+        return False  # unknown engine name
+    return all(_can_import(m) for m in reqs)
+
+
 @fcache
 def get_working_engines():
     working_engines = set(BUILTIN_ENGINES)
-
-    try:
-        import sqlitedict
-
-        working_engines.add("sqlite")
-    except ImportError:
-        pass
-
-    try:
-        import redis
-        import redis_dict
-
-        working_engines.add("redis")
-    except ImportError:
-        pass
-
-    try:
-        import diskcache
-
-        working_engines.add("diskcache")
-    except ImportError:
-        pass
-
-    try:
-        import lmdb
-
-        working_engines.add("lmdb")
-    except ImportError:
-        pass
-
-    try:
-        import pymongo
-
-        working_engines.add("mongo")
-    except ImportError:
-        pass
-
-    try:
-        import pandas as pd
-        import numpy as np
-
-        working_engines.add("dataframe")
-    except ImportError:
-        pass
-
-    # jsonl uses only stdlib
-    working_engines.add("jsonl")
-
-    try:
-        import fsspec
-        working_engines.add("fsspec")
-    except ImportError:
-        pass
-
-    try:
-        import duckdb
-        working_engines.add("duckdb")
-    except ImportError:
-        pass
-
-    try:
-        import plyvel
-        working_engines.add("leveldb")
-    except ImportError:
-        pass
-
+    for engine in _ENGINE_REQUIRES:
+        if _engine_available(engine):
+            working_engines.add(engine)
     return working_engines
 
 
@@ -168,7 +154,7 @@ def get_engine(engine):
     # (or a missing dependency) quietly wrote to the wrong store
     if engine is None:
         engine = OPTIMAL_ENGINE_TYPE
-    if engine not in get_working_engines():
+    if not _engine_available(engine):
         if engine in ENGINES:
             hint = ENGINE_INSTALL_HINTS.get(engine, engine)
             raise ImportError(
@@ -184,31 +170,37 @@ def get_engine(engine):
 
 
 
+# hashstash/pickle are always available (stdlib); the rest are optional imports
+_ALWAYS_SERIALIZERS = ("hashstash", "pickle")
+_SERIALIZER_REQUIRES = {
+    "jsonpickle": ("jsonpickle",),
+    "msgpack": ("msgpack",),
+    "cbor2": ("cbor2",),
+}
+
+
+@fcache
+def _serializer_available(serializer):
+    if serializer in _ALWAYS_SERIALIZERS:
+        return True
+    reqs = _SERIALIZER_REQUIRES.get(serializer)
+    if reqs is None:
+        return False
+    return all(_can_import(m) for m in reqs)
+
+
 @fcache
 def get_working_serializers():
-    from .utils.logs import log
-    working_serializers = ['hashstash','pickle']
-    try:
-        import jsonpickle
-        working_serializers.append('jsonpickle')
-    except ImportError:
-        pass
-    try:
-        import msgpack
-        working_serializers.append('msgpack')
-    except ImportError:
-        pass
-    try:
-        import cbor2
-        working_serializers.append('cbor2')
-    except ImportError:
-        pass
+    working_serializers = list(_ALWAYS_SERIALIZERS)
+    for serializer in _SERIALIZER_REQUIRES:
+        if _serializer_available(serializer):
+            working_serializers.append(serializer)
     return working_serializers
 
 def get_serializer_type(serializer):
     if serializer is None:
         serializer = OPTIMAL_SERIALIZER
-    if serializer not in get_working_serializers():
+    if not _serializer_available(serializer):
         if serializer in SERIALIZERS:
             raise ImportError(
                 f"HashStash serializer {serializer!r} is not installed. "
@@ -297,31 +289,38 @@ def get_df_engine(df_engine=None):
 
 def get_dataframe_engine(df):
     from .utils.misc import is_dataframe
-    from .utils.dataframes import MetaDataFrame
     from .utils.addrs import get_obj_addr
     if not is_dataframe(df):
         return
-    if isinstance(df, MetaDataFrame):
-        return df.df_engine
     return get_obj_addr(df).split(".")[0]
 
 
 
 
+# raw/zlib/gzip/bz2 are stdlib; blosc/lz4 are optional imports
+_ALWAYS_COMPRESSERS = (RAW_NO_COMPRESS, 'zlib', 'gzip', 'bz2')
+_COMPRESSER_REQUIRES = {
+    'blosc': ('blosc',),
+    'lz4': ('lz4.block',),
+}
+
+
+@fcache
+def _compresser_available(compress):
+    if compress in _ALWAYS_COMPRESSERS:
+        return True
+    reqs = _COMPRESSER_REQUIRES.get(compress)
+    if reqs is None:
+        return False
+    return all(_can_import(m) for m in reqs)
+
+
 @fcache
 def get_working_compressers():
-    compressers = [RAW_NO_COMPRESS, 'zlib', 'gzip', 'bz2']
-    try:
-        import blosc
-        compressers.append('blosc')
-    except ImportError:
-        pass
-
-    try:
-        import lz4.block
-        compressers.append('lz4')
-    except ImportError:
-        pass
+    compressers = list(_ALWAYS_COMPRESSERS)
+    for compress in _COMPRESSER_REQUIRES:
+        if _compresser_available(compress):
+            compressers.append(compress)
     return set(compressers)
 
 @fcache
@@ -331,7 +330,7 @@ def get_compresser(compress):
         return RAW_NO_COMPRESS
     if compress in {True, None}:
         compress = OPTIMAL_COMPRESS
-    if not compress in get_working_compressers():
+    if not _compresser_available(compress):
         if compress in COMPRESSERS:
             log.debug(f'Compression library {compress} is not installed. Defaulting to zlib. To install {compress}, run: pip install {compress}')
         else:

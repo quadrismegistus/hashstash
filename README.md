@@ -11,6 +11,7 @@ HashStash is a versatile caching library for Python that supports multiple stora
   - [Multiple storage engines](#multiple-storage-engines)
   - [Multiple serializers](#multiple-serializers)
   - [Compression and encoding options](#compression-and-encoding-options)
+- [Comparison to alternatives](#comparison-to-alternatives)
 - [Installation](#installation)
 - [Security](#security)
 - [Usage](#usage)
@@ -35,7 +36,10 @@ HashStash is a versatile caching library for Python that supports multiple stora
   - [Engines](#engines)
   - [Serializers](#serializers)
   - [Encodings](#encodings)
-  - [All together](#all-together)
+- [Reference](#reference)
+  - [Storage engines](#storage-engines)
+  - [Serializers](#serializers-1)
+  - [Compression & encoding](#compression--encoding)
 - [Development](#development)
   - [Tests](#tests)
   - [Contributing](#contributing)
@@ -65,7 +69,7 @@ HashStash is a versatile caching library for Python that supports multiple stora
     - "__[leveldb](https://pypi.org/project/plyvel/)__" (embedded LSM key-value store via plyvel; no fixed size to pre-allocate)
     - "__jsonl__" (no dependencies; single human-readable append-only log. An incrementally-built key→offset index makes random single-key `get` an **O(1) seek** (no full-file scan), so it is fast for reads as well as writes and works well as a compact, inspectable cache — see note on concurrent writes below; call `stash.compact()` to reclaim space from overwritten/deleted rows)
     - "__shelve__" (standard library; simple dbm-backed store)
-    - "__dataframe__" (pairtree layout that stores pandas/polars DataFrames natively as feather/parquet/csv files, requires [pandas](https://pypi.org/project/pandas/))
+    - "__dataframe__" (pairtree layout that stores pandas DataFrames natively as feather/parquet/csv files — a polars DataFrame is converted to pandas on store; requires [pandas](https://pypi.org/project/pandas/))
 
 - Server-based
     - "__redis__" (using [redis-py](https://pypi.org/project/redis/))
@@ -107,6 +111,22 @@ HashStash is a versatile caching library for Python that supports multiple stora
     - "__zlib__"
     - "__gzip__"
     - "__bz2__" (smallest file size, but slowest)
+
+## Comparison to alternatives
+
+HashStash's niche is **caching arbitrary Python objects, portably, across many backends, with an optional safe-load mode** — no single alternative covers all four at once:
+
+| | Caches *arbitrary* Python (lambdas, closures, objects) | Portable across Python versions | Pluggable backends | Data-only *safe* load |
+|---|:---:|:---:|:---:|:---:|
+| **hashstash** | ✅ | ✅ | ✅ (13 engines) | ✅ |
+| [`diskcache`](https://pypi.org/project/diskcache/) | pickle only | ❌ | ❌ (disk) | ❌ |
+| [`joblib`](https://pypi.org/project/joblib/)`.Memory` | pickle only | ❌ | ~ (disk / custom store) | ❌ |
+| [`klepto`](https://pypi.org/project/klepto/) | partial | partial | ✅ | ❌ |
+| [`cloudpickle`](https://pypi.org/project/cloudpickle/) / [`dill`](https://pypi.org/project/dill/) | ✅ | ❌ | n/a (serializer) | ❌ |
+| [`jsonpickle`](https://pypi.org/project/jsonpickle/) | partial | ✅ | n/a (serializer) | partial |
+| [`cachetools`](https://pypi.org/project/cachetools/) | ❌ | n/a | ❌ (in-memory) | n/a |
+
+**When to reach for something else:** for a fast *local* function-result cache, `diskcache` and `joblib.Memory` are faster and more battle-tested; for in-memory LRU/TTL, `cachetools`. HashStash earns its place when you need to cache *anything* (closures, DataFrames, model objects), **move between backends** (local dict → shared Redis/S3) without a rewrite, **stay portable across Python versions**, and optionally load untrusted caches safely — all behind one dict-like API. It trades raw speed for that flexibility (see [BENCHMARKS.md](./BENCHMARKS.md)).
 
 ## Installation
 
@@ -668,7 +688,9 @@ assert stashed_result7 == stashed_result8 == stashed_result5 == stashed_result6
 
 ### Mapping functions
 
-You can also map functions across many objects, with stashed results, with `stash.map`. By default it uses (number of CPUs - 2) processes to start computing results in the background. In the meantime it returns a `StashMap` object. If a mapped function raises, the exception propagates when you read that result.
+You can also map functions across many objects, with stashed results, with `stash.map`. By default it runs **serially** (`num_proc=1`); pass `num_proc=N` to compute results across N processes in the background. Either way it returns a `StashMap` object. **Iterating or indexing it gives you the computed values** (like the builtin `map`) — `list(stash_map)`, `for x in stash_map`, `stash_map[0]`, `stash_map[1:3]` all return results, blocking as needed. Use `.runs` for the `StashMapRun` wrapper objects (`.was_cached`, args/kwargs). If a mapped function raises, the exception propagates when you read that result.
+
+> **Multiprocessing note.** The default (`num_proc=1`) is serial and needs no special setup — it works in scripts, notebooks, and the REPL. Passing `num_proc>1` opts into a spawn process pool, which re-imports `__main__` in each worker: from a **script** you must therefore put the `stash.map(...)` call under `if __name__ == "__main__":` and define the mapped function at module level, or the workers re-execute your top-level code. From a REPL / `python -c` / with a source-unretrievable function, `stash.map` auto-falls back to serial with a warning. The `memory` engine is process-local without `ultradict`, so pair `num_proc>1` with a disk engine for the incremental cache to pay off.
 
 ```python
 def expensive_computation3(name, goodnesses=['good']):
@@ -688,6 +710,24 @@ stash_map
               StashMapRun(__main__.expensive_computation3('dog', goodnesses=['good', 'bad']) >>> ?),
               StashMapRun(__main__.expensive_computation3('aardvark', goodnesses=['good', 'bad']) >>> ?),
               StashMapRun(__main__.expensive_computation3('zebra', goodnesses=['good', 'bad']) >>> ?)])
+
+```python
+# the simplest way — iterate or list() it for the computed values:
+list(stash_map)
+```
+
+↓
+
+    [{'name': 'cat', 'goodness': 'good'},
+     {'name': 'dog', 'goodness': 'good'},
+     {'name': 'aardvark', 'goodness': 'good'},
+     {'name': 'zebra', 'goodness': 'bad'}]
+
+```python
+# ...or reach into the StashMapRun wrappers via .runs
+stash_map.runs[0]            # StashMapRun(...('cat', ...) >>> {'name': 'cat', 'goodness': 'good'})
+stash_map.runs[0].result    # {'name': 'cat', 'goodness': 'good'}
+```
 
 ```python
 # iterate over results as they come in:
@@ -895,6 +935,25 @@ print(append_stash.assemble_df(with_metadata=True))
     1        1.725653e+09  cat     good
     2        1.725653e+09  cat      bad
 
+### Querying cached DataFrames with SQL
+
+The `dataframe` engine stores each DataFrame value as a native columnar file. With `io_engine="parquet"`, `stash.sql(...)` runs a DuckDB query across **all** cached frames in place — no deserialization — and returns a pandas DataFrame:
+
+```python
+weather = HashStash(engine="dataframe", io_engine="parquet")
+weather["NYC"] = pd.DataFrame({"city": ["NYC"]*3, "hour": [9,12,15], "temp": [22,25,23]})
+weather["LA"]  = pd.DataFrame({"city": ["LA"]*3,  "hour": [9,12,15], "temp": [30,33,31]})
+
+# SQL across everything cached, unioned into one table named `data`:
+weather.sql("SELECT city, avg(temp) AS avg_temp FROM data GROUP BY city ORDER BY avg_temp DESC")
+
+# or grab a DuckDB connection for multiple queries against that table:
+con = weather.duckdb()
+con.sql("SELECT max(temp) FROM data").fetchone()
+```
+
+All cached frames are unioned into the single `data` table, so this is for **many same-schema frames** you want to treat as one partitioned table (self-joins and aggregations work). It is not a warehouse: heterogeneous frames stored under different keys can't be joined as separate tables. DuckDB scans the parquet files directly, so the stash stays a plain key-value cache underneath. Requires `hashstash[duckdb]` + `hashstash[dataframe]`.
+
 ### Temporary Caches
 
 HashStash provides a `tmp` method for creating temporary caches that are automatically cleaned up. The temporary cache is automatically cleared and removed after the with block:
@@ -1062,6 +1121,8 @@ g.preload()
 g.edges_where(rel="sft_of", resistance__gt=2.0)
 ```
 
+`edges_where` is index-accelerated: an exact `rel=` filter **and** edge-property **equality** filters (`field=value`) are served from secondary indexes (built lazily, maintained on add), so the query visits only sources that could match instead of scanning the whole graph. Range and other operators (`resistance__gt`, `rel__startswith`) are then applied within that narrowed set.
+
 GraphStash caches adjacency lists in memory after first read. For write-once-read-many workloads, call `preload()` after bulk loading. Two caveats:
 
 - **Incremental `add_edge` rewrites the node's whole adjacency list per call** — O(degree) I/O per insert, quadratic when building a hub node edge-by-edge. Use `add_edges_bulk`, or wrap a normal `add_edge` loop in `with g.batch():` — the batch buffers writes and persists each touched node's adjacency list once on exit, keeping the per-edge call style at bulk speed:
@@ -1092,31 +1153,69 @@ g.neighbors("alice")  # → ["bob"]
 
 ## Profiling
 
+All figures read the same way: **lower = faster, bottom-left = best**. Regenerate with `python scripts/make_readme_figures.py` (they come straight from `HashStashProfiler.plot_serializers` / `plot_engines` / `plot_encodings`).
+
 ### Engines
 
-LMDB is the fastest engine, followed by the custom "pairtree" implementation.
+This plots **pure engine I/O** — the serialize/deserialize cost is subtracted out (write I/O = set − serialize − encode, read I/O = get − deserialize − decode), because at typical payload sizes the *full* get/set time is ~85–95% serialization and would otherwise hide the engines' real differences (see [BENCHMARKS.md](./BENCHMARKS.md)). `memory` is fastest, then `lmdb` and `leveldb`; the SQL engines (`sqlite`, `duckdb`) and file-per-key engines carry more per-op overhead. The dashed line is set = get: points below it read faster than they write — e.g. `jsonl`, whose key→offset index makes reads an O(1) seek while writing a wide record is slower.
 
 ![Engines](./figures/fig.comparing_engines.png)
 
 ### Serializers
 
-Pickle is by far the fastest serializer, but it is not transportable between Python versions. HashStash is generally faster than jsonpickle, and can serialize more data types (including lambdas and functions within functions), but it produces larger file sizes.
-
-See [BENCHMARKS.md](./BENCHMARKS.md) for an up-to-date serialize/deserialize speed and size comparison across all serializers (JSON-native vs full-path payloads), regenerable with `python scripts/bench_serializers.py`.
+Time (lower = faster) vs output size (smaller = better), faceted by serialize/deserialize. `pickle` and `msgpack` are fastest and most compact but limited (pickle isn't portable across Python versions; msgpack/cbor2 are data-only). `jsonpickle` is slowest. `hashstash` sits in the middle but round-trips far more — lambdas, functions, numpy/pandas, the full type zoo — and stays portable. See [BENCHMARKS.md](./BENCHMARKS.md) for a table across payload types, regenerable with `python scripts/bench_serializers.py`.
 
 ![Serializers](./figures/fig.comparing_serializers_size_speed.png)
 
 ### Encodings
 
-LZ4 is the fastest compressor, but it requires an external dependency. BZ2 is the slowest, but it provides the best compression ratio.
+Faceted by encode vs decode: **compression (encode) is the expensive half** — `bz2` compresses smallest but slowest, `lz4`/`blosc` are fast — while decoding is cheap for all. `+b64` variants trade ~33% size for text-safe output.
 
 ![Compressors](./figures/fig.comparing_encodings_size_speed.png)
 
-### All together
+## Reference
 
-LMDB engine, with pickle serializer, with no compression (raw) or LZ4 or blosc compression is the fastest combination of parameters; followed by pairtree with the same. 
+HashStash is built from three independent, composable layers: a **storage engine** (where bytes live), a **serializer** (how Python objects become bytes), and a **compressor/encoder** (how those bytes are packed). They mix freely — any engine works with any serializer and any compressor. Benchmarks show these axes are separable: at typical payload sizes ~85–95% of a `get`/`set` is serialize/deserialize, so **payload size and serializer choice usually matter more than the engine** (see [BENCHMARKS.md](./BENCHMARKS.md)).
 
-![All together](./figures/fig.comparing_engines_serializers_encodings.png)
+### Storage engines
+
+Set with `HashStash(engine=...)`. There are 13; `pairtree` is the default and needs no dependencies.
+
+- **`pairtree`** (default) — file-per-entry store in a hashed directory tree; no database, no deps. Atomic writes (temp file + `os.replace`), so a crash never poisons a key, and it's **concurrent-writer safe** (each entry is its own file) — the natural choice for `stash.map` across many processes. *Cons:* many small files, higher per-op filesystem overhead than single-file KV engines. *Dep:* none.
+- **`lmdb`** — single memory-mapped B-tree file; the fastest disk engine. Auto-grows its map (10 GB default, doubling, capped at 256 GB — both configurable via `map_size` / `max_map_size`) so you never pre-size it. *Cons:* C extension; not built for many independent OS-process writers the way pairtree is. *Dep:* `hashstash[lmdb]` (or `[best]` = lmdb + lz4).
+- **`leveldb`** — embedded LSM key-value store via `plyvel`; grows organically, no map ceiling. *Cons:* `plyvel` ships **no wheels** (compiles against system `libleveldb`), so it's excluded from the `dev`/`all` extras. *Dep:* `hashstash[leveldb]` **+ system LevelDB**.
+- **`sqlite`** — key-value table via `sqlitedict`; a single portable file you can also inspect with SQL tooling. *Cons:* SQL layer adds per-op overhead (slower than lmdb/pairtree). *Dep:* `hashstash[sqlite]`.
+- **`duckdb`** — embedded analytical-SQL DB used as a BLOB key-value store; exact byte round-trip. (Does *not* do native DataFrame assembly — use the `dataframe` engine.) *Dep:* `hashstash[duckdb]`.
+- **`jsonl`** — one human-readable append-only JSON-Lines log (`grep`/`jq`/`rsync`-able). A key→offset index makes random `get` an **O(1) seek**; **flat mode** (default) stores dict values as JSON fields, bypassing the serializer. Great for inspectable/append-heavy caches. *Cons:* writing a *wide* record is slower; the file only grows until `stash.compact()`. *Dep:* none.
+- **`shelve`** — stdlib `shelve`/`dbm` on-disk mapping; zero third-party deps. *Cons:* dbm backends take an exclusive lock (it snapshots under one handle); slower, less concurrent. *Dep:* none.
+- **`dataframe`** — a pairtree subclass that writes pandas DataFrames **natively** as feather/parquet (via pyarrow), bypassing the serializer; non-DataFrame values fall back to normal behavior. A polars DataFrame given as input is converted to pandas on store, and reads/`assemble_df()` return plain pandas. The default (feather) preserves dtypes faithfully — nullable `Int64`/`boolean`, datetime, categorical — and the index. (`io_engine='csv'` is human-readable but, as a text format, loses dtypes.) Pairs with `stash.assemble_df()`. *Dep:* `hashstash[dataframe]`.
+- **`redis`** — networked KV via `redis-py`; namespaced keys (so `clear()` never `flushdb`s). **Safe by default** (`safe=True`) because a networked writer may be untrusted. *Dep:* `hashstash[redis]` + a Redis server.
+- **`mongo`** — networked document store via `pymongo` (upserted docs, one collection per namespace). **Safe by default**; forces `b64=True`. *Dep:* `hashstash[mongo]` + a MongoDB server.
+- **`fsspec`** — the pairtree layout over any fsspec filesystem (S3/GCS/Azure/SFTP/`memory://`) for a serverless shared cache: `root_dir="s3://bucket/cache"`, credentials in `storage_options`. Remote roots **default to `safe=True`**. *Dep:* `hashstash[fsspec]` + the backend driver (`s3fs`, `gcsfs`, …).
+- **`diskcache`** — the mature `diskcache` library; process/thread-safe, with its default 1 GB LRU eviction **disabled** so it never silently drops entries. *Dep:* `hashstash[diskcache]`.
+- **`memory`** — process-local dict (fastest, ephemeral); upgrades to a cross-process `UltraDict` (shared memory) when `ultradict` is installed, else degrades silently to a per-process dict. *Dep:* none (process-local); `hashstash[memory]` to share across processes.
+
+### Serializers
+
+Set with `HashStash(serializer=...)`. Only `hashstash` supports `safe=True`.
+
+- **`hashstash`** (default) — custom JSON-based (text + some binary) serializer that round-trips **nearly everything**: lambdas, locally-defined functions, classes/instances, numpy arrays & scalars, the full pandas type zoo, enums, sets, bytes, paths, datetimes. **Portable across Python versions**, canonical order-stable keys, fast-pathed both ways, uses `orjson` to speed writes when installed, and the only serializer with a **data-only `safe=True`** mode. *Cons:* larger/slower than pickle/msgpack on the full recursive path. *Dep:* none (optional `orjson`).
+- **`pickle`** — stdlib; **fastest and most compact**, handles every type. *Cons:* **not portable across Python versions**, **unsafe** to load untrusted (executes code), no `safe=True`. *Dep:* none.
+- **`jsonpickle`** — portable JSON with numpy/pandas handlers. *Cons:* **slowest**, larger output. *Dep:* `hashstash[jsonpickle]`.
+- **`msgpack`** — fast, compact, binary, **data-only** (can't encode code/sets/DataFrames), which makes it inherently safe. Best on JSON-shaped data; a strong `safe=True` pairing. *Dep:* `hashstash[msgpack]`.
+- **`cbor2`** — data-only binary like msgpack but **broader** (encodes mixed tuples/bytes/datetimes msgpack rejects), with native datetime tags. *Dep:* `hashstash[cbor2]`.
+
+### Compression & encoding
+
+Set with `HashStash(compress=..., b64=...)`. **Compression (encode) is the expensive half; decode is cheap for every codec.** Defaults: `compress='raw'` (none) and `b64=False`; `lz4` is the recommended compressor.
+
+- **`lz4`** — fastest compressor, solid ratios; the general-purpose choice. *Dep:* `hashstash[best]` (lmdb + lz4), or via `[all]`/`[dev]` (`python-lz4`).
+- **`blosc`** — fast, block-oriented (good on numeric bytes). *Dep:* `pip install blosc` (also in `[all]`/`[dev]`).
+- **`zlib`** — stdlib DEFLATE; balanced. *Dep:* none.
+- **`gzip`** — stdlib gzip (deterministic, `mtime=0`). *Dep:* none.
+- **`bz2`** — stdlib; **smallest output but slowest**. *Dep:* none.
+- **`raw`** — no compression (the default); fastest writes. *Dep:* none.
+- **`b64`** — *not* a compressor: an orthogonal toggle that base64-encodes output to be **text-safe**, at ~33% size cost. **Defaults off** — binary-capable engines skip it, and the text-only engines (jsonl/redis/mongo/shelve) force it on automatically. Set `b64=True/False` to override.
 
 ## Development
 

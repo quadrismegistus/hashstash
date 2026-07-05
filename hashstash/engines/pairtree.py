@@ -171,6 +171,10 @@ class PairtreeHashStash(BaseHashStash):
         for path_d in paths_ld:
             path = path_d.pop("_path")
             encoded_value = self._get_from_filepath(path)
+            if encoded_value is None:
+                # version file pruned by a concurrent writer between listing and
+                # reading — skip it (clean miss) rather than decode None (crash)
+                continue
             decoded_value = self.decode_value(encoded_value)
             if not with_metadata:
                 out.append(decoded_value)
@@ -185,7 +189,12 @@ class PairtreeHashStash(BaseHashStash):
     def _get_from_filepath(self, filepath):
         if not self._fs_exists(filepath):
             return None
-        return self._fs_read(filepath)
+        try:
+            return self._fs_read(filepath)
+        except FileNotFoundError:
+            # a concurrent writer's prune removed this version file between the
+            # exists-check and the read (TOCTOU). Treat as a miss, not a crash.
+            return None
 
     def _set_to_filepath(self, filepath, encoded_data):
         self._fs_write_atomic(filepath, encoded_data)
@@ -201,11 +210,20 @@ class PairtreeHashStash(BaseHashStash):
 
     def _prune_dir(self, filepath_value):
         dir_path = self._fs_dirname(filepath_value)
-        files = self._fs_listdir(dir_path)
+        # value filenames are '{microsecond}.{pid}' — timestamp-ordered, so max()
+        # is the newest. Keep the LATEST, not necessarily the file THIS writer
+        # wrote: two concurrent same-key writers each pruning "all but mine"
+        # deleted each other's file and left the key with NO value (data loss +
+        # len/has disagreement). Keeping the shared max means the last write wins
+        # and a value always survives; older versions are pruned as intended.
+        files = [f for f in self._fs_listdir(dir_path) if f and f[0] != '.']
+        if not files:
+            return
+        keep = max(files)
         for file in files:
-            if file and file[0]!='.':
+            if file != keep:
                 file_path = self._fs_join(dir_path, file)
-                if file_path != filepath_value and self._fs_isfile(file_path):
+                if self._fs_isfile(file_path):
                     try:
                         self._fs_remove(file_path)
                     except FileNotFoundError:

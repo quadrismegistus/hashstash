@@ -39,7 +39,6 @@ def deserialize_orjson(obj):
     return orjson.loads(obj)
 
 def remove_mdfs(obj):
-    if isinstance(obj,MetaDataFrame): return obj.df
     if isinstance(obj,list): return [remove_mdfs(i) for i in obj]
     if isinstance(obj,dict): return {remove_mdfs(k):remove_mdfs(v) for k,v in obj.items()}
     return obj
@@ -93,27 +92,11 @@ def deserialize_jsonpickle(obj):
 
 def _register_jsonpickle_handlers():
     import jsonpickle
-    from ..utils.dataframes import MetaDataFrame
 
     jsonpickle.set_encoder_options('json', sort_keys=True)
     global _jsonpickle_handlers_registered
 
-    class MetaDataFrameJSONHandler(jsonpickle.handlers.BaseHandler):
-        pickler = jsonpickle.Pickler()
-        unpickler = jsonpickle.Unpickler()
-        
-        
-        def flatten(self, obj, data):
-            data = {**data, **obj.to_dict()}
-            data['data'] = self.pickler.flatten(obj.data)
-            return data
-
-        def restore(self, data):
-            data['data'] = self.unpickler.restore(data['data'])
-            return MetaDataFrame.from_dict(data)
-
     if not _jsonpickle_handlers_registered:
-        jsonpickle.handlers.register(MetaDataFrame, MetaDataFrameJSONHandler)
         import jsonpickle.ext.numpy as jsonpickle_numpy
         import jsonpickle.ext.pandas as jsonpickle_pandas
         jsonpickle_numpy.register_handlers()

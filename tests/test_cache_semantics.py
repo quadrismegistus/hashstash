@@ -207,7 +207,9 @@ def test_get_set_single_flight_threads(tmp_path):
 
 def test_stats_counts(tmp_path):
     stash = HashStash(root_dir=str(tmp_path / "c"))
-    assert stash.stats == {}
+    # stats always reports all four keys (zeroed when fresh)
+    assert set(stash.stats) == {"hits", "misses", "sets", "deletes"}
+    assert all(v == 0 for v in stash.stats.values())
     stash["a"] = 1
     stash["b"] = 2
     _ = stash["a"]
@@ -222,7 +224,7 @@ def test_stats_counts(tmp_path):
     assert stats["deletes"] == 1
 
     stash.reset_stats()
-    assert stash.stats == {}
+    assert all(v == 0 for v in stash.stats.values())
 
 
 def test_stats_via_stashed_result(tmp_path):

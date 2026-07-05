@@ -16,6 +16,7 @@ from concurrent.futures import (
     wait,
     FIRST_COMPLETED,
     ThreadPoolExecutor,
+    BrokenExecutor,
 )
 import signal
 from types import MethodType
@@ -87,8 +88,65 @@ def shutdown_global_executors():
 atexit.register(shutdown_global_executors)
 
 def get_num_proc(n=None, num_spare=2):
+    # Default to SERIAL (num_proc=1). Parallel maps use a spawn process pool,
+    # which re-imports __main__ in each worker — so an unguarded top-level
+    # stash.map() in a script would crash without `if __name__ == "__main__":`.
+    # Serial-by-default needs no guard and works everywhere (script/notebook/
+    # REPL); opt into parallelism explicitly with num_proc=N.
     num_avail = mp.cpu_count()
-    return n if n and 1<=n<=num_avail else (num_avail-num_spare) if (num_avail-num_spare)>0 else 1
+    if not n or n < 1:
+        return 1
+    if n > num_avail:
+        return max(1, num_avail - num_spare)  # clamp an oversized request
+    return n
+
+
+def _ultradict_available():
+    """True if UltraDict is importable (the 'memory' engine uses it for
+    cross-process shared memory). Checked without importing/instantiating it."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("UltraDict") is not None
+    except Exception:
+        return False
+
+
+def _map_fallback_reason(func):
+    """Read-only pre-flight check for spawn safety. Returns a short reason string
+    if running ``func`` under a spawn worker pool is likely to fail cryptically
+    (so the caller should fall back to num_proc=1), or None if parallel is fine.
+
+    Only reads the function's addr/source; never spawns or mutates anything. The
+    failures this guards against, all cryptic to an end user:
+      * bare REPL / ``python -c`` / piped stdin -> BrokenProcessPool
+      * unguarded module top-level        -> multiprocessing bootstrapping RuntimeError
+      * source-unretrievable function      -> KeyError in recreate_function_from_src
+    """
+    import sys
+    # A function importable from a real (non-__main__) module is rebuilt in the
+    # worker by import, so parallelism is safe regardless of the calling context.
+    try:
+        if can_import_object(func):
+            return None
+    except Exception:
+        pass
+    # Otherwise the worker must rebuild it from source; empty source -> KeyError in
+    # recreate_function_from_src (REPL/exec-defined functions).
+    try:
+        src = get_function_src(func) or ""
+    except Exception:
+        src = ""
+    if not str(src).strip():
+        return "function source unavailable"
+    # Source is retrievable but the process itself is a spawn-unsafe bootstrap
+    # context: a bare REPL, ``python -c ...``, or piped stdin re-imports __main__
+    # in the child and dies (BrokenProcessPool / bootstrapping RuntimeError).
+    main_mod = sys.modules.get("__main__")
+    argv0 = sys.argv[0] if sys.argv else ""
+    if getattr(main_mod, "__file__", None) is None or argv0 in ("-c", ""):
+        return "interactive/unguarded __main__ context"
+    return None
+
 
 class StashMap(UserList):
     def __init__(
@@ -122,8 +180,36 @@ class StashMap(UserList):
         
         self.common_kwargs = common_kwargs
         self.total = len(self.objects)
-        num_proc=get_num_proc(num_proc)
+        num_proc = get_num_proc(num_proc)
+        # Guard spawn-multiprocessing footguns BEFORE creating the pool. An
+        # interactive/`-c`/stdin context, an unguarded module top-level, or a
+        # function whose source can't be retrieved all make spawn workers fail
+        # cryptically. Degrade to serial with ONE actionable warning instead;
+        # num_proc=1 never serializes the function (see _run_item / _lookup_item),
+        # so it works for any callable, including REPL/exec-defined ones.
+        if num_proc > 1:
+            reason = _map_fallback_reason(func)
+            if reason:
+                log.warning(
+                    f"stash.map: falling back to num_proc=1 ({reason}); guard "
+                    "module-level map() calls with if __name__=='__main__' for "
+                    "real parallelism."
+                )
+                num_proc = 1
+            elif (
+                getattr(stash, "engine", None) == "memory"
+                and not _ultradict_available()
+            ):
+                # process-local memory dict: worker results never reach the
+                # parent, so incremental caching silently no-ops under num_proc>1
+                log.warning(
+                    "stash.map: engine='memory' without ultradict is process-local, "
+                    "so results computed in num_proc>1 workers never reach the "
+                    "parent and are not cached. Install ultradict, or use "
+                    "num_proc=1 or a persistent engine."
+                )
         self.num_proc = num_proc
+        self._warned_spawn_fallback = False
         self.desc = (
             desc
             if desc is not None
@@ -139,6 +225,7 @@ class StashMap(UserList):
         self.stash_map = stash_map
         self._force = _force
         self._needed_computing = None
+        self._stashed = False
         self.progress_bar = None
         if self.progress:
             from .misc import progress_bar
@@ -235,35 +322,49 @@ class StashMap(UserList):
     def __len__(self):
         return self.total
 
+    def _iter_runs(self):
+        """Yield the underlying StashMapRun wrapper objects. Subclasses (e.g.
+        StashMapSlice) override this to select a subset."""
+        return iter(self._results)
+
+    @property
+    def runs(self):
+        """The StashMapRun wrapper objects — args/kwargs, per-item cache status,
+        lazy `.result`. Iterating or indexing the StashMap itself yields the
+        computed *values* (like builtin `map` / `pmap`); use `.runs` when you
+        want the wrappers."""
+        return list(self._iter_runs())
+
     def compute(self):
-        for res in self:
+        for res in self._iter_runs():
             res.compute()
             if res._needed_computing:
                 self._needed_computing = True
 
     def __iter__(self):
-        for res in self._results:
-            yield res
-            if not res._computed:
-                res.compute()
+        # yield the computed VALUES (like builtin map / pmap); `.runs` gives the
+        # StashMapRun wrappers
+        return self.results_iter()
 
     @property
     def data(self):
-        return list(self)
+        # UserList backing store holds the run wrappers, so len()/repr stay lazy
+        # and never force computation
+        return list(self._iter_runs())
 
     @cached_property
     def results(self):
         return list(self.results_iter())
-    
+
     def items(self):
-        for res in self:
+        for res in self._iter_runs():
             yield (res.args, res.kwargs), res.result
 
     def keys(self):
         yield from (k for k,v in self.items())
     def values(self):
         yield from (v for k,v in self.items())
-    
+
     def items_l(self):
         return list(self.items())
     def values_l(self):
@@ -273,13 +374,16 @@ class StashMap(UserList):
 
     def results_iter(self):
         self.compute()
-        for res in self:
+        for res in self._iter_runs():
             yield res.result
             if res._needed_computing:
                 self._needed_computing = True
         if self.progress_bar:
             self.progress_bar.close()
-        if self._needed_computing and self.stash_map and type(self) is StashMap and self.stash is not None:
+        # stash the whole map once, and only for a top-level StashMap (not slices)
+        if (type(self) is StashMap and not self._stashed and self._needed_computing
+                and self.stash_map and self.stash is not None):
+            self._stashed = True
             log.info(f"Saving {self.total} results to stash")
             self.stash.set(self.stash_key, self)
             log.info(f"Saved {self.total} results to stash")
@@ -304,16 +408,17 @@ class StashMap(UserList):
             return self._get_single_item(key)
 
     def _get_single_item(self, index):
+        # returns the computed VALUE; use `.runs[index]` for the StashMapRun
         if index < 0:
-            index += len(self)
-        if index < 0 or index >= len(self):
+            index += self.total
+        if index < 0 or index >= self.total:
             raise IndexError("StashMap index out of range")
-
-        for i, item in enumerate(self):
-            if i == index:
-                return item
-
-        raise IndexError("StashMap index out of range")
+        res = self._results[index]
+        if not res._computed:
+            res.compute()
+            if res._needed_computing:
+                self._needed_computing = True
+        return res.result
 
     def to_dict(self):
         results = [
@@ -363,6 +468,18 @@ class StashMap(UserList):
     def __reduce__(self):
         return (self.__class__.from_dict, (self.to_dict(),))
 
+    def _warn_spawn_fallback(self):
+        """Emit ONE warning when a worker pool turns out to be unusable at
+        runtime (e.g. an unguarded __main__ that only surfaces as a
+        BrokenProcessPool once we submit) and we compute in-process instead."""
+        if not getattr(self, "_warned_spawn_fallback", False):
+            self._warned_spawn_fallback = True
+            log.warning(
+                "stash.map: worker pool unavailable (interactive/unguarded "
+                "__main__ context); computing in-process. Guard module-level "
+                "map() calls with if __name__=='__main__' for real parallelism."
+            )
+
     def _execute_task(self, stuffed_item):
         if self.num_proc > 1:
             return self.executor.submit(_pmap_item, stuffed_item)
@@ -375,10 +492,16 @@ class StashMapSlice(StashMap):
         self.pmap = pmap
         self.start, self.stop, self.step = slice_obj.indices(len(pmap))
         self.total = len(range(self.start, self.stop, self.step))
+        # attrs the inherited compute()/results_iter() expect; a slice never
+        # owns a progress bar and never re-stashes the parent map
+        self.progress_bar = None
+        self.stash = getattr(pmap, "stash", None)
+        self.stash_map = False
+        self._needed_computing = None
+        self._stashed = True
 
-    def __iter__(self):
-        for i in range(self.start, self.stop, self.step):
-            yield self.pmap._get_single_item(i)
+    def _iter_runs(self):
+        return (self.pmap._results[i] for i in range(self.start, self.stop, self.step))
 
     def __len__(self):
         return max(0, (self.stop - self.start + self.step - 1) // self.step)
@@ -481,22 +604,23 @@ class StashMapRun:
         if self.stash is not None:
             return self.stash.new_function_key(*self.args, **self.kwargs)
 
+    def _item_dict(self):
+        return {
+            "func": self.func,
+            "args": self.args,
+            "kwargs": self.kwargs,
+            "stash": (
+                self._pmap_instance.stash
+                if self._pmap_instance.stash_runs
+                else None
+            ),
+            "_force": self._pmap_instance._force,
+        }
+
     def stuff(self):
         from ..serializers import stuff
 
-        return stuff(
-            {
-                "func": self.func,
-                "args": self.args,
-                "kwargs": self.kwargs,
-                "stash": (
-                    self._pmap_instance.stash
-                    if self._pmap_instance.stash_runs
-                    else None
-                ),
-                "_force": self._pmap_instance._force,
-            }
-        )
+        return stuff(self._item_dict())
 
     def preload(self):
         if (
@@ -507,16 +631,22 @@ class StashMapRun:
             self._start_preloading()
 
     def _start_preloading(self):
-        stuffed_item = self.stuff()
         if self._pmap_instance.num_proc > 1:
-            with self._pmap_instance._executor_lock:
-                self._future = self._pmap_instance.executor.submit(
-                    _pmap_lookup_item, stuffed_item
-                )
-                self._future.add_done_callback(self._set_preloaded)
+            try:
+                with self._pmap_instance._executor_lock:
+                    self._future = self._pmap_instance.executor.submit(
+                        _pmap_lookup_item, self.stuff()
+                    )
+                    self._future.add_done_callback(self._set_preloaded)
+            except BrokenExecutor:
+                # pool died before it could accept the task (unguarded __main__):
+                # degrade this item to an in-process cache lookup
+                self._pmap_instance._warn_spawn_fallback()
+                self._set_preloaded(_lookup_item(self._item_dict()))
         else:
-            result = _pmap_lookup_item(stuffed_item)
-            self._set_preloaded(result)
+            # num_proc=1: no serialize round-trip, so REPL/exec-defined functions
+            # (whose source can't be recreated) still work
+            self._set_preloaded(_lookup_item(self._item_dict()))
         self._preloading_started = True
 
     def _set_preloaded(self, future_or_result):
@@ -550,13 +680,21 @@ class StashMapRun:
         if self._result is not None:
             self._processing_started = True
             return
-        stuffed_item = self.stuff()
         if self._pmap_instance.num_proc > 1:
-            with self._pmap_instance._executor_lock:
-                self._future = self._pmap_instance._execute_task(stuffed_item)
-                self._future.add_done_callback(self._set_computed)
+            try:
+                with self._pmap_instance._executor_lock:
+                    self._future = self._pmap_instance.executor.submit(
+                        _pmap_item, self.stuff()
+                    )
+                    self._future.add_done_callback(self._set_computed)
+            except BrokenExecutor:
+                # pool died before accepting the task (unguarded __main__):
+                # degrade this item to in-process computation
+                self._pmap_instance._warn_spawn_fallback()
+                self._set_computed(_run_item(self._item_dict()))
         else:
-            self._direct_result = self._pmap_instance._execute_task(stuffed_item)
+            # num_proc=1: run directly without a serialize round-trip
+            self._direct_result = _run_item(self._item_dict())
             self._set_computed(self._direct_result)
         self._processing_started = True
 
@@ -566,6 +704,24 @@ class StashMapRun:
             if isinstance(future_or_result, Future):
                 try:
                     self._result = future_or_result.result()
+                except BrokenExecutor:
+                    # the pool broke while THIS item was already submitted/running
+                    # — a worker HARD-crashed (segfault/OOM/os._exit). Do NOT
+                    # recompute in the parent: the item may have partially run
+                    # (double side effects), and a deterministic crash on this
+                    # input would take the parent down too. Surface a clear error
+                    # for the item instead. (Submit-time BrokenExecutor, where the
+                    # item never ran, still degrades to in-process compute in
+                    # _start_processing/_start_preloading.)
+                    if self._pmap_instance.num_proc > 1:
+                        taint_global_executor(self._pmap_instance.num_proc)
+                    self._error = RuntimeError(
+                        "stash.map: a worker process crashed while computing this "
+                        "item (segfault/OOM, or an unguarded num_proc>1 map in a "
+                        "script). It was NOT recomputed in the parent, to avoid "
+                        "double side effects. Guard a module-level map() with "
+                        "if __name__=='__main__', or use num_proc=1."
+                    )
                 except Exception as e:
                     # raising here would be swallowed by add_done_callback:
                     # remember the failure and re-raise when .result is read
@@ -599,6 +755,28 @@ class StashMapRun:
         if self._error is not None:
             raise self._error
         return self._result
+
+    @property
+    def was_cached(self):
+        """True if this run's result came from the stash cache instead of being
+        (re)computed in this process. Read-only. Forces computation if the run
+        hasn't finished so the answer is meaningful even before the map is
+        iterated; after iteration it just reflects the settled cache status."""
+        # A result present before this instance ever looked it up or computed it
+        # came pre-populated from a stashed/deserialized StashMap (the whole map
+        # was a cache hit) — that's cached.
+        if (
+            self._result is not None
+            and not self._preloading_started
+            and not self._processing_started
+        ):
+            return True
+        if not self._computed:
+            # ensure the preload cache lookup / computation has resolved
+            self.result
+        # _needed_computing is set False only on a cache hit (see _set_preloaded);
+        # a miss sets it True, so anything other than an explicit False was computed
+        return self._needed_computing is False
 
     def compute(self):
         if self._result is None and not self._processing_started and not self._computed:
@@ -642,42 +820,36 @@ def init_worker():
 
 
 def pmap(func, *args, **kwargs):
-    for res in StashMap(func, *args, **kwargs):
-        yield res.result
+    # StashMap now iterates values directly (use .runs for the wrappers).
+    # pmap caches per-item results (stash_runs) but not the map object itself.
+    kwargs.setdefault("stash_map", False)
+    yield from StashMap(func, *args, **kwargs)
 
 
 def pmap_l(*x, **y):
     return list(pmap(*x, **y))
 
 
-def _pmap_item(stuffed_item):
-    from ..serializers import unstuff
-
-    unstuffed_item = unstuff(stuffed_item)  # if num_proc>1 else stuffed_item
-    func, args, kwargs = (
-        unstuffed_item["func"],
-        unstuffed_item["args"],
-        unstuffed_item["kwargs"],
-    )
-    stash = unstuffed_item.get("stash")
-    _force = unstuffed_item.get("_force")
+def _run_item(item):
+    """Compute one item from an already-deserialized item dict. Used directly on
+    the num_proc=1 path (no serialize round-trip, so REPL/exec-defined functions
+    whose source can't be recreated still work)."""
+    func, args, kwargs = item["func"], item["args"], item["kwargs"]
+    stash = item.get("stash")
+    _force = item.get("_force")
     if stash is not None:
         return stash.run(func, *args, **kwargs, _force=_force)
     else:
         return func(*args, **kwargs)
 
 
-def _pmap_lookup_item(stuffed_item):
-    from ..serializers import unstuff
+def _lookup_item(item):
+    """Cache-lookup one item from an already-deserialized item dict (num_proc=1
+    path). Returns ('hit', value) / ('miss', None)."""
     from ..engines.base import _MISSING
 
-    unstuffed_item = unstuff(stuffed_item)  # if num_proc>1 else stuffed_item
-    func, args, kwargs = (
-        unstuffed_item["func"],
-        unstuffed_item["args"],
-        unstuffed_item["kwargs"],
-    )
-    stash = unstuffed_item["stash"]
+    func, args, kwargs = item["func"], item["args"], item["kwargs"]
+    stash = item.get("stash")
     if stash is not None:
         result = stash.get_func(*args, func=func, default=_MISSING, **kwargs)
         # a status tuple, not a bare value: sentinel identity does not survive
@@ -685,6 +857,20 @@ def _pmap_lookup_item(stuffed_item):
         if result is not _MISSING:
             return ("hit", result)
     return ("miss", None)
+
+
+def _pmap_item(stuffed_item):
+    # worker entrypoint (num_proc>1): deserialize then compute
+    from ..serializers import unstuff
+
+    return _run_item(unstuff(stuffed_item))
+
+
+def _pmap_lookup_item(stuffed_item):
+    # worker entrypoint (num_proc>1): deserialize then cache-lookup
+    from ..serializers import unstuff
+
+    return _lookup_item(unstuff(stuffed_item))
 
 
 

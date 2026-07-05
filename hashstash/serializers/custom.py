@@ -3,6 +3,7 @@
 # depends on import order (spawn workers + editable installs order imports
 # differently). Never rely on the star-chain for stdlib names.
 import enum
+import functools
 import importlib
 import inspect
 import os
@@ -295,6 +296,13 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
     if inspect.isgenerator(obj):
         return GeneratorSerializer.serialize(obj)
 
+    # functools.partial is callable, so is_function() would route it to
+    # FunctionSerializer, which stored only the bare 'functools.partial' address
+    # and silently rebuilt the partial CLASS (not the bound call) — broken at call
+    # time. Intercept it here (before is_function) and store func + args + keywords.
+    if isinstance(obj, functools.partial):
+        return PartialSerializer.serialize(obj)
+
     if is_function(obj):
         return FunctionSerializer.serialize(obj)
     
@@ -414,12 +422,27 @@ def _deserialize_custom(data: Any) -> Any:
             return InstanceSerializer.deserialize(data)
 
         if addr and addr in CUSTOM_DESERIALIZERS:
-            # fixed, vetted dispatch table (numpy/pandas/containers): the code
-            # that runs is ours, not payload-chosen — allowed in safe mode
-            return CUSTOM_DESERIALIZERS[addr](data)
+            fn = CUSTOM_DESERIALIZERS[addr]
+            # CRITICAL: the dispatch KEY is the payload's attacker-controlled
+            # __py__, and a few registered addresses ('function'/'type'/'object'/
+            # ReusableGenerator) route to exec/compile-based reconstruction. This
+            # table branch runs BEFORE the pytype refusals below, so without this
+            # guard a payload could set __py__='function' and execute code under
+            # safe mode. Refuse the code-executing deserializers here too.
+            if _safe_mode_active() and fn in _UNSAFE_CUSTOM_DESERIALIZERS:
+                _refuse_unsafe(f"a code-reconstructing type via __py__={addr!r}")
+            return fn(data)
 
         if pytype == 'reducer':
             return ReducerSerializer.deserialize(data)
+
+        if pytype == 'partial':
+            # a functools.partial wraps an arbitrary callable (its func could be
+            # os.system), so reconstructing one runs payload-chosen code on call —
+            # refuse in safe mode just like a function.
+            if _safe_mode_active():
+                _refuse_unsafe(f"a functools.partial ({addr!r})")
+            return PartialSerializer.deserialize(data)
 
         if pytype in {'function', 'classmethod', 'instancemethod'}:
             if _safe_mode_active():
@@ -488,27 +511,6 @@ class IterableSerializer(CustomSerializer):
     def deserialize(data):
         obj = flexible_import(data['__py__'])
         return obj(_deserialize_custom(data['__data__']))
-
-class MetaDataFrameSerializer(CustomSerializer):
-    @staticmethod
-    def serialize(obj):
-        return {
-            '__py__': get_obj_addr(obj),
-            '__data__': obj.stuff()
-        }
-        # data = obj.to_dict()
-        # data['data'] = PandasDataFrameSerializer.serialize(data['data'])
-        # return {
-        #     '__py__': get_obj_addr(obj),
-        #     '__data__': data
-        # }
-    
-    @staticmethod
-    def deserialize(data):
-        data = data['__data__']
-        return MetaDataFrame.unstuff(data)
-        # data['data'] = PandasDataFrameSerializer.deserialize(data['data'])
-        # return MetaDataFrame(**data)
 
 def deactivate_pandas_extension():
     global PANDAS_EXTENSION_ACTIVATED
@@ -617,6 +619,15 @@ class NumpySerializer(CustomSerializer):
         dtype = _data_to_dtype(data['__data__']['dtype'])
         shape = tuple(data['__data__']['shape'])
         if 'bytes' in data['__data__']:
+            if getattr(dtype, "hasobject", False):
+                # frombuffer with an object-containing dtype would reinterpret
+                # raw bytes as Python object POINTERS — a memory-corruption
+                # primitive. Refuse it (defense in depth: numpy blocks object
+                # frombuffer today, but don't rely on that). Legit object arrays
+                # take the 'values' path below, which rebuilds from safe items.
+                raise ValueError(
+                    "refusing to deserialize a numpy array with an object dtype from a byte buffer"
+                )
             arr_bytes = decode(data['__data__']['bytes'], compress=False, b64=True)
             return np.frombuffer(arr_bytes, dtype=dtype).reshape(shape)
         else:
@@ -776,6 +787,28 @@ class ZoneInfoSerializer(CustomSerializer):
     def deserialize(data):
         from zoneinfo import ZoneInfo
         return ZoneInfo(data['__data__']['key'])
+
+
+class FractionSerializer(CustomSerializer):
+    """fractions.Fraction — store (numerator, denominator) so the serialized form
+    is identical across Python versions. Fraction.__reduce__ changed between 3.9
+    ('22/7') and 3.11+ ((22, 7)), which gave the SAME Fraction a different cache
+    key on 3.9 vs 3.11+ (a portability break for Fraction cache keys). Rebuilding
+    with Fraction(num, den) runs no code, so it stays safe-mode friendly."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': 'fractions.Fraction',
+            '__pytype__': 'fraction',
+            '__data__': {'numerator': obj.numerator, 'denominator': obj.denominator},
+        }
+
+    @staticmethod
+    def deserialize(data):
+        from fractions import Fraction
+        d = data['__data__']
+        return Fraction(d['numerator'], d['denominator'])
 
 
 class PandasSeriesSerializer(CustomSerializer):
@@ -1034,9 +1067,19 @@ class FunctionSerializer(CustomSerializer):
         
         if not can_import_object(full_name) or get_obj_module(obj) == '__main__':
             obj_d['__source__'] =  get_function_src(obj)
+            # Capture free-variable cells so closures round-trip. Recompiling the
+            # source alone treats captured names as GLOBALS, so the rebuilt callable
+            # raised NameError only at CALL time (silent corruption at store time).
+            # We rebuild the closure on load by wrapping the source in an enclosing
+            # scope that binds these names (see recreate_function_from_src).
+            closure_vals, closure_self = _capture_closure(func)
+            if closure_vals:
+                obj_d['__closure__'] = closure_vals
+            if closure_self:
+                obj_d['__closure_self__'] = closure_self
 
         return obj_d
-        
+
 
     @staticmethod
     @log.debug
@@ -1066,7 +1109,11 @@ class FunctionSerializer(CustomSerializer):
         elif '__source__' in data:
             source = data['__source__']
             func_name = data['__py__'].split('.')[-1]
-            return recreate_function_from_src(source, func_name)
+            return recreate_function_from_src(
+                source, func_name,
+                closure=data.get('__closure__'),
+                closure_self=data.get('__closure_self__'),
+            )
         
         else:
             #pprint(data)
@@ -1076,7 +1123,48 @@ class FunctionSerializer(CustomSerializer):
         return func
 
 
-def recreate_function_from_src(source, func_name):
+def _capture_closure(func):
+    """Serialize a function's free-variable cells so a source-recreated closure
+    can rebind them on load.
+
+    Returns (values, self_refs):
+      values    -- {freevar_name: serialized_value} for captured non-self values
+      self_refs -- [freevar_name, ...] whose cell holds the function itself
+                   (recursive closure); the rebuilt enclosing def provides these,
+                   so they are not passed in as values.
+
+    Raises a clear error at STORE time for a cell we cannot round-trip (an empty
+    cell), so a user never receives a silently-broken callable back."""
+    code = getattr(func, '__code__', None)
+    closure = getattr(func, '__closure__', None)
+    if code is None or not closure or not code.co_freevars:
+        return None, None
+    values = {}
+    self_refs = []
+    for name, cell in zip(code.co_freevars, closure):
+        try:
+            value = cell.cell_contents
+        except ValueError:
+            raise ValueError(
+                f"cannot serialize closure "
+                f"{getattr(func, '__qualname__', getattr(func, '__name__', func))!r}: "
+                f"its captured variable {name!r} is an empty cell (bound later in the "
+                f"enclosing scope). Define the function at module level or pass the "
+                f"value as an argument."
+            )
+        if value is func:
+            self_refs.append(name)          # recursive self-reference
+        else:
+            values[name] = _serialize_custom(value)
+    return (values or None), (self_refs or None)
+
+
+def recreate_function_from_src(source, func_name, closure=None, closure_self=None):
+    if closure or closure_self:
+        return _recreate_closure_function(
+            source, func_name, closure or {}, closure_self or []
+        )
+
     # Handle lambda functions
     if source.startswith('lambda'):
         lambda_expr = source.split(':')[0] + ':' + source.split(':')[1].split(',')[0]
@@ -1084,22 +1172,89 @@ def recreate_function_from_src(source, func_name):
         func = eval(code)
         func.__source__ = source
         return func
-    
+
     code = compile(source, '<string>', 'exec')
-    
+
     try:
         namespace = globals()
         exec(code, namespace)
         func = namespace[func_name]
         func.__source__ = source
         return func
-
-        # closure = get_function_closure(func)    
-        # if closure:
-        #     func.__closure__ = tuple(cell(v) for v in closure.values())
     except Exception as e:
         log.error(f"Error creating function: {e}")
         raise
+
+
+def _recreate_closure_function(source, func_name, closure, closure_self):
+    """Rebuild a closure by compiling its source inside a synthetic enclosing
+    scope that binds the captured free variables, so they resolve as real closure
+    cells (not globals). Non-self captures are passed in as enclosing-scope
+    arguments; self-references (recursive closures) are supplied by the enclosing
+    def itself, so recursion resolves naturally."""
+    if not str(source).strip():
+        # no retrievable source (defined in a REPL / `python -c` / exec) — fail
+        # loudly with guidance instead of building a wrapper whose `return
+        # <name>` references an undefined name and dies with a cryptic NameError
+        raise ValueError(
+            f"cannot reconstruct closure {func_name!r}: its source was not "
+            f"available when it was stored (functions defined in a REPL, "
+            f"`python -c`, or exec have no retrievable source). Define it at "
+            f"module level, or pass the captured values as plain arguments."
+        )
+    values = {name: _deserialize_custom(v) for name, v in closure.items()}
+    params = list(values.keys())  # self-refs are intentionally NOT parameters
+
+    if source.startswith('lambda'):
+        lambda_expr = source.split(':')[0] + ':' + source.split(':')[1].split(',')[0]
+        ret_name = '__hashstash_lambda__'
+        body = f"    {ret_name} = {lambda_expr}"
+    else:
+        ret_name = func_name
+        body = '\n'.join('    ' + line for line in source.splitlines())
+
+    wrapper_src = (
+        f"def __hashstash_outer__({', '.join(params)}):\n"
+        f"{body}\n"
+        f"    return {ret_name}"
+    )
+    try:
+        code = compile(wrapper_src, '<string>', 'exec')
+        ns = {}
+        exec(code, globals(), ns)
+        func = ns['__hashstash_outer__'](*[values[p] for p in params])
+        func.__source__ = source
+        return func
+    except Exception as e:
+        log.debug(f"Error creating closure function: {e}")
+        raise
+
+
+class PartialSerializer(CustomSerializer):
+    """functools.partial — store the wrapped callable plus the bound positional
+    args and keywords, and rebuild with functools.partial() on load. The generic
+    callable path used to store only the 'functools.partial' address and hand back
+    the partial CLASS, losing func/args/keywords entirely."""
+
+    @staticmethod
+    def serialize(obj):
+        return {
+            '__py__': 'functools.partial',
+            '__pytype__': 'partial',
+            '__data__': {
+                'func': _serialize_custom(obj.func),
+                'args': [_serialize_custom(a) for a in obj.args],
+                'keywords': {k: _serialize_custom(v) for k, v in obj.keywords.items()},
+            },
+        }
+
+    @staticmethod
+    def deserialize(data):
+        d = data['__data__']
+        func = _deserialize_custom(d['func'])
+        args = [_deserialize_custom(a) for a in d['args']]
+        keywords = {k: _deserialize_custom(v) for k, v in d['keywords'].items()}
+        return functools.partial(func, *args, **keywords)
 
 
 class ClassSerializer(CustomSerializer):
@@ -1274,7 +1429,6 @@ CUSTOM_SERIALIZERS = {
     'pathlib._local.PosixPath': PathSerializer.serialize,
     'pathlib._local.WindowsPath': PathSerializer.serialize,
     'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.serialize,
-    'hashstash.utils.dataframes.MetaDataFrame': MetaDataFrameSerializer.serialize,
 }
 
 CUSTOM_DESERIALIZERS = {
@@ -1297,7 +1451,6 @@ CUSTOM_DESERIALIZERS = {
     'pathlib._local.PosixPath': PathSerializer.deserialize,
     'pathlib._local.WindowsPath': PathSerializer.deserialize,
     'hashstash.utils.misc.ReusableGenerator': ReusableGeneratorSerializer.deserialize,
-    'hashstash.utils.dataframes.MetaDataFrame': MetaDataFrameSerializer.deserialize,
 }
 
 # pandas scalar types (both the internal and pandas-3.x top-level module paths)
@@ -1327,6 +1480,10 @@ for _addr in (
     CUSTOM_DESERIALIZERS[_addr] = PandasPeriodSerializer.deserialize
 CUSTOM_SERIALIZERS['zoneinfo.ZoneInfo'] = ZoneInfoSerializer.serialize
 CUSTOM_DESERIALIZERS['zoneinfo.ZoneInfo'] = ZoneInfoSerializer.deserialize
+# version-independent Fraction form (see FractionSerializer) — takes precedence
+# over the reducer path whose output differs between Python 3.9 and 3.11+
+CUSTOM_SERIALIZERS['fractions.Fraction'] = FractionSerializer.serialize
+CUSTOM_DESERIALIZERS['fractions.Fraction'] = FractionSerializer.deserialize
 for _addr in ('numpy.datetime64', 'numpy.timedelta64'):
     CUSTOM_SERIALIZERS[_addr] = NumpyDatetime64Serializer.serialize
     CUSTOM_DESERIALIZERS[_addr] = NumpyDatetime64Serializer.deserialize
@@ -1351,6 +1508,18 @@ for _addr in (
 for _addr in ('pandas.core.arrays.categorical.Categorical', 'pandas.Categorical'):
     CUSTOM_SERIALIZERS[_addr] = PandasCategoricalSerializer.serialize
     CUSTOM_DESERIALIZERS[_addr] = PandasCategoricalSerializer.deserialize
+
+
+# Deserializers in CUSTOM_DESERIALIZERS that RECONSTRUCT CODE (exec/compile).
+# The dispatch is keyed by the payload's own __py__, so these must be refused in
+# safe mode even though the table is otherwise "vetted" (see the guard in
+# _deserialize_custom). Add any new exec-capable serializer here.
+_UNSAFE_CUSTOM_DESERIALIZERS = {
+    FunctionSerializer.deserialize,
+    ClassSerializer.deserialize,
+    InstanceSerializer.deserialize,
+    ReusableGeneratorSerializer.deserialize,
+}
 
 
 # numpy scalar types registered by ADDRESS STRING so that `import hashstash`

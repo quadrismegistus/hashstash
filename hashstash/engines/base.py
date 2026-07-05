@@ -727,13 +727,24 @@ class BaseHashStash(MutableMapping):
         """Cross-process lock scoped to one key, for single-flight computes.
 
         Locks are striped: the key hashes to one of SINGLE_FLIGHT_STRIPES file
-        locks next to the stash, so lock files stay bounded. Two different keys
-        occasionally share a stripe and serialize their computes — harmless.
-        Reentrant within a thread; spans processes on one machine (a file lock
-        cannot span hosts, so multi-host redis/mongo callers may still race)."""
+        locks, so lock files stay bounded. Two different keys occasionally share
+        a stripe and serialize their computes — harmless. Reentrant within a
+        thread; spans processes on one machine (a file lock cannot span hosts, so
+        multi-host redis/mongo callers may still race).
+
+        The lock file is always LOCAL, derived from a hash of self.path under the
+        temp dir — self.path can be a remote URL (s3://..., memory://...) for the
+        fsspec engine, and building the lock at that path materialized a bogus
+        `./s3:/...` lock tree in the working directory. Two processes on one
+        machine hash to the same path, so cross-process single-flight still
+        works."""
+        import tempfile
         encoded_key = self.encode_key(unencoded_key)
         stripe = int(encode_hash(encoded_key), 16) % SINGLE_FLIGHT_STRIPES
-        return get_lock(f"{self.path}.sf{stripe}")
+        lock_base = os.path.join(
+            tempfile.gettempdir(), "hashstash-locks", encode_hash(str(self.path))
+        )
+        return get_lock(f"{lock_base}.sf{stripe}")
 
     @log.debug
     def get(
@@ -792,18 +803,32 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def set(self, unencoded_key: Any, unencoded_value: Any, append=None) -> None:
-        # hold the lock across the whole read-modify-write: append mode reads the
-        # old envelope and writes it back, and an unlocked gap loses concurrent appends
-        with self:
-            encoded_key = self.encode_key(unencoded_key)
-            new_unencoded_value = self.new_unencoded_value(
-                unencoded_value,
-                unencoded_key=unencoded_key,
-                append=append,
-            )
+        # Append is a read-modify-write: it reads the old envelope, appends, and
+        # writes it back. `with self:` locks that RMW for needs_lock=True engines
+        # (sqlite/pairtree/shelve). The needs_lock=False KV engines (lmdb, redis,
+        # mongo, diskcache, duckdb, leveldb, fsspec, memory) rely on their own
+        # per-op locking, which does NOT span the two ops of an RMW — so an
+        # unlocked concurrent append lost versions. Hold a per-key cross-process
+        # lock around the RMW for append on those engines. (A file lock only
+        # coordinates one machine; multi-host redis/mongo appends can still race.)
+        is_append = append if append is not None else self.append_mode
+        rmw_lock = self.key_lock(unencoded_key) if (is_append and not self.needs_lock) else None
+        if rmw_lock is not None:
+            rmw_lock.acquire()
+        try:
+            with self:
+                encoded_key = self.encode_key(unencoded_key)
+                new_unencoded_value = self.new_unencoded_value(
+                    unencoded_value,
+                    unencoded_key=unencoded_key,
+                    append=append,
+                )
 
-            encoded_value = self.encode_value(new_unencoded_value)
-            self._set(encoded_key, encoded_value)
+                encoded_value = self.encode_value(new_unencoded_value)
+                self._set(encoded_key, encoded_value)
+        finally:
+            if rmw_lock is not None:
+                rmw_lock.release()
         self._stats["sets"] += 1
         if self.max_entries is not None:
             self._enforce_max_entries()
@@ -968,15 +993,19 @@ class BaseHashStash(MutableMapping):
         import asyncio
         return await asyncio.to_thread(self.has, *args, **kwargs)
 
-    async def arun(self, func, *args, _force=False, _store_args=True, **kwargs):
+    async def arun(self, func, *args, _force=False, _store_args=True,
+                   _cache_exceptions=False, _exception_ttl=None, **kwargs):
         import asyncio
 
         funcx = unwrap_func(func)
         if not asyncio.iscoroutinefunction(funcx):
-            # plain callable: just run() off-thread
+            # plain callable: just run() off-thread (which handles exception
+            # caching itself)
             return await asyncio.to_thread(
                 self.run, func, *args,
-                _force=_force, _store_args=_store_args, **kwargs,
+                _force=_force, _store_args=_store_args,
+                _cache_exceptions=_cache_exceptions, _exception_ttl=_exception_ttl,
+                **kwargs,
             )
 
         fstash = self.attach_func(func)
@@ -987,9 +1016,25 @@ class BaseHashStash(MutableMapping):
         if not _force:
             res = await asyncio.to_thread(fstash.get, unencoded_key, default=_MISSING)
             if res is not _MISSING:
-                return res
-        # await the coroutine, then store its result off-thread
-        result = await funcx(*args, **func_kwargs)
+                # re-raise a still-valid cached exception; expired -> _MISSING ->
+                # recompute (parity with sync run())
+                res = fstash._resolve_hit(res)
+                if res is not _MISSING:
+                    return res
+        # await the coroutine; negative-cache a failure like run() does so a
+        # later await replays it instead of re-executing
+        try:
+            result = await funcx(*args, **func_kwargs)
+        except Exception as e:
+            if _cache_exceptions:
+                try:
+                    expires_at = (time.time() + _exception_ttl) if _exception_ttl else None
+                    await asyncio.to_thread(
+                        fstash.set, unencoded_key, _make_cached_exc(e, expires_at)
+                    )
+                except Exception:
+                    log.debug("could not negative-cache exception")
+            raise
         await asyncio.to_thread(fstash.set, unencoded_key, result)
         return result
 
@@ -1012,6 +1057,13 @@ class BaseHashStash(MutableMapping):
     ):
         pmap = None
         self.attach_func(func)
+        if stash_map and getattr(self, "safe", False):
+            # a stored StashMap embeds the mapped function, which safe-mode
+            # deserialize refuses — so caching the whole map on a safe stash
+            # (redis/mongo default) makes it unreadable: a repeat map(), or even
+            # keys()/items(), would raise SafeDeserializationError. Skip the
+            # map-level cache under safe mode; per-item results still cache.
+            stash_map = False
         # common_kwargs are merged into every call's options, so they must be part
         # of the map's identity or maps differing only in kwargs return stale results
         key = StashMap.get_stash_key(
@@ -1197,6 +1249,11 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def __len__(self) -> int:
+        # Physical count of stored keys. TTL is applied LAZILY: an expired entry
+        # is hidden by `in`/`get` and skipped by iteration, but still counted
+        # here until it is overwritten/deleted (or compacted). So on a TTL'd
+        # stash, len() can exceed the number of live entries — matching how disk
+        # caches generally treat expiry (no eager background sweep).
         with self as cache, cache.db as db:
             return len(db)
 
@@ -1271,7 +1328,12 @@ class BaseHashStash(MutableMapping):
         return None
 
     def _all_results(self, all_results=None):
-        return all_results if all_results is not None else self.append_mode
+        # Default to LATEST-per-key — consistent with len() and stash[key].
+        # Pass all_results=True for every appended version (append_mode history).
+        # This used to default to self.append_mode, so items()/values() in an
+        # append_mode stash yielded ALL versions while len()/getitem were latest,
+        # and DataFrames built from items() double-counted rewritten keys.
+        return all_results if all_results is not None else False
 
     @log.debug
     def keys(self, as_string=False):
@@ -1281,6 +1343,22 @@ class BaseHashStash(MutableMapping):
             except Exception as e:
                 log.error(f"Error decoding key: {e}")
                 raise e
+
+    def filter_keys(self, _subdict=None, **field_values):
+        """Yield stored keys that are dicts containing all the given field=value
+        pairs — a convenience over scanning ``keys()`` yourself when you use
+        structured dict keys (``stash[{"model": m, "prompt": p}] = ...``).
+
+            for key in stash.filter_keys(model="gpt-4"):
+                ...
+
+        This is an O(n) scan (there is no per-field key index); it just saves the
+        boilerplate. Pass fields as kwargs or a dict: ``filter_keys({"model": m})``.
+        """
+        query = {**(_subdict or {}), **field_values}
+        for key in self.keys():
+            if isinstance(key, dict) and all(key.get(k) == v for k, v in query.items()):
+                yield key
 
     @log.debug
     def values(self, all_results=None, with_metadata=False, **kwargs):
@@ -1361,9 +1439,13 @@ class BaseHashStash(MutableMapping):
 
     @property
     def stats(self):
-        """Access counters for this stash instance: hits, misses, sets, deletes.
-        Per-instance and in-memory only (not shared across processes)."""
-        return dict(self._stats)
+        """Counters for this stash instance: hits, misses, sets, deletes (all
+        four keys always present). Per-instance and in-memory only (not shared
+        across processes). Note: `stash.run(...)` / `@stashed_result` count on
+        the function's own sub-stash (`func.stash.stats`), not on this one."""
+        base = {"hits": 0, "misses": 0, "sets": 0, "deletes": 0}
+        base.update(self._stats)
+        return base
 
     def reset_stats(self):
         self._stats.clear()
@@ -1439,7 +1521,11 @@ class BaseHashStash(MutableMapping):
 
     def __repr__(self):
         path = self.path.replace(os.path.expanduser("~"), "~")
-        return f"""{self.__class__.__name__}({path})"""
+        # append a compact summary of any non-zero activity counters
+        st = self.stats
+        active = " ".join(f"{k}={st[k]}" for k in ("hits", "misses", "sets", "deletes") if st[k])
+        suffix = f" [{active}]" if active else ""
+        return f"{self.__class__.__name__}({path}){suffix}"
 
     def _repr_html_(self):
         selfstr = repr(self)
@@ -1567,15 +1653,18 @@ class BaseHashStash(MutableMapping):
         df_engine="pandas",
         **kwargs,
     ):
+        import pandas as pd
+        from ..utils.dataframes import set_index
+
         ld = self.assemble_ld(
             all_results=all_results,
             with_metadata=with_metadata,
             **kwargs,
         )
         if not ld:
-            return MetaDataFrame([], df_engine=df_engine)
-        mdf = MetaDataFrame(ld, df_engine=df_engine)
-        return mdf.set_index()
+            return pd.DataFrame()
+        # key columns are '_'-prefixed; promote them to the index
+        return set_index(pd.DataFrame(ld), prefix_columns="_")
 
     @property
     def df(self):
@@ -1693,7 +1782,12 @@ class BaseHashStash(MutableMapping):
         )
         if not dry_run:
             for key in matched:
-                del self[key]
+                # delete the physical entry directly: `del self[key]` goes
+                # through has(), which is TTL-aware and would raise KeyError on a
+                # TTL-expired-but-present key — exactly the entries prune targets.
+                # prune already iterated keys(), so existence is not in question.
+                self._del(self.encode_key(key))
+                self._stats["deletes"] += 1
         return len(matched)
 
 
@@ -1753,6 +1847,18 @@ def HashStash(
         ) from e
     cls = getattr(module, class_name)
 
+    # name= is a friendly alias for dbname= (the real param): several users
+    # reached for name= and had it silently swallowed into a shared default stash
+    if "name" in kwargs and dbname is None:
+        dbname = kwargs.pop("name")
+    elif "name" in kwargs:
+        kwargs.pop("name")
+
+    # Reject-by-warning on unknown kwargs instead of silently dropping them: a
+    # typo like dir= / ttll= / compres= otherwise sends data to the default
+    # cache or disables a setting with no signal — a data-safety footgun.
+    _warn_unknown_stash_kwargs(cls, kwargs)
+
     return cls(
         root_dir=root_dir,
         compress=compress,
@@ -1761,6 +1867,45 @@ def HashStash(
         dbname=dbname,
         **kwargs,
     )
+
+
+def _accepted_kwarg_names(cls):
+    import inspect
+    names = set()
+    for klass in cls.__mro__:
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        try:
+            for pname, p in inspect.signature(init).parameters.items():
+                if pname != "self" and p.kind in (
+                    p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY
+                ):
+                    names.add(pname)
+        except (ValueError, TypeError):
+            pass
+    return names
+
+
+def _warn_unknown_stash_kwargs(cls, kwargs):
+    known = _accepted_kwarg_names(cls)
+    known |= set(getattr(cls, "to_dict_attrs", []))
+    # factory params + common engine params that flow through as **kwargs
+    known |= {
+        "root_dir", "engine", "dbname", "name", "compress", "b64", "serializer",
+        "filename", "df_engine", "io_engine", "map_size", "max_map_size", "flat",
+    }
+    # underscore kwargs are internal (from_dict round-trips) — never flag them
+    unknown = [k for k in kwargs if k not in known and not k.startswith("_")]
+    if unknown:
+        import warnings
+        warnings.warn(
+            f"HashStash: ignoring unrecognized argument(s) {unknown} — check for "
+            f"typos (e.g. root_dir not dir, dbname/name, ttl, compress). An "
+            f"unrecognized argument is dropped, which can silently write to the "
+            f"default cache or leave a setting off.",
+            stacklevel=3,
+        )
 
 
 def attach_stash_to_function(func, stash=None, **stash_kwargs):

@@ -19,29 +19,41 @@ class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
     filename_is_dir = True
     needs_lock = False  # LMDB has its own multi-reader/single-writer locking
-    to_dict_attrs = BaseHashStash.to_dict_attrs + ["map_size"]
-    # Ceiling for auto-grow. A wedged write that keeps raising MapFullError would
-    # otherwise double map_size forever; stop at 256 GB and surface the error.
-    max_map_size = 256 * 1024**3  # 256 GB
+    to_dict_attrs = BaseHashStash.to_dict_attrs + ["map_size", "max_map_size"]
 
-    def __init__(self, *args, map_size=10 * 1024**3, **kwargs):  # Default to 10GB
-        self.map_size = map_size
+    def __init__(self, *args, map_size=None, max_map_size=None, **kwargs):
+        # initial memory-map size (auto-grows on MapFullError) and the ceiling
+        # for that auto-grow. A wedged write that kept raising MapFullError would
+        # otherwise double map_size forever; the cap stops it and surfaces the
+        # error. Raise max_map_size for caches larger than the 256 GB default.
+        self.map_size = map_size if map_size is not None else DEFAULT_LMDB_MAP_SIZE
+        self.max_map_size = (
+            max_map_size if max_map_size is not None else DEFAULT_LMDB_MAX_MAP_SIZE
+        )
         super().__init__(*args, **kwargs)
+
+    def _env_key(self):
+        # Key the process-wide env registry by REAL path so two spellings of the
+        # same directory (symlink, relative-vs-absolute, trailing slash) share
+        # one handle — opening the same LMDB dir twice in a process corrupts
+        # reads (issue #9).
+        return os.path.realpath(self.path)
 
     @log.debug
     def get_db(self):
+        key = self._env_key()
         with _lmdb_envs_guard:
-            env = _lmdb_envs.get(self.path)
+            env = _lmdb_envs.get(key)
             if env is None:
                 import lmdb
                 os.makedirs(self.path_dirname, exist_ok=True)
                 env = lmdb.open(self.path, map_size=self.map_size)
-                _lmdb_envs[self.path] = env
+                _lmdb_envs[key] = env
             return env
 
     def _drop_env(self):
         with _lmdb_envs_guard:
-            env = _lmdb_envs.pop(self.path, None)
+            env = _lmdb_envs.pop(self._env_key(), None)
         if env is not None:
             try:
                 env.close()
@@ -63,6 +75,10 @@ class LMDBHashStash(BaseHashStash):
                 with self.get_db().begin(write=write) as txn:
                     yield txn
                 break
+            except lmdb.MapResizedError:
+                # another process grew the shared map; adopt the new size + retry
+                self._adopt_mapsize()
+                continue
             except lmdb.Error as e:
                 log.debug(f"LMDB transaction error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
@@ -90,6 +106,21 @@ class LMDBHashStash(BaseHashStash):
         self.get_db().set_mapsize(self.map_size)
         log.debug(f"grew LMDB map_size to {self.map_size} bytes for {self.path}")
 
+    def _adopt_mapsize(self):
+        """Adopt the current on-disk map size after ANOTHER process grew it.
+
+        LMDB raises MapResizedError (MDB_MAP_RESIZED) on begin() when the shared
+        file's map grew beyond this env's view. set_mapsize(0) tells LMDB to read
+        the current size from the file; we must NOT _drop_env() and reopen at our
+        stale self.map_size (which can't map the grown file — that silently lost
+        writes under concurrent growth)."""
+        env = self.get_db()
+        env.set_mapsize(0)  # 0 => adopt the size currently on disk
+        try:
+            self.map_size = env.info()["map_size"]
+        except Exception:
+            pass
+
     def _write(self, fn):
         """Run fn(txn) inside a write transaction, growing the map on MapFullError.
 
@@ -110,6 +141,11 @@ class LMDBHashStash(BaseHashStash):
                 # subclass of lmdb.Error, so this must come first. Don't drop the
                 # env: grow it in place and retry the operation.
                 self._grow_map()  # raises if the cap is hit
+            except lmdb.MapResizedError:
+                # another process grew the shared map; adopt the new size and
+                # retry (must precede the generic lmdb.Error branch, whose
+                # drop-and-reopen-at-stale-size lost the write).
+                self._adopt_mapsize()
             except lmdb.Error as e:
                 attempt += 1
                 log.debug(f"LMDB write error (attempt {attempt}/{max_retries}): {e}")

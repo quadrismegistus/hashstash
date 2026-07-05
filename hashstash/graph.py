@@ -94,10 +94,11 @@ class GraphStash:
     lists on every call — O(degree) I/O per insert, quadratic in the
     final degree when building a hub incrementally. Use add_edges_bulk()
     or ``with g.batch():`` for bulk loads; they group writes per node.
-    edges_where(rel=...) is served from a secondary rel index (built
-    lazily, maintained on add, rebuilt after removes), so a rel-filtered
-    query visits only sources with that rel instead of the whole graph;
-    queries without an exact rel filter still do a full scan.
+    edges_where(rel=...) and edge-property equality filters
+    (edges_where(field=value)) are served from secondary indexes (built
+    lazily, maintained on add, rebuilt after removes), so such queries
+    visit only sources that could match instead of the whole graph;
+    range/other operators (weight__gt) still scan within that set.
     """
 
     def __init__(self, stash, name="graph"):
@@ -122,10 +123,17 @@ class GraphStash:
         # instead of scanning every node. Built lazily, maintained incrementally
         # on add; invalidated (rebuilt on next query) on remove.
         self._rel_index = None
+        # secondary index: edge-prop field -> {value -> set of source node_ids}
+        # with >=1 out-edge whose props[field] == value. Only hashable values are
+        # indexed. Lets edges_where narrow by an equality predicate (e.g.
+        # since=2020) instead of scanning; same lifecycle as the rel index.
+        self._prop_index = None
 
     def _invalidate(self, node_id=None):
-        # any structural change drops the rel index; adds re-maintain it in place
+        # any structural change drops the secondary indexes; adds re-maintain
+        # them in place
         self._rel_index = None
+        self._prop_index = None
         if node_id is None:
             self._cache_nodes.clear()
             self._cache_out.clear()
@@ -158,6 +166,35 @@ class GraphStash:
         # index hasn't been built yet — it'll pick everything up when built)
         if self._rel_index is not None:
             self._rel_index[rel].add(src)
+
+    @staticmethod
+    def _index_props_into(idx, src, props):
+        if not isinstance(props, dict):
+            return
+        for field, value in props.items():
+            try:
+                idx[field][value].add(src)   # only hashable values are indexable
+            except TypeError:
+                pass  # unhashable prop value -> not indexed; query falls back to scan
+
+    def _ensure_prop_index(self):
+        if self._prop_index is not None:
+            return
+        idx = defaultdict(lambda: defaultdict(set))
+        for src in self._out_keys():
+            for _dst, _rel, props in self._get_out(src):
+                self._index_props_into(idx, src, props)
+        self._prop_index = idx
+
+    def _prop_sources(self, field, value):
+        """Source nodes with >=1 out-edge whose props[field] == value (value must
+        be hashable — the caller guards that). Empty set means no such edge."""
+        self._ensure_prop_index()
+        return self._prop_index.get(field, {}).get(value, set())
+
+    def _index_add_props(self, src, props):
+        if self._prop_index is not None:
+            self._index_props_into(self._prop_index, src, props)
 
     def rels(self):
         """Sorted list of distinct relationship types present in the graph."""
@@ -297,6 +334,7 @@ class GraphStash:
         self._cache_in[dst] = in_list
 
         self._index_add(src, rel)
+        self._index_add_props(src, edge_props)
 
         if self._batching:
             # defer the writes; flush persists each dirty node once
@@ -399,19 +437,36 @@ class GraphStash:
         are non-matches, not errors. An absent property fails every
         predicate except __ne.
 
-        An exact ``rel=`` filter is served from the rel index, so the query
-        visits only sources that have an edge of that rel rather than scanning
-        the whole graph; other predicates are then applied within that set.
+        An exact ``rel=`` filter and edge-property equality filters
+        (``field=value``) are served from secondary indexes, so the query visits
+        only sources that could match rather than scanning the whole graph;
+        range/other operators (``weight__gt``) are then applied within that set.
 
         Returns list of (src, dst, rel, props) tuples.
         """
         if rel is not _UNSET:
             kwargs["rel"] = rel
-        # index fast-path: an exact rel equality ("rel" in kwargs, as opposed to
-        # rel__contains etc.) means only sources indexed under that rel can match
+        # index fast-path: narrow the source set before the per-edge scan.
+        # An exact rel= equality uses the rel index; edge-prop equality
+        # predicates (field=value, value hashable) use the prop index and
+        # intersect. Non-equality operators (weight__gt), rel__op, and
+        # source/target predicates are applied per-edge by _match below.
+        # Intersection is a sound over-approximation: a source excluded here
+        # cannot hold a matching edge, and _match still checks each survivor.
+        sources = None  # None == every source
         if "rel" in kwargs:
-            sources = self._rel_sources(kwargs["rel"])
-        else:
+            sources = set(self._rel_sources(kwargs["rel"]))
+        for key, value in kwargs.items():
+            scope, field, op = _parse_predicate(key)
+            if scope != "edge" or field == "rel" or op != "eq":
+                continue
+            try:
+                hash(value)
+            except TypeError:
+                continue  # unhashable query value -> can't index; leave to the scan
+            prop_sources = self._prop_sources(field, value)
+            sources = set(prop_sources) if sources is None else (sources & prop_sources)
+        if sources is None:
             sources = self._out_keys()
         results = []
         for src in sources:
@@ -452,6 +507,7 @@ class GraphStash:
             out_new[src].append((dst, rel, props))
             in_new[dst].append((src, rel, props))
             self._index_add(src, rel)
+            self._index_add_props(src, props)
 
         for src, new_entries in out_new.items():
             out_list = list(self._get_out(src))

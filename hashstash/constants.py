@@ -21,7 +21,10 @@ DEFAULT_DATAFRAME_IO_ENGINE = 'csv'
 OPTIMAL_DATAFRAME_DF_ENGINE = 'pandas'
 DEFAULT_DATAFRAME_DF_ENGINE = 'pandas'
 
-DEFAULT_APPEND_MODE = True
+# Latest-only by default (prune old versions). append_mode=True keeps every
+# version as history (unbounded until compact()); opt into it explicitly. The
+# __init__ default already resolved to False — this makes the constant honest.
+DEFAULT_APPEND_MODE = False
 
 RAW_NO_COMPRESS= 'raw'
 
@@ -29,12 +32,20 @@ DEFAULT_DBNAME = None
 DEFAULT_FILENAME = "data.db"
 DEFAULT_SUB_DBNAME = 'sub_stash'
 
-DEFAULT_LOG_LEVEL = logging.INFO
+DEFAULT_LOG_LEVEL = logging.WARNING  # quiet by default; HASHSTASH_LOG=INFO for verbose
+
+# LMDB memory-map sizing
+DEFAULT_LMDB_MAP_SIZE = 10 * 1024**3       # 10 GB initial map (auto-grows)
+DEFAULT_LMDB_MAX_MAP_SIZE = 256 * 1024**3  # 256 GB auto-grow ceiling
 
 # Default settings
 OPTIMAL_COMPRESS = 'lz4'
 DEFAULT_COMPRESS = RAW_NO_COMPRESS
-DEFAULT_B64 = True
+# b64 base64-encodes the encoded value so it is text-safe, at ~33% size cost.
+# Default OFF: binary-capable engines (pairtree/lmdb/leveldb/diskcache/duckdb/
+# memory/...) store bytes fine and shouldn't pay it. Text-only engines
+# (jsonl/redis/mongo/shelve, which set string_values=True) auto-force it on.
+DEFAULT_B64 = False
 
 COMPRESSERS = ['zlib','lz4','blosc','gzip','bz2']
 

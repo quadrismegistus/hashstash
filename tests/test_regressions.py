@@ -333,8 +333,8 @@ def test_map_key_includes_common_kwargs(tmp_path):
     stash = HashStash(root_dir=str(tmp_path / "cache"))
     r1 = list(stash.map(_mul, objects=[1, 2], y=2, num_proc=1, progress=False))
     r2 = list(stash.map(_mul, objects=[1, 2], y=3, num_proc=1, progress=False))
-    assert [r.result for r in r1] == [2, 4]
-    assert [r.result for r in r2] == [3, 6]
+    assert r1 == [2, 4]   # StashMap iterates values now (was run wrappers)
+    assert r2 == [3, 6]
 
 
 def test_relative_dir_path_resolves_from_cwd(tmp_path, monkeypatch):

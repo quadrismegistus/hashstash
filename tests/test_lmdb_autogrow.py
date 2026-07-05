@@ -73,3 +73,37 @@ def test_lmdb_grow_respects_cap(tmp_path):
     with pytest.raises(lmdb.MapFullError):
         stash._grow_map()
     stash.close()
+
+
+def test_lmdb_same_path_two_instances_share_env(tmp_path):
+    """Issue #9: opening the same LMDB dir twice in one process must return the
+    shared env handle, not raise 'environment already open' (stricter on newer
+    LMDB/Python 3.14). Two spellings of the same dir (trailing slash) resolve to
+    one handle via realpath keying."""
+    root = str(tmp_path / "shared")
+    a = HashStash(engine="lmdb", root_dir=root, dbname="x")
+    a.clear()
+    a["k"] = "v1"
+    b = HashStash(engine="lmdb", root_dir=root, dbname="x")      # 2nd opener
+    assert b["k"] == "v1"
+    c = HashStash(engine="lmdb", root_dir=root + "/", dbname="x")  # same realpath
+    assert c["k"] == "v1"
+    a.close()
+
+
+def test_lmdb_max_map_size_is_configurable(tmp_path):
+    """max_map_size can be set at construction and survives to_dict serialization
+    (so the cap the user chose is honored by rebuilt/pickled stashes)."""
+    stash = HashStash(
+        engine="lmdb",
+        root_dir=str(tmp_path / "m4"),
+        map_size=1024 * 64,
+        max_map_size=1024 * 64 * 4,   # a 4x-of-initial custom ceiling
+    )
+    assert stash.max_map_size == 1024 * 64 * 4
+    rebuilt = HashStash(**stash.to_dict())
+    assert rebuilt.max_map_size == 1024 * 64 * 4
+
+    # a default stash gets the 256 GB ceiling from constants
+    from hashstash.constants import DEFAULT_LMDB_MAX_MAP_SIZE
+    assert HashStash(engine="lmdb", root_dir=str(tmp_path / "m5")).max_map_size == DEFAULT_LMDB_MAX_MAP_SIZE

@@ -8,7 +8,7 @@ import os
 from . import *
 from .pairtree import PairtreeHashStash
 from .base import _filter_by_time
-from ..utils.dataframes import MetaDataFrame
+from ..utils.dataframes import to_pandas, write_df, read_df, concat_dfs, set_index, reset_index
 
 class DataFrameHashStash(PairtreeHashStash):
     engine = "dataframe"
@@ -30,16 +30,16 @@ class DataFrameHashStash(PairtreeHashStash):
             log.debug(f"Input is not a DataFrame")
             return super().set(unencoded_key, unencoded_value, append=append)
 
-        # Handle DataFrame values
-        mdf = MetaDataFrame(unencoded_value)
-        log.debug(f"Input is a {mdf.df_engine} DataFrame with shape: {mdf.shape}")
+        # Handle DataFrame values (converted to pandas; polars input is welcome)
+        df = to_pandas(unencoded_value)
+        log.debug(f"Input is a DataFrame with shape: {df.shape}")
 
         encoded_key = self.encode_key(unencoded_key)
         self._set_key(encoded_key)
         # the io-engine extension marks this version file as a dataframe; plain
         # pairtree versions end in '.<pid>' and are routed to the base decoder
         filepath_value = f"{self._get_path_new_value(encoded_key)}.{self.io_engine}"
-        mdf.write(filepath_value, io_engine=self.io_engine, compression=self.compress)
+        write_df(df, filepath_value, io_engine=self.io_engine, compression=self.compress)
         if not (append or self.append_mode):
             # honor overwrite semantics like pairtree: without this, every set()
             # accumulated another version file forever
@@ -87,10 +87,8 @@ class DataFrameHashStash(PairtreeHashStash):
                 else:
                     obj = decoded_value
                 if as_dataframe and not as_list:
-                    obj = MetaDataFrame(
-                        flatten_ld([obj]),
-                        df_engine=self.df_engine,
-                    )
+                    import pandas as pd
+                    obj = pd.DataFrame(flatten_ld([obj]))
 
                 out_l.append(obj)
 
@@ -98,7 +96,7 @@ class DataFrameHashStash(PairtreeHashStash):
             return default
 
         if as_dataframe and not as_list:
-            return out_l[0].concat(*out_l[1:]) if len(out_l) > 1 else out_l[0]
+            return concat_dfs(out_l) if len(out_l) > 1 else out_l[0]
         else:
             return out_l
 
@@ -140,12 +138,7 @@ class DataFrameHashStash(PairtreeHashStash):
         # here silently masked corrupted entries.
         ext = os.path.splitext(filepath)[1].lstrip(".").lower()
         if ext in get_working_io_engines():
-            return MetaDataFrame.read(
-                filepath,
-                io_engine=ext,
-                df_engine=self.df_engine,
-                compression=self.compress,
-            )
+            return read_df(filepath, io_engine=ext, compression=self.compress)
         return super().decode_value_from_filepath(filepath)
 
     @log.debug
@@ -169,6 +162,24 @@ class DataFrameHashStash(PairtreeHashStash):
                     for val in vals:
                         yield key, val
 
+    def _key_columns(self, df, key):
+        """Readable key columns for one stored frame, matching the base engine.
+
+        Base assemble_ld/flatten_args_kwargs builds key columns from the decoded
+        key value itself (``_key = "Animal 1"``); the old code here serialized
+        each value to bytes (``b'"Animal 1"'``). Scalars broadcast across the
+        frame's rows; a tuple/list/dict key part is placed whole in every cell
+        (not spread element-wise, which pandas would otherwise do for array-likes).
+        """
+        import pandas as pd
+        cols = {}
+        for k, v in flatten_args_kwargs(key).items():
+            if isinstance(v, (list, tuple, dict, set)) or is_dataframe(v):
+                cols[k] = pd.Series([v] * len(df), index=df.index, dtype=object)
+            else:
+                cols[k] = v
+        return cols
+
     def assemble_df(
         self,
         all_results=None,
@@ -179,13 +190,12 @@ class DataFrameHashStash(PairtreeHashStash):
         for key, df in progress_bar(self.items(
             all_results=all_results, with_metadata=with_metadata, as_dataframe=True
         ), total=len(self), desc='concatenating dataframes across values'):
-            dfs.append(
-                df.assign(**{k:serialize(v) for k,v in flatten_args_kwargs(key).items()})
-            )
+            dfs.append(df.assign(**self._key_columns(df, key)))
         if not dfs:
-            return MetaDataFrame([], self.df_engine)
-        combined_df = dfs[0].concat(*dfs[1:])
-        return combined_df.set_index()
+            import pandas as pd
+            return pd.DataFrame()
+        combined_df = concat_dfs(dfs)
+        return set_index(combined_df, prefix_columns=self.prefix_index_cols)
 
     def assemble_ld(
         self,
@@ -198,5 +208,56 @@ class DataFrameHashStash(PairtreeHashStash):
             with_metadata=with_metadata,
             **kwargs,
         )
-        ld = mdf.reset_index().to_pandas().df.to_dict(orient="records")
+        ld = reset_index(to_pandas(mdf)).to_dict(orient="records")
         return filter_ld(ld, no_nan=True)
+
+    def _parquet_files(self):
+        import glob
+        return sorted(
+            glob.glob(os.path.join(self.path_dirname, "**", "*.parquet"), recursive=True)
+        )
+
+    def duckdb(self, table="data"):
+        """Return a DuckDB connection for SQL across all cached frames as one
+        table, without deserializing — DuckDB scans the parquet files in place.
+
+        Every stored DataFrame is unioned into a single view named `table`
+        (default 'data'), so this is SQL over the whole cache as one homogeneous
+        table. Cross-schema joins of different keys are NOT supported: the frames
+        share one view, and unioning heterogeneous schemas raises a parquet
+        schema mismatch. Requires ``io_engine='parquet'``. Reuse the returned
+        connection for several queries; ``sql()`` is the one-shot convenience.
+        """
+        import duckdb
+
+        if self.io_engine != "parquet":
+            raise ValueError(
+                "stash.duckdb()/sql() needs io_engine='parquet' "
+                f"(this stash uses {self.io_engine!r}); "
+                "open it with HashStash(engine='dataframe', io_engine='parquet')"
+            )
+        con = duckdb.connect()
+        files = self._parquet_files()
+        if files:
+            con.read_parquet(files).create_view(table)
+        else:
+            con.sql("SELECT NULL WHERE 0").create_view(table)  # empty view
+        return con
+
+    def sql(self, query, table="data"):
+        """Run one DuckDB SQL query across all cached frames as a single table
+        (`table`, default 'data') and return a pandas DataFrame. Reads the
+        parquet files in place — no deserialization.
+
+        All stored frames union into one view, so this is SQL over the whole
+        cache as one homogeneous table; cross-schema joins of different keys are
+        not supported (heterogeneous schemas raise a parquet schema mismatch).
+
+            stash.sql("SELECT city, avg(temp) FROM data GROUP BY city")
+        """
+        # hold the connection in a local until the result is materialized: on
+        # some duckdb versions the relation doesn't keep the connection alive, so
+        # chaining .duckdb().sql(q).df() let it get GC'd/closed before .df() ran
+        # ("Connection has already been closed").
+        con = self.duckdb(table=table)
+        return con.sql(query).df()
