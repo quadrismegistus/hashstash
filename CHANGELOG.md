@@ -37,6 +37,8 @@ stored, not its correctness).
   Now typed columns are written natively (arrow preserves them) and only object
   columns are coerced; re-inference is limited to the text formats (csv/json)
   that actually need it.
+- **lmdb** auto-grow ceiling is now configurable via `max_map_size` (default
+  256 GB), alongside the existing `map_size`; both survive serialization.
 - Value envelopes now carry an explicit format version (`_fv`) for future
   migrations.
 

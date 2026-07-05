@@ -19,13 +19,17 @@ class LMDBHashStash(BaseHashStash):
     engine = 'lmdb'
     filename_is_dir = True
     needs_lock = False  # LMDB has its own multi-reader/single-writer locking
-    to_dict_attrs = BaseHashStash.to_dict_attrs + ["map_size"]
-    # Ceiling for auto-grow. A wedged write that keeps raising MapFullError would
-    # otherwise double map_size forever; stop at 256 GB and surface the error.
-    max_map_size = 256 * 1024**3  # 256 GB
+    to_dict_attrs = BaseHashStash.to_dict_attrs + ["map_size", "max_map_size"]
 
-    def __init__(self, *args, map_size=10 * 1024**3, **kwargs):  # Default to 10GB
-        self.map_size = map_size
+    def __init__(self, *args, map_size=None, max_map_size=None, **kwargs):
+        # initial memory-map size (auto-grows on MapFullError) and the ceiling
+        # for that auto-grow. A wedged write that kept raising MapFullError would
+        # otherwise double map_size forever; the cap stops it and surfaces the
+        # error. Raise max_map_size for caches larger than the 256 GB default.
+        self.map_size = map_size if map_size is not None else DEFAULT_LMDB_MAP_SIZE
+        self.max_map_size = (
+            max_map_size if max_map_size is not None else DEFAULT_LMDB_MAX_MAP_SIZE
+        )
         super().__init__(*args, **kwargs)
 
     @log.debug

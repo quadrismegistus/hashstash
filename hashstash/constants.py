@@ -31,6 +31,10 @@ DEFAULT_SUB_DBNAME = 'sub_stash'
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
+# LMDB memory-map sizing
+DEFAULT_LMDB_MAP_SIZE = 10 * 1024**3       # 10 GB initial map (auto-grows)
+DEFAULT_LMDB_MAX_MAP_SIZE = 256 * 1024**3  # 256 GB auto-grow ceiling
+
 # Default settings
 OPTIMAL_COMPRESS = 'lz4'
 DEFAULT_COMPRESS = RAW_NO_COMPRESS
