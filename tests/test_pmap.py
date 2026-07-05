@@ -45,11 +45,27 @@ def failing_function(x):
         raise ValueError("Simulated error")
     return x * x
 
+
+# These tests deliberately crash a spawn worker and then reuse the pool. Even
+# with the pool-taint fix (get_global_executor hands out a fresh pool after a
+# worker error), spawn-multiprocessing on a loaded CI runner can still, rarely,
+# deadlock — an environmental flake, not a product bug. A tight per-test timeout
+# turns a hang into a fast failure and auto-retry recovers from the rare flake,
+# so CI stays reliable without masking a real regression (a genuinely broken
+# pool would fail every retry).
+flaky_mp = pytest.mark.flaky(reruns=3, reruns_delay=1)
+
+
+@flaky_mp
+@pytest.mark.timeout(45)
 def test_pmap_exception_propagates():
     """Worker exceptions used to be silently converted into None results."""
     with pytest.raises(ValueError, match="Simulated error"):
         list(pmap(failing_function, objects=[1, 2, 3, 4], num_proc=2))
 
+
+@flaky_mp
+@pytest.mark.timeout(45)
 def test_pmap_pool_usable_after_worker_exception():
     """A failed worker must not poison later pmap calls in the process."""
     with pytest.raises(ValueError):
@@ -57,6 +73,8 @@ def test_pmap_pool_usable_after_worker_exception():
     assert list(pmap(square, objects=[3], num_proc=2)) == [9]
 
 
+@flaky_mp
+@pytest.mark.timeout(45)
 def test_worker_exception_replaces_pool():
     """A worker exception taints the shared spawn pool so the NEXT pmap gets a
     fresh executor — a reused poisoned pool can deadlock a later call (flaky

@@ -312,7 +312,37 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
 ### Deserializing
 
 def deserialize_custom(serialized_str: str) -> Any:
-    return _deserialize_custom(_loads_any(serialized_str))
+    parsed = _loads_any(serialized_str)
+    # deserialize fast-path (symmetric to the serialize fast-path): json.loads
+    # already produced the final Python structure for a purely JSON-native value,
+    # so if nothing in it is a hashstash marker dict, return it directly and skip
+    # _deserialize_custom's recursive, allocating rebuild — the dominant read cost.
+    if _parsed_is_native(parsed):
+        return parsed
+    return _deserialize_custom(parsed)
+
+
+def _parsed_is_native(obj):
+    """True if a json.loads result contains no hashstash marker dict — i.e. it is
+    already the deserialized value. A marker is a dict carrying '__py__' or
+    '__pytype__'; the serializer routes any user dict that happens to hold a
+    reserved key through the tagged '__pytype__: dict' form, so a plain dict here
+    never legitimately holds one. Native data carries no code, so this is safe
+    under safe mode too."""
+    t = type(obj)
+    if t is dict:
+        if '__py__' in obj or '__pytype__' in obj:
+            return False
+        for v in obj.values():
+            if not _parsed_is_native(v):
+                return False
+        return True
+    if t is list:
+        for v in obj:
+            if not _parsed_is_native(v):
+                return False
+        return True
+    return True
 
 def _deserialize_object_data(obj, obj_data: Any) -> Any:
     if _safe_mode_active():
