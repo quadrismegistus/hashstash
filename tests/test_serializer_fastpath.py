@@ -129,3 +129,53 @@ def test_keys_not_fastpathed(tmp_path):
     fast-path (identical bytes across insertion order)."""
     stash = HashStash(root_dir=str(tmp_path / "c"))
     assert stash.encode_key({"a": 1, "b": 2}) == stash.encode_key({"b": 2, "a": 1})
+
+
+# --- deserialize fast-path (symmetric to the serialize fast-path) -------------
+
+from hashstash.serializers.custom import _deserialize_custom, _loads_any, _parsed_is_native  # noqa: E402
+
+
+def _full_deserialize(s):
+    """What deserialize_custom would produce WITHOUT the fast-path."""
+    return _deserialize_custom(_loads_any(s))
+
+
+@pytest.mark.parametrize(
+    "parsed,native",
+    [
+        ({"a": 1, "b": [1, 2, {"c": None}]}, True),
+        ([1, "two", 3.0, False, None], True),
+        ({}, True),
+        ({"__py__": "x"}, False),               # marker
+        ({"__pytype__": "dict"}, False),         # marker
+        ({"ok": 1, "nested": {"__py__": "y"}}, False),  # deep marker
+        ([1, {"__pytype__": "float"}], False),   # marker in list
+    ],
+)
+def test_parsed_is_native(parsed, native):
+    assert _parsed_is_native(parsed) is native
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"rows": [{"id": i, "v": i * 1.5, "t": ["a", "b"], "n": None} for i in range(20)]},
+        [1, 2, {"x": [3, 4]}],
+        {"a": {"b": {"c": [1, 2, 3]}}},
+        # non-native: must still round-trip via the full path
+        {1: "x", (2, 3): "y"},
+        [1, (2, 3), {4, 5}],
+        {"__py__": "not an address"},            # reserved key -> tagged on serialize
+        {"nan": float("inf")},
+        {"dt": None},
+    ],
+)
+def test_deserialize_fastpath_matches_full_path(value):
+    s = serialize(value, serializer="hashstash")
+    assert repr(deserialize(s, serializer="hashstash")) == repr(_full_deserialize(s))
+
+
+def test_deserialize_fastpath_returns_equal_value():
+    value = {"rows": [{"id": i, "name": f"n{i}", "ok": i % 2 == 0} for i in range(50)]}
+    assert deserialize(serialize(value, serializer="hashstash"), serializer="hashstash") == value
