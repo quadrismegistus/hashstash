@@ -58,3 +58,50 @@ serializer's JSON-native fast-path; `mixed` forces its full path.
 - Shared/untrusted cache → **`safe=True`** with **cbor2** or **msgpack**
   (data-only serializers can't execute code on load).
 - Never cache across Python versions with **pickle**.
+
+# Engine benchmarks
+
+Engine cost is driven by payload **size** and access pattern, not by which
+serializer produced the bytes. Regenerate with:
+
+```bash
+python scripts/bench_engines.py --sizes 1000 10000 100000 --spot-check
+```
+
+## Size sweep (serializer=hashstash, ms per op; Apple M-series)
+
+| engine | get @ 1 KB | get @ 100 KB |
+|---|---:|---:|
+| memory / lmdb / leveldb | ~0.05 | ~2.75 |
+| diskcache / pairtree / duckdb / dataframe | ~0.1 | ~3.0 |
+| sqlite / shelve | ~0.3–0.5 | ~3.3 |
+| jsonl | ~0.05 | ~0.95 |
+
+Writes: lmdb / leveldb / memory are fastest; the SQL engines (sqlite, duckdb)
+and file-per-key engines (pairtree, dataframe) carry more per-op overhead.
+
+**jsonl** now holds a key→offset index (built incrementally by folding
+newly-appended rows), so a random `get` is an O(1) seek to the row instead of a
+full-file scan — read latency no longer grows with the log size (it was ~80 ms
+per get at 100 KB before the index). Its flat mode also stores JSON-native dict
+values directly, so those reads skip the serializer entirely, which is why its
+get can beat the keyed engines here.
+
+## Engine × serializer are separable
+
+`get` time for one 50 KB payload, across engine × serializer:
+
+| engine | hashstash | pickle | msgpack |
+|---|---:|---:|---:|
+| memory | 1.37 | 0.19 | 0.32 |
+| lmdb | 1.40 | 0.20 | 0.33 |
+| sqlite | 1.91 | 0.68 | 0.82 |
+
+Down a column (fix serializer, vary engine) the spread is small (~1.4×); across
+a row (fix engine, vary serializer) it is ~7×. So `get` is dominated by the
+serializer's **deserialize**, and the engine adds a smaller, roughly-additive
+I/O term. That means engine and serializer can be measured **independently** and
+composed — a full N×M grid is unnecessary. The two cases that genuinely need
+their own measurement are jsonl (flat mode stores JSON-native values directly,
+bypassing the serializer) and the `dataframe` engine (stores DataFrames natively
+via feather/parquet, also bypassing the serializer).

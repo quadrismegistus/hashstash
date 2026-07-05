@@ -63,7 +63,7 @@ HashStash is a versatile caching library for Python that supports multiple stora
     - "__sqlite__" (using [sqlitedict](https://pypi.org/project/sqlitedict/))
     - "__[duckdb](https://pypi.org/project/duckdb/)__" (embedded SQL database; indexed key-value store)
     - "__[leveldb](https://pypi.org/project/plyvel/)__" (embedded LSM key-value store via plyvel; no fixed size to pre-allocate)
-    - "__jsonl__" (no dependencies; single human-readable append-only log; best for read-heavy or inspectable caches — see note on concurrent writes below; call `stash.compact()` to reclaim space from overwritten/deleted rows)
+    - "__jsonl__" (no dependencies; single human-readable append-only log. An incrementally-built key→offset index makes random single-key `get` an **O(1) seek** (no full-file scan), so it is fast for reads as well as writes and works well as a compact, inspectable cache — see note on concurrent writes below; call `stash.compact()` to reclaim space from overwritten/deleted rows)
     - "__shelve__" (standard library; simple dbm-backed store)
     - "__dataframe__" (pairtree layout that stores pandas/polars DataFrames natively as feather/parquet/csv files, requires [pandas](https://pypi.org/project/pandas/))
 

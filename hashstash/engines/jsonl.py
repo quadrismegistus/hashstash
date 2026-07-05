@@ -47,8 +47,11 @@ class JSONLHashStash(BaseHashStash):
             compress = RAW_NO_COMPRESS
         self.flat = flat
         super().__init__(*args, compress=compress, b64=b64, **kwargs)
-        self._keyset = OrderedSet()
-        self._keyset_offset = 0  # bytes of the file already folded into _keyset
+        # key -> byte offset of that key's live row (a LIST of offsets in append
+        # mode). Built incrementally by folding newly-appended lines; lets get()
+        # seek straight to a key's row instead of scanning the whole log.
+        self._key_index = {}
+        self._scanned_bytes = 0  # bytes of the file already folded into the index
         self._flat_meta = frozenset([
             self.key_name, self.value_name, self.delete_name, self.written_at_name
         ])
@@ -88,41 +91,60 @@ class JSONLHashStash(BaseHashStash):
     # --- keyset loading ---
 
     def _ensure_keyset_loaded(self) -> None:
-        """Fold any rows appended since the last scan into the keyset.
+        """Fold any rows appended since the last scan into the key->offset index.
 
         Other writers append to the same file, so a one-shot load goes permanently
         stale; instead we remember how far we've read and incrementally fold new
-        lines on every access (a single getsize() when nothing changed)."""
+        lines on every access (a single getsize() when nothing changed).
+
+        Offsets are recorded here, from the scan itself (readline + tell), NOT at
+        write time: with cross-host concurrent writers another process can append
+        between our getsize and our write, so a write-time offset would be wrong.
+        The scan is the single source of truth for where each row lives."""
         try:
             size = os.path.getsize(self.path)
         except OSError:
-            self._keyset = OrderedSet()
-            self._keyset_offset = 0
+            self._key_index = {}
+            self._scanned_bytes = 0
             return
-        if size < self._keyset_offset:
+        if size < self._scanned_bytes:
             # file was truncated or replaced (e.g. clear()): rescan from the top
-            self._keyset = OrderedSet()
-            self._keyset_offset = 0
-        if size == self._keyset_offset:
+            self._key_index = {}
+            self._scanned_bytes = 0
+        if size == self._scanned_bytes:
             return
-        with open(self.path, "r", encoding="utf-8") as f:
-            f.seek(self._keyset_offset)
-            for line in f:
-                line = line.strip()
+        # binary mode: f.tell() is a true byte offset (a text-mode tell() is an
+        # opaque cookie that isn't reliably reusable across file handles), so the
+        # recorded offsets are seekable later in get()'s own handle, and the
+        # getsize() comparison above is exact.
+        with open(self.path, "rb") as f:
+            f.seek(self._scanned_bytes)
+            while True:
+                offset = f.tell()          # byte position of the line we are about to read
+                line = f.readline()
                 if not line:
+                    break
+                stripped = line.strip()
+                if not stripped:
                     continue
                 try:
-                    row = json.loads(line)
+                    row = json.loads(stripped)
                 except Exception:
                     log.warning(f"skipping unparseable JSONL line in {self.path}")
                     continue
                 rk = row[self.key_name]
                 ks = self._flat_ks(rk) if self.flat else rk
                 if row.get(self.delete_name):
-                    self._keyset.discard(ks)
+                    self._key_index.pop(ks, None)
+                elif self.append_mode:
+                    self._key_index.setdefault(ks, []).append(offset)
                 else:
-                    self._keyset.add(ks)
-            self._keyset_offset = f.tell()
+                    self._key_index[ks] = offset
+            self._scanned_bytes = f.tell()
+
+    def _read_row_at(self, f, offset):
+        f.seek(offset)
+        return json.loads(f.readline())
 
     # --- get_all ---
 
@@ -143,30 +165,25 @@ class JSONLHashStash(BaseHashStash):
         self._ensure_keyset_loaded()
         encoded_key = self.encode_key(unencoded_key)
 
-        if encoded_key not in self._keyset:
+        if encoded_key not in self._key_index:
             return default
 
         values = []
         timestamps = []
 
-        if self.flat:
-            for row in iter_jsonl(self.path):
-                row_ks = self._flat_ks(row[self.key_name])
-                if row_ks != encoded_key:
-                    continue
-                if row.get(self.delete_name):
-                    values, timestamps = [], []
-                else:
+        # seek straight to this key's live row(s) via the index instead of
+        # scanning the whole log (the index already excludes deleted keys, and in
+        # overwrite mode holds only the latest offset)
+        offs = self._key_index[encoded_key]
+        offsets = offs if isinstance(offs, list) else [offs]
+        with open(self.path, "rb") as f:  # byte offsets from the scan
+            for off in offsets:
+                row = self._read_row_at(f, off)
+                if self.flat:
                     values.append(self._flat_row_to_value(row))
-                    timestamps.append(row.get(self.written_at_name, 0.0))
-        else:
-            for row in iter_jsonl(self.path):
-                if row[self.key_name] == encoded_key:
-                    if row.get(self.delete_name):
-                        values, timestamps = [], []
-                    else:
-                        values.append(self.decode_value(row[self.value_name]))
-                        timestamps.append(row.get(self.written_at_name, 0.0))
+                else:
+                    values.append(self.decode_value(row[self.value_name]))
+                timestamps.append(row.get(self.written_at_name, 0.0))
 
         if not self.append_mode:
             # overwrite semantics: only the last write is "the" value, matching
@@ -227,9 +244,9 @@ class JSONLHashStash(BaseHashStash):
                     for row in rows:
                         fh.write(json.dumps(row) + "\n")
             os.replace(tmp_path, self.path)
-            # force a fresh keyset scan of the rewritten file
-            self._keyset = OrderedSet()
-            self._keyset_offset = 0
+            # force a fresh index scan of the rewritten file (offsets changed)
+            self._key_index = {}
+            self._scanned_bytes = 0
             self._ensure_keyset_loaded()
         return self
 
@@ -237,8 +254,8 @@ class JSONLHashStash(BaseHashStash):
         for sub in self.children:
             sub.clear()
         self.close()
-        self._keyset = OrderedSet()
-        self._keyset_offset = 0
+        self._key_index = {}
+        self._scanned_bytes = 0
         if os.path.exists(self.path):
             try:
                 os.remove(self.path)
@@ -266,7 +283,7 @@ class JSONLHashStash(BaseHashStash):
         self._ensure_keyset_loaded()
         with self:
             self._append_line(obj)
-            self._keyset.add(ks)
+            # index (with correct offset) is refreshed by the next _ensure scan
         self._stats["sets"] += 1
         if self.max_entries is not None:
             self._enforce_max_entries()
@@ -280,15 +297,14 @@ class JSONLHashStash(BaseHashStash):
         }
         with self:
             self._append_line(obj)
-            self._keyset.add(encoded_key)
 
     def _has(self, encoded_key: Any) -> bool:
         self._ensure_keyset_loaded()
-        return encoded_key in self._keyset
+        return encoded_key in self._key_index
 
     def __len__(self) -> int:
         self._ensure_keyset_loaded()
-        return len(self._keyset)
+        return len(self._key_index)
 
     @log.debug
     def _del(self, encoded_key: Any) -> None:
@@ -308,14 +324,18 @@ class JSONLHashStash(BaseHashStash):
             }
         with self:
             self._append_line(obj)
-            self._keyset.discard(encoded_key)
+            self._key_index.pop(encoded_key, None)
 
     def new_unencoded_value(self, unencoded_value: Any, **kwargs):
         return unencoded_value
 
     @log.debug
     def _keys(self):
-        yield from self._keyset
+        # refresh the index first: unlike the old keyset, it is no longer updated
+        # at write time (offsets come only from the scan), so fold in any pending
+        # rows before iterating (matches _has/__len__)
+        self._ensure_keyset_loaded()
+        yield from list(self._key_index)
 
     @log.debug
     def _values(self):
