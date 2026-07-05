@@ -39,6 +39,21 @@ except Exception as e:
 
 from hashstash.engines.shelve import ShelveHashStash
 
+import importlib
+
+
+def _optional_engine(module, clsname, dep):
+    """A TEST_CLASSES entry for an engine whose dependency is optional (and, for
+    leveldb/plyvel, not in the CI `dev` extra) — guard the IMPORT, not just the
+    test, so a missing dep skips cleanly instead of erroring at collection."""
+    try:
+        importlib.import_module(dep)
+        cls = getattr(importlib.import_module(module), clsname)
+        return pytest.param(cls, id=clsname)
+    except Exception as e:  # dep missing / import error
+        return pytest.param(None, marks=pytest.mark.skip(reason=f"{dep} unavailable: {e}"), id=clsname)
+
+
 TEST_CLASSES = [
     PairtreeHashStash,
     SqliteHashStash,
@@ -49,6 +64,15 @@ TEST_CLASSES = [
     pytest.param(MongoHashStash, marks=pytest.mark.skipif(not MONGO_AVAILABLE, reason=MONGO_SKIP_REASON)),
     JSONLHashStash,
     ShelveHashStash,
+    # newer general-purpose KV engines were only covered by their own test files,
+    # not this shared dict-contract battery — bring them in (guarded on optional
+    # deps). NOTE: DataFrameHashStash is intentionally NOT here: it is a
+    # specialized DataFrame store (values are wrapped as MetaDataFrame; scalar
+    # append-mode, assembly and version metadata don't apply), covered by its own
+    # tests/test_dataframes.py.
+    _optional_engine("hashstash.engines.duckdb_engine", "DuckDBHashStash", "duckdb"),
+    _optional_engine("hashstash.engines.leveldb", "LevelDBHashStash", "plyvel"),
+    _optional_engine("hashstash.engines.fsspec", "FsspecHashStash", "fsspec"),
 ]
 
 
