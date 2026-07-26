@@ -47,9 +47,17 @@ project lost a day to exactly that gap. Concretely:
   been ordered since 0.5.
   - `OrderedDict` is deliberately **excluded**: its `__eq__` is order-sensitive, so
     two differently-ordered `OrderedDict`s are *unequal* keys and collapsing them to
-    one address would be a false hit — worse than the miss being fixed.
+    one address would be a false hit — worse than the miss being fixed. This is
+    decided from the **live type** (`type(obj).__eq__ is dict.__eq__`), not from the
+    serialized type address, so `OrderedDict` *subclasses* are excluded too. Types
+    that keep their ordering in reduce state rather than in their items (e.g.
+    `bson.SON`) are excluded on the same grounds.
   - Values are unaffected: a dict value's insertion order is observable on
     round-trip and is still preserved. Only keys canonicalize.
+  - `keys()` now returns non-string-keyed dict keys in **canonical order**, not the
+    order they were stored in — `stash[{2:'b', 1:'a'}] = 1` enumerates back as
+    `{1:'a', 2:'b'}`. They are `==`-equal, so lookups are unaffected, but code that
+    reads `list(key.items())` positionally will see a different order.
   - *This changes the address of affected keys.* If you have stored keys containing
     non-string-keyed dicts, recover them with `legacy_read=True` or `migrate()`.
 - **Partial key-encoding drift now warns.** `items()` warned only when *no* key
@@ -63,6 +71,10 @@ project lost a day to exactly that gap. Concretely:
 - **An explicit `before`/`after` window is no longer mistaken for drift.**
   `items(after=...)` that legitimately filtered out every entry used to emit the
   "written by an OLDER hashstash" warning.
+- **`values()` now applies the time filter it was given.** It accepted `**kwargs`
+  and silently dropped them, so `values(after=X)` and `values_l(after=X)` returned
+  everything while `items(after=X)` filtered correctly — the same query spelled two
+  ways gave different answers.
 
 ## 1.0.1 — 2026-07-05
 

@@ -1456,7 +1456,12 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def values(self, all_results=None, with_metadata=False, **kwargs):
-        for k, v in self.items(all_results=all_results, with_metadata=with_metadata):
+        # **kwargs used to be accepted and silently dropped, so values(after=X)
+        # (and values_l(after=X)) applied no time filter at all while items(after=X)
+        # did — the same call spelled two ways gave different answers.
+        for k, v in self.items(
+            all_results=all_results, with_metadata=with_metadata, **kwargs
+        ):
             yield v
 
     @log.debug

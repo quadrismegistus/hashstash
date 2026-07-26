@@ -735,14 +735,53 @@ def test_dict_subclasses_canonicalize_except_ordered_dict(tmp_path):
     d1["a"], d1["b"] = 1, 2
     d2["b"], d2["a"] = 2, 1
     assert stash.encode_key(d1) == stash.encode_key(d2)
-    assert stash.encode_key(Counter({"a": 1, "b": 2})) == stash.encode_key(
-        Counter({"b": 2, "a": 1})
+    # a str-keyed Counter rides in __args__ as a JSON object and was already
+    # canonical via sort_keys; NON-str keys are what exercise the __items__ path
+    assert stash.encode_key(Counter({1: 2, 3: 4})) == stash.encode_key(
+        Counter({3: 4, 1: 2})
     )
 
     assert OrderedDict([("a", 1), ("b", 2)]) != OrderedDict([("b", 2), ("a", 1)])
     assert stash.encode_key(OrderedDict([("a", 1), ("b", 2)])) != stash.encode_key(
         OrderedDict([("b", 2), ("a", 1)])
     )
+
+
+def test_ordered_dict_subclass_is_not_collapsed(tmp_path):
+    """Order-sensitivity must be decided from the LIVE TYPE, not from the
+    serialized '__py__' address. An OrderedDict SUBCLASS reduces to its own
+    address, so a name-based denylist misses it, sorts its entries, and collapses
+    two UNEQUAL keys onto one entry — returning the wrong value, silently."""
+    from collections import OrderedDict
+
+    class MyOrderedDict(OrderedDict):
+        pass
+
+    k1 = MyOrderedDict([("a", 1), ("b", 2)])
+    k2 = MyOrderedDict([("b", 2), ("a", 1)])
+    assert k1 != k2
+
+    stash = HashStash(root_dir=str(tmp_path), engine="memory", b64=True)
+    stash[k1] = "value-for-k1"
+    assert stash.get(k2) is None, "false HIT: unequal keys collapsed to one entry"
+    stash[k2] = "value-for-k2"
+    assert stash.get(k1) == "value-for-k1"
+    assert len(stash) == 2
+
+
+def test_dict_subclass_with_ordering_in_state_round_trips(tmp_path):
+    """bson.SON keeps its ordering in __state__['_SON__keys'] rather than in its
+    reduce dictitems. Sorting the items alone would round-trip an object whose
+    entries and whose recorded order disagree, so __state__ vetoes the sort."""
+    SON = pytest.importorskip("bson").SON
+
+    key = SON([("b", 2), ("a", 1)])
+    stash = HashStash(root_dir=str(tmp_path), engine="memory", b64=True)
+    stash[key] = 1
+
+    back = list(stash.keys())[0]
+    assert back == key
+    assert list(back.items()) == list(key.items())
 
 
 def test_value_path_preserves_dict_insertion_order():
@@ -753,15 +792,20 @@ def test_value_path_preserves_dict_insertion_order():
     assert list(deserialize(serialize({2: "b", 1: "a"})).keys()) == [2, 1]
 
 
-def test_list_items_are_never_reordered():
-    """__listitems__ (and plain lists) carry semantic order; only dict entries sort."""
+def test_list_items_are_never_reordered(tmp_path):
+    """Sequences carry semantic order; only dict entries sort. A plain list and a
+    tuple do not exercise '__listitems__' at all (they serialize to a bare JSON
+    array and a '__py__: builtins.tuple' wrapper) — deque is the reducer-path
+    sequence that actually does."""
+    from collections import deque
+
     from hashstash import deserialize, serialize
 
     assert deserialize(serialize([3, 1, 2], sort_keys=True)) == [3, 1, 2]
-    assert deserialize(serialize(({"b": 1}, [3, 1, 2]), sort_keys=True)) == (
-        {"b": 1},
-        [3, 1, 2],
-    )
+    assert deserialize(serialize(deque([3, 1, 2]), sort_keys=True)) == deque([3, 1, 2])
+
+    stash = HashStash(root_dir=str(tmp_path), engine="memory", b64=True)
+    assert stash.encode_key(deque([3, 1, 2])) != stash.encode_key(deque([1, 2, 3]))
 
 
 def _strand_at_legacy_address(stash, key):
@@ -860,3 +904,17 @@ def test_explicit_time_window_is_not_mistaken_for_drift(tmp_path):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert list(stash.items(after=2**31)) == []
+
+
+def test_values_applies_the_same_time_filter_as_items(tmp_path):
+    """values() accepted **kwargs and silently dropped them, so values(after=X)
+    applied no filter while items(after=X) did — the same query spelled two ways
+    gave different answers."""
+    stash = HashStash(root_dir=str(tmp_path), engine="memory", b64=True)
+    for i in range(3):
+        stash[{"i": i}] = i
+
+    assert list(stash.items(after=2**31)) == []
+    assert list(stash.values(after=2**31)) == []
+    assert stash.values_l(after=2**31) == []
+    assert len(stash.values_l()) == 3
