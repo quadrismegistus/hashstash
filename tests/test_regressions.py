@@ -687,3 +687,176 @@ def test_redis_clear_scoped_to_namespace():
     finally:
         a.clear()
         b.clear()
+
+
+# --- Stage 5: canonical key ordering & partial-drift detection ---------------
+# Reported by a downstream consumer who lost a day to insertion-order-sensitive
+# dict keys across a 0.4.0 -> 1.0.1 upgrade.
+
+
+@pytest.mark.parametrize(
+    "a,b,label",
+    [
+        ({1: "a", 2: "b"}, {2: "b", 1: "a"}, "int-keyed dict"),
+        ({(1, 2): "a", (3, 4): "b"}, {(3, 4): "b", (1, 2): "a"}, "tuple-keyed dict"),
+        ({"a": 1, 1: "a"}, {1: "a", "a": 1}, "mixed-key dict"),
+        ({"__py__": 1, "z": 2}, {"z": 2, "__py__": 1}, "dict w/ reserved key"),
+        ({"k": {1: "a", 2: "b"}}, {"k": {2: "b", 1: "a"}}, "nested int-keyed dict"),
+    ],
+)
+def test_non_str_keyed_dicts_canonicalize_on_the_key_path(a, b, label):
+    """Dicts with non-string (or reserved) keys serialize to a JSON LIST of pairs,
+    which json.dumps(sort_keys=True) does NOT reorder — so two equal dicts used as
+    cache keys addressed to two different entries, silently."""
+    from hashstash import serialize
+
+    assert serialize(a, as_string=True, sort_keys=True) == serialize(
+        b, as_string=True, sort_keys=True
+    ), label
+
+
+def test_reordered_non_str_key_hits_the_same_stash_entry(tmp_path):
+    """End-to-end: the reproducer the consumer sent back."""
+    stash = HashStash(root_dir=str(tmp_path), engine="memory", b64=True)
+    stash[{"x": {1: "a", 2: "b"}}] = "hit"
+    assert stash.get({"x": {2: "b", 1: "a"}}) == "hit"
+
+
+def test_dict_subclasses_canonicalize_except_ordered_dict(tmp_path):
+    """Counter/defaultdict compare order-insensitively, so their keys must
+    canonicalize. OrderedDict.__eq__ IS order-sensitive: collapsing two
+    differently-ordered OrderedDicts to one address would be a false HIT, which is
+    worse than the miss being fixed here."""
+    from collections import Counter, OrderedDict, defaultdict
+
+    stash = HashStash(root_dir=str(tmp_path), engine="memory", b64=True)
+
+    d1, d2 = defaultdict(int), defaultdict(int)
+    d1["a"], d1["b"] = 1, 2
+    d2["b"], d2["a"] = 2, 1
+    assert stash.encode_key(d1) == stash.encode_key(d2)
+    assert stash.encode_key(Counter({"a": 1, "b": 2})) == stash.encode_key(
+        Counter({"b": 2, "a": 1})
+    )
+
+    assert OrderedDict([("a", 1), ("b", 2)]) != OrderedDict([("b", 2), ("a", 1)])
+    assert stash.encode_key(OrderedDict([("a", 1), ("b", 2)])) != stash.encode_key(
+        OrderedDict([("b", 2), ("a", 1)])
+    )
+
+
+def test_value_path_preserves_dict_insertion_order():
+    """Canonicalization is for KEYS only — a value's insertion order is observable
+    on round-trip and must survive."""
+    from hashstash import deserialize, serialize
+
+    assert list(deserialize(serialize({2: "b", 1: "a"})).keys()) == [2, 1]
+
+
+def test_list_items_are_never_reordered():
+    """__listitems__ (and plain lists) carry semantic order; only dict entries sort."""
+    from hashstash import deserialize, serialize
+
+    assert deserialize(serialize([3, 1, 2], sort_keys=True)) == [3, 1, 2]
+    assert deserialize(serialize(({"b": 1}, [3, 1, 2]), sort_keys=True)) == (
+        {"b": 1},
+        [3, 1, 2],
+    )
+
+
+def _strand_at_legacy_address(stash, key):
+    """Move an entry to the address a PRE-canonical hashstash would have written it
+    to (insertion-order serialization, no sort_keys). The entry still decodes and
+    still enumerates via keys() — it just no longer resolves, which is exactly the
+    drift signature a 0.4.0-written cache presents to 1.0.x.
+
+    Note the two things that do NOT work: deleting the entry removes it from keys()
+    too (n_keys drops, so no drift exists), and mangling the stored address makes
+    keys() raise on decode. Go through the engine-agnostic _get/_set/_del
+    primitives rather than stash.db — some backends (lmdb) expose an Environment
+    there, which does not support item assignment.
+
+    Caveats for anyone reusing this to test drift monitoring against real drift:
+    - it assumes one envelope per key, so it does not transfer to pairtree, which
+      stores one file per stored version (see the parametrize list below);
+    - pairtree also does not implement BaseHashStash._get at all — it overrides
+      get_all and the path-based read, so the base primitive raises
+      NotImplementedError there. Dormant in normal operation (nothing reaches that
+      call site), but it surfaces the moment you drive the raw primitives, which is
+      exactly what this helper does."""
+    canonical = stash.encode_key(key)
+    legacy = stash.encode(stash.serialize(key), as_string=stash.string_keys)
+    assert legacy != canonical, "key must not already be in canonical order"
+    stash._set(legacy, stash._get(canonical))
+    stash._del(canonical)
+
+
+# pairtree is deliberately absent: it stores one file per stored version rather
+# than one envelope per key, so relocating a raw entry to a legacy address is not
+# the same operation there. The warning itself is engine-independent (it lives in
+# BaseHashStash.items), so these three cover it.
+@pytest.mark.parametrize("engine", ["lmdb", "sqlite", "memory"])
+def test_partial_drift_warns_even_when_most_keys_resolve(engine, tmp_path):
+    """items() warned only when NOTHING resolved, so a stash with (say) 40% of its
+    entries unaddressable looked perfectly healthy. Partial drift is the more
+    dangerous shape precisely because it does not announce itself."""
+    from hashstash.engines.base import HashStashWarning
+
+    if engine == "lmdb":
+        pytest.importorskip("lmdb")
+    stash = HashStash(root_dir=str(tmp_path), engine=engine, b64=True)
+    stash.clear()
+    keys = [{"b": i, "a": i} for i in range(5)]  # non-alphabetical insertion order
+    for i, k in enumerate(keys):
+        stash[k] = i
+
+    for k in keys[:2]:
+        _strand_at_legacy_address(stash, k)
+
+    assert len(stash) == 5  # all five still enumerate
+    with pytest.warns(HashStashWarning, match="PARTIAL"):
+        resolved = list(stash.items())
+    assert len(resolved) == 3
+
+
+def test_append_mode_versions_do_not_mask_unresolvable_keys(tmp_path):
+    """The predicate must compare KEYS to keys, not values to keys: get_all returns
+    every stored version, so on an append-mode stash the value count exceeds the key
+    count and a naive `n_yield < n_keys` goes quiet exactly where there is most
+    history to lose."""
+    from hashstash.engines.base import HashStashWarning
+
+    stash = HashStash(
+        root_dir=str(tmp_path), engine="memory", b64=True, append_mode=True
+    )
+    keys = [{"b": i, "a": i} for i in range(4)]
+    for i, k in enumerate(keys):
+        for version in range(3):
+            stash[k] = f"{i}v{version}"
+
+    for k in keys[:2]:
+        _strand_at_legacy_address(stash, k)
+
+    n_keys = len(stash)
+    with pytest.warns(HashStashWarning, match="PARTIAL"):
+        pairs = list(stash.items(all_results=True))
+
+    assert n_keys == 4
+    # the exact case a `n_yield < n_keys` predicate would have stayed silent on:
+    # 6 values yielded from 2 resolvable keys still outnumbers the 4 stored keys
+    assert len(pairs) == 6 > n_keys
+    assert len({tuple(sorted(k.items())) for k, v in pairs}) == 2
+
+
+def test_explicit_time_window_is_not_mistaken_for_drift(tmp_path):
+    """A before/after filter legitimately hides entries — it must not trip the
+    drift warning."""
+    import warnings
+
+    stash = HashStash(root_dir=str(tmp_path), engine="memory", b64=True)
+    for i in range(3):
+        stash[{"i": i}] = i
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert list(stash.items(after=2**31)) == []

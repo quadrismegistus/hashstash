@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+## 1.1.0 — 2026-07-26
+
+Minor rather than patch: this changes the stored address of a class of cache key
+for the second time in this lineage (0.5 was the first). The diff is small; the
+version number is signalling the address change, not the diff size. If your keys
+contain dicts with non-string keys, existing entries need `legacy_read=True` or
+`migrate()` to be visible after upgrading.
+
+### Dict key ordering: what changed in 0.5, and what was still broken until now
+
+**If you are upgrading a cache written by hashstash < 0.5, read this.** Before
+0.5, a dict used as a cache key was addressed **in its insertion order**:
+`{'model': m, 'prompt': p}` and `{'prompt': p, 'model': m}` were two *different*
+cache entries. Since 0.5 (commit `d7bbbab`), keys serialize with `sort_keys=True`,
+so equal dicts address to the same entry regardless of construction order.
+
+That was a deliberate fix — the old behaviour caused silent misses and duplicate
+recomputation — but it was **never stated plainly**: this changelog begins at
+1.0.0, and the 1.0.1 entry below refers to it only as "a latent key-address
+instability", which does not mention dicts or ordering. At least one downstream
+project lost a day to exactly that gap. Concretely:
+
+- A pre-0.5 entry is visible to 0.5+ **only if** the call site that wrote it
+  happened to build the dict in alphabetical order. Otherwise it still exists, still
+  enumerates via `keys()`, and silently fails to resolve.
+- Sets and frozensets were worse than insertion-order sensitive before 0.5: they
+  serialized in `PYTHONHASHSEED`-dependent iteration order, so a key containing a
+  set was not stable **across runs of the same interpreter**. A pre-0.5 cache with
+  set-containing keys is not reliably re-addressable at all; migrate it.
+- 0.5+ does **not** read pre-0.5 addresses natively. `legacy_read=True` reaches
+  them with a decode-and-match scan; `migrate()` re-addresses them permanently.
+
+### Fixed
+
+- **Dicts with non-string keys now canonicalize on the key path.** `sort_keys=True`
+  sorts JSON *object* keys, but a dict with non-string keys (or one holding a
+  reserved `__py__`/`__pytype__`/`__data__` marker) serializes to a JSON *list* of
+  `[key, value]` pairs, and `sort_keys` does not reorder array elements. So
+  `{1: 'a', 2: 'b'}` and `{2: 'b', 1: 'a'}` were **still** two different cache
+  entries on 1.0.1 — the 0.5 fix never reached this path. The same applied to dict
+  subclasses (`Counter`, `defaultdict`) via the reducer's `__dictitems__`. These
+  lists are now sorted by their serialized form, matching how set elements have
+  been ordered since 0.5.
+  - `OrderedDict` is deliberately **excluded**: its `__eq__` is order-sensitive, so
+    two differently-ordered `OrderedDict`s are *unequal* keys and collapsing them to
+    one address would be a false hit — worse than the miss being fixed.
+  - Values are unaffected: a dict value's insertion order is observable on
+    round-trip and is still preserved. Only keys canonicalize.
+  - *This changes the address of affected keys.* If you have stored keys containing
+    non-string-keyed dicts, recover them with `legacy_read=True` or `migrate()`.
+- **Partial key-encoding drift now warns.** `items()` warned only when *no* key
+  resolved, so a stash where (say) 20% of entries were unaddressable looked
+  perfectly healthy — the more dangerous shape, since total drift at least
+  announces itself. It now warns on any shortfall. The check counts **keys that
+  resolved**, not values yielded: `get_all()` returns every stored version, so on an
+  append-mode stash the value count routinely exceeds the key count and a
+  value-based comparison would stay silent exactly where there is most history to
+  lose (100 keys, 50 resolvable, 3 versions each → 150 values > 100 keys).
+- **An explicit `before`/`after` window is no longer mistaken for drift.**
+  `items(after=...)` that legitimately filtered out every entry used to emit the
+  "written by an OLDER hashstash" warning.
+
 ## 1.0.1 — 2026-07-05
 
 Fixes a release-critical backward-compat break found by production consumers on
@@ -51,7 +113,9 @@ written under the old `b64=True` default also needs `b64=True` (or migration).
 
 You may see **fewer keys after migrating** — that's a fix, not data loss. Some
 older caches wrote logically-identical keys under different addresses (a latent
-key-address instability that caused silent misses and duplicate re-computation);
+key-address instability that caused silent misses and duplicate re-computation —
+specifically, dict keys were addressed by insertion order before 0.5; see the
+Unreleased section above);
 1.0's deterministic canonical-key addressing collapses those duplicates. All
 stored *versions* are preserved — only the redundant addresses merge. (A
 production migration of 34 stashes saw one stash go from 24,856 to 23,056 keys,

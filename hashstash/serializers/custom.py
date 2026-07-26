@@ -202,9 +202,54 @@ def serialize_custom(obj: Any, sort_keys: bool = False) -> str:
     if sort_keys:
         # canonical KEY path: stdlib json with sorted keys so equal keys hash
         # identically regardless of insertion order OR whether orjson is present
-        return json.dumps(serialized, sort_keys=True)
+        return json.dumps(_canonicalize_key_items(serialized), sort_keys=True)
     # VALUE path: orjson-accelerated when available
     return _dumps_value(serialized)
+
+# Dicts whose keys aren't plain strings (or that hold a reserved marker key) are
+# serialized as a JSON LIST of [key, value] pairs, and dict subclasses carry their
+# contents in the reducer's '__dictitems__' list. json.dumps(sort_keys=True) sorts
+# object keys but NOT array elements, so those lists survived in insertion order
+# and two equal dicts addressed to two different cache entries — the same silent
+# miss that put sort_keys on the key path to begin with.
+#
+# Applied ONLY on the canonical key path: for a VALUE, a plain dict's insertion
+# order is observable on round-trip and must be preserved.
+#
+# OrderedDict is deliberately NOT sorted. Its __eq__ is order-sensitive, so two
+# differently-ordered OrderedDicts are UNEQUAL keys; collapsing them to one
+# address would be a false HIT, which is worse than the miss this fixes. Every
+# other dict subclass (Counter, defaultdict, ...) compares order-insensitively.
+_ORDER_SENSITIVE_REDUCERS = frozenset({"collections.OrderedDict"})
+
+
+def _entry_sort_key(entry):
+    # same comparator as IterableSerializer uses for sets: sort by the serialized
+    # form so ordering is stable across processes and PYTHONHASHSEED
+    return json.dumps(entry, sort_keys=True, default=str)
+
+
+def _canonicalize_key_items(obj):
+    """Recursively sort the list-encoded dict entries of an already-serialized
+    structure. Returns a new structure; does not mutate its input."""
+    if isinstance(obj, list):
+        return [_canonicalize_key_items(x) for x in obj]
+    if not isinstance(obj, dict):
+        return obj
+    # recurse first, so nested tagged dicts are canonical before the outer sort
+    out = {k: _canonicalize_key_items(v) for k, v in obj.items()}
+    pytype = obj.get("__pytype__")
+    if pytype == "dict" and isinstance(out.get("__items__"), list):
+        out["__items__"] = sorted(out["__items__"], key=_entry_sort_key)
+    elif (
+        pytype == "reducer"
+        and isinstance(out.get("__dictitems__"), list)
+        and obj.get("__py__") not in _ORDER_SENSITIVE_REDUCERS
+    ):
+        out["__dictitems__"] = sorted(out["__dictitems__"], key=_entry_sort_key)
+    # NB: '__listitems__' is never sorted — list order is semantic.
+    return out
+
 
 def stuff(obj, data=None):
     return _serialize_custom(obj, data=data)

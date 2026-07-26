@@ -1466,7 +1466,16 @@ class BaseHashStash(MutableMapping):
             # it also covers any new-format entries (no double-yield)
             yield from self._legacy_items(all_results=all_results)
             return
-        n_keys = n_yield = 0
+        # an explicit time window legitimately filters entries out, so it must not
+        # read as drift below
+        time_filtered = (
+            kwargs.get("before") is not None or kwargs.get("after") is not None
+        )
+        # count KEYS that resolved, not values yielded: get_all returns every stored
+        # version, so on an append-mode stash the value count routinely EXCEEDS the
+        # key count and can mask a large unresolvable fraction (100 keys, 50
+        # resolvable, 3 versions each -> 150 values > 100 keys). Keys vs keys.
+        n_keys = n_resolved = 0
         for key in self.keys():
             n_keys += 1
             vals = self.get_all(
@@ -1476,26 +1485,43 @@ class BaseHashStash(MutableMapping):
                 **kwargs,
             )
             if vals is not None:
+                n_resolved += 1
                 for val in vals:
-                    n_yield += 1
                     yield key, val
-        if n_keys and not n_yield and not self.legacy_read and not self.ttl:
-            # keys enumerate but NONE resolve to a value: the tell-tale sign of a
-            # cache written by an older hashstash whose key encoding differs.
-            # Warn loudly rather than silently look empty (which risks re-spending
-            # the budget that built the cache).
-            self._warn_unaddressable(n_keys)
+        if (
+            n_keys
+            and n_resolved < n_keys
+            and not self.legacy_read
+            and not self.ttl
+            and not time_filtered
+        ):
+            # keys enumerate but some (or all) don't resolve to a value: the
+            # tell-tale sign of a cache written by an older hashstash whose key
+            # encoding differs. PARTIAL drift is the more dangerous shape — it looks
+            # exactly like a healthy stash — so warn on any shortfall, not just a
+            # total one. Silence here risks re-spending the budget that built it.
+            self._warn_unaddressable(n_keys, n_resolved)
 
-    def _warn_unaddressable(self, n):
+    def _warn_unaddressable(self, n_keys, n_resolved=0):
         if getattr(self, "_warned_unaddressable", False):
             return
         self._warned_unaddressable = True
+        if n_resolved:
+            detail = (
+                f"{n_keys - n_resolved} of {n_keys} stored keys enumerate but could "
+                f"NOT be read ({n_resolved} resolved) — PARTIAL key-encoding drift, "
+                f"so this stash looks healthy while silently hiding entries"
+            )
+        else:
+            detail = (
+                f"{n_keys} stored keys enumerate but NONE could be read — almost "
+                f"certainly a cache written by an OLDER hashstash whose key "
+                f"encoding differs"
+            )
         self._warn_data_integrity(
-            f"{type(self).__name__}: {n} stored keys enumerate but NONE could be "
-            f"read — almost certainly a cache written by an OLDER hashstash whose "
-            f"key encoding differs. Recover it with stash.migrate(dest=...) "
-            f"(dry_run=True to count first), or open the stash with "
-            f"legacy_read=True. Fresh writes are unaffected."
+            f"{type(self).__name__}: {detail}. Recover it with "
+            f"stash.migrate(dest=...) (dry_run=True to count first), or open the "
+            f"stash with legacy_read=True. Fresh writes are unaffected."
         )
 
     @staticmethod
