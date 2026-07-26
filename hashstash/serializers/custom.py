@@ -198,13 +198,66 @@ def serialize_custom(obj: Any, sort_keys: bool = False) -> str:
     # for values (not the canonical key path): keys stay on the audited full path.
     if not sort_keys and _is_json_native(obj):
         return _dumps_value(obj)
-    serialized = _serialize_custom(obj)
     if sort_keys:
         # canonical KEY path: stdlib json with sorted keys so equal keys hash
-        # identically regardless of insertion order OR whether orjson is present
+        # identically regardless of insertion order OR whether orjson is present.
+        # The context flag lets _serialize_custom order list-encoded dict entries
+        # inline (it has the live type in hand, which a post-hoc walk of the
+        # serialized structure does not — see _may_sort_dict_entries).
+        with _canonical_key_path():
+            serialized = _serialize_custom(obj)
         return json.dumps(serialized, sort_keys=True)
+    serialized = _serialize_custom(obj)
     # VALUE path: orjson-accelerated when available
     return _dumps_value(serialized)
+
+# Dicts whose keys aren't plain strings (or that hold a reserved marker key) are
+# serialized as a JSON LIST of [key, value] pairs, and dict subclasses carry their
+# contents in the reducer's '__dictitems__' list. json.dumps(sort_keys=True) sorts
+# object keys but NOT array elements, so those lists survived in insertion order
+# and two equal dicts addressed to two different cache entries — the same silent
+# miss that put sort_keys on the key path to begin with.
+#
+# Set ONLY for the canonical key path: for a VALUE, a dict's insertion order is
+# observable on round-trip and must be preserved.
+_KEYPATH_CTX = contextvars.ContextVar("hashstash_canonical_key", default=False)
+
+
+@contextmanager
+def _canonical_key_path():
+    token = _KEYPATH_CTX.set(True)
+    try:
+        yield
+    finally:
+        _KEYPATH_CTX.reset(token)
+
+
+def _entry_sort_key(entry):
+    # same comparator as IterableSerializer uses for sets: sort by the serialized
+    # form so ordering is stable across processes and PYTHONHASHSEED
+    return json.dumps(entry, sort_keys=True, default=str)
+
+
+def _may_sort_dict_entries(obj):
+    """Whether obj's entries can be reordered without changing what the object
+    MEANS as a cache key.
+
+    Decided from the LIVE TYPE, never from the serialized '__py__' address: a
+    denylist of type names silently misses SUBCLASSES. An OrderedDict subclass
+    inherits OrderedDict's order-sensitive __eq__ but reduces to its own address,
+    so a name-based check would sort it and collapse two UNEQUAL keys onto one
+    entry — a false HIT (silent wrong data), which is strictly worse than the
+    miss this whole change exists to fix.
+
+    `type(obj).__eq__ is dict.__eq__` is the exact test: it holds for dict and
+    defaultdict (order-insensitive) and fails for OrderedDict, its subclasses,
+    and bson.SON. Counter also fails it, which costs nothing — Counter's contents
+    reduce into '__args__' as a plain str-keyed dict and are canonicalized by
+    json.dumps(sort_keys=True) already."""
+    if not _KEYPATH_CTX.get():
+        return False
+    return type(obj).__eq__ is dict.__eq__
+
 
 def stuff(obj, data=None):
     return _serialize_custom(obj, data=data)
@@ -259,11 +312,18 @@ def _serialize_custom(obj: Any, data:Any=None) -> Any:
             return {k: _serialize_custom(v) for k, v in obj.items()}
         # Non-string keys (JSON would coerce them to strings) or reserved marker keys:
         # keep keys as a list of [key, value] pairs so their types survive the round-trip.
+        items = [
+            [_serialize_custom(k), _serialize_custom(v)] for k, v in obj.items()
+        ]
+        if _may_sort_dict_entries(obj):
+            # json.dumps(sort_keys=True) does not reorder a JSON array, so on the
+            # canonical key path these pairs must be ordered here or two equal
+            # dicts address to two different entries. `type(obj) is dict` is
+            # guaranteed above, so reordering is always safe here.
+            items.sort(key=_entry_sort_key)
         return {
             '__pytype__': 'dict',
-            '__items__': [
-                [_serialize_custom(k), _serialize_custom(v)] for k, v in obj.items()
-            ],
+            '__items__': items,
         }
 
     if isinstance(obj, list):
@@ -976,9 +1036,17 @@ class ReducerSerializer(CustomSerializer):
         if len(reduced) > 3 and reduced[3] is not None:
             result['__listitems__'] = [_serialize_custom(x) for x in reduced[3]]
         if len(reduced) > 4 and reduced[4] is not None:
-            result['__dictitems__'] = [
+            dictitems = [
                 [_serialize_custom(k), _serialize_custom(v)] for k, v in reduced[4]
             ]
+            # Canonical key path only, and only when reordering cannot change what
+            # the object means (see _may_sort_dict_entries). '__state__' also vetoes
+            # it: bson.SON keeps its ordering in state ('_SON__keys'), so sorting
+            # the items alone would round-trip an object whose entries and whose
+            # recorded order disagree.
+            if _may_sort_dict_entries(obj) and '__state__' not in result:
+                dictitems.sort(key=_entry_sort_key)
+            result['__dictitems__'] = dictitems
         if len(reduced) > 5 and reduced[5] is not None:
             result['__state_setter__'] = get_obj_addr(reduced[5])
         return result
