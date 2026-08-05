@@ -9,23 +9,36 @@ import shutil
 from . import *
 
 def iter_jsonl(path):
-    if os.path.exists(path):
-        try:
-            import orjsonl
-            yield from orjsonl.stream(path)
-        except ImportError:
-            with open(path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        yield json.loads(line)
-                    except Exception:
-                        # a torn/corrupt row loses that version: say so instead of
-                        # silently dropping it
-                        log.warning(f"skipping unparseable JSONL line in {path}")
-                        continue
+    """Yield each row of a JSONL file, skipping any row that won't parse.
+
+    Reads line-by-line rather than delegating to orjsonl.stream(), which this
+    used to do whenever orjsonl happened to be importable. That fast path raised
+    JSONDecodeError on the FIRST malformed row and took the whole read down with
+    it — so on a machine with orjsonl installed, one torn final line (a writer
+    killed mid-append, a power loss) broke items(), values(), and compact(), the
+    very call that repairs the file. Meanwhile the JSONL engine's own index scan
+    skipped bad rows, so the same file was half-readable and half-fatal
+    depending on which method you called and which packages were installed.
+    orjson (a declared dependency) gives the same C-speed parse per line with
+    none of that: one tolerant code path, same behaviour everywhere."""
+    if not os.path.exists(path):
+        return
+    try:
+        from orjson import loads as _loads
+    except ImportError:
+        _loads = json.loads
+    with open(path, "rb") as f:  # both parsers accept bytes
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield _loads(line)
+            except Exception:
+                # a torn/corrupt row loses that version: say so instead of
+                # silently dropping it
+                log.warning(f"skipping unparseable JSONL line in {path}")
+                continue
 
 def is_jsonable(obj):
     return isinstance(obj, (dict, list, str, int, float, bool, type(None)))

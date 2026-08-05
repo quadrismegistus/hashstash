@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`clear()` no longer destroys sub-stashes.** `sub()` nests a child inside the parent's *param folder* (`<root>/<dbname>/pairtree.hashstash.lz4/<sub dbname>/...`), and `clear()` removed that whole folder — so clearing a cache silently deleted every sub-stash under it, including from a handle that never created them and so never had them in `self.children`. `clear()` now removes only this stash's own storage (everything named for `self.filename`: `data.db`, the `data.db/` tree, `data.db-wal`, `data.db.dat/.dir/.bak`, `data.db.lock`, `data.jsonl.compact.<pid>`) and drops the param folder only if nothing else is left in it. Registered children are still cleared, so `stash.clear()` still clears its `stashed_result` function stashes. The JSONL engine already behaved this way — the two engines disagreed about whether `clear()` was destructive to siblings.
+  - Worth knowing regardless: a sub-stash still lives *inside* the parent's directory tree, so anything that removes that tree by other means (`rm -rf`, a cleanup script, `tmp()`) still takes children with it. For data with a different lifetime than the parent cache — a ledger, an audit log, anything you would be unhappy to lose with a cache clear — use a separate `HashStash` at a sibling `root_dir` rather than `sub()`.
+- **`sub(engine=...)` now actually switches engine.** `sub()` built the child with `self.__class__(**kwargs)`, which bypasses the engine registry, so `pairtree_stash.sub(dbname='x', engine='jsonl')` returned another `PairtreeHashStash`. The argument was accepted and silently ignored, handing back the wrong storage format with no error. When the requested engine differs from the parent's, `sub()` now dispatches through the `HashStash` factory (and drops the parent's `filename` so the child gets its own default). `append_mode`, `dbname`, and the rest were always honoured and still are.
+- **A torn final line in a JSONL stash no longer costs two rows.** A row is written by a single open/write/close, so a killed process cannot tear one — but a power loss can leave the last line truncated with no newline, and the next append then concatenated onto it, so **one** torn line silently destroyed **two** rows: its own and the next one written. Appends now terminate a stray unterminated line first (logging a warning), confining the loss to the torn row.
+- **`iter_jsonl()` no longer depends on whether `orjsonl` is installed.** It delegated to `orjsonl.stream()` whenever that undeclared optional package happened to be importable, and `stream()` raises `JSONDecodeError` on the first malformed row and takes the whole read with it. So on a machine with `orjsonl` installed, one torn line broke `items()`, `values()`, and — worst — `compact()`, the call that repairs the file, while the engine's own index scan skipped bad rows on the same file. Reads are now a single tolerant line-by-line path (using `orjson`, a declared dependency, for the same C-speed parse), so a corrupt row is skipped with a warning and never blocks the rest of the log.
+
+### Note on concurrency (unchanged behaviour, now documented)
+
+Appends are safe across processes on one machine: the JSONL engine holds a cross-process file lock for every write, and the pairtree engine writes one atomically-renamed file per version. Verified with 8 concurrent processes appending to the same key (200/200 versions kept on both engines) and with `SIGKILL` mid-write (100% of completed writes readable).
+
+What is **not** covered is a read-then-decide-then-write sequence: the lock spans the write, not your decision. Two processes can both read "absent" and both act. Wrap the whole critical section in the stash's own per-key lock:
+
+```python
+with stash.key_lock(key):
+    if stash.get(key) is None:
+        stash[key] = expensive_or_billable_operation()
+```
+
+`key_lock()` is a local advisory file lock — it coordinates processes on one machine, not across hosts or NFS. Note also that no engine calls `fsync`, so a machine crash or power loss can still lose recently written rows sitting in the page cache.
+
 ## 1.1.0 — 2026-07-26
 
 Minor rather than patch: this changes the stored address of a class of cache key

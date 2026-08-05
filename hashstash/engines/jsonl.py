@@ -237,8 +237,21 @@ class JSONLHashStash(BaseHashStash):
                     f"with flat=False."
                 ) from e
             raise
-        with open(self.path, "a", encoding="utf-8") as fh:
-            fh.write(line)
+        # Heal a torn tail before appending. A row is written by a single
+        # open/write/close, so a killed process can't tear one — but a power
+        # loss or a filesystem that reorders can leave the last line truncated
+        # with no newline. The next append then concatenated onto it, so ONE
+        # torn line silently cost TWO rows: its own, and the next one written.
+        # Terminating the stray line first confines the loss to the torn row.
+        # Callers hold the stash lock (set/_set/_del all wrap this in `with
+        # self:`), and O_APPEND puts the write at EOF regardless of the seek.
+        with open(self.path, "a+b") as fh:
+            if fh.seek(0, os.SEEK_END) > 0:
+                fh.seek(-1, os.SEEK_END)
+                if fh.read(1) != b"\n":
+                    log.warning(f"healing truncated final line in {self.path}")
+                    fh.write(b"\n")
+            fh.write(line.encode("utf-8"))
 
     def compact(self) -> "JSONLHashStash":
         """Rewrite the log keeping only live rows.

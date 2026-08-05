@@ -1273,10 +1273,46 @@ class BaseHashStash(MutableMapping):
 
         self.close()
         if getattr(self, "_owns_dir", True):
-            self._remove_dir(self.path_dirname)
+            self._remove_own_files()
         else:
             self._remove_dir(self.path)
         return self
+
+    def _remove_own_files(self):
+        """Delete this stash's own storage from its param folder, leaving any
+        sub-stash directories standing.
+
+        This used to remove path_dirname outright. But path_dirname is the param
+        folder ('pairtree.hashstash.lz4'), and sub() nests every child stash
+        inside it — so clearing a parent silently destroyed sub-stashes that had
+        nothing to do with the clear, including from a handle that never created
+        them and so never saw them in self.children. (The JSONL engine's own
+        clear() only ever removed its data file, so the two engines disagreed
+        about whether clear() was destructive to siblings.)
+
+        Everything an engine writes here is named for self.filename — data.db,
+        the data.db/ tree, data.db-wal, data.db.dat/.dir/.bak, data.db.lock,
+        data.jsonl.compact.1234 — so sweeping that prefix removes exactly this
+        stash's storage. A directory that merely starts with the same prefix is
+        a sub-stash root, not ours, and is left alone."""
+        try:
+            entries = os.listdir(self.path_dirname)
+        except OSError:
+            self._remove_dir(self.path)
+            return
+        for entry in entries:
+            entry_path = os.path.join(self.path_dirname, entry)
+            if entry == self.filename or (
+                entry.startswith(self.filename) and os.path.isfile(entry_path)
+            ):
+                self._remove_dir(entry_path)
+        try:
+            # nothing of ours left and no sub-stashes: drop the param folder too,
+            # so a plain stash still clears away completely as it always did
+            if not os.listdir(self.path_dirname):
+                os.rmdir(self.path_dirname)
+        except OSError:
+            pass
 
     @log.debug
     def __len__(self) -> int:
@@ -1647,7 +1683,18 @@ class BaseHashStash(MutableMapping):
             # our own path_dirname is definitionally a directory, even though its
             # dotted param-folder name would fail the is_dir extension heuristic
             kwargs['_root_is_dir'] = True
-        new_instance = self.__class__(**kwargs)
+        if kwargs.get("engine") and kwargs["engine"] != self.engine:
+            # Route through the factory so engine= actually selects a class.
+            # self.__class__(**kwargs) bypasses the engine registry entirely, so
+            # a pairtree parent's .sub(engine='jsonl') returned another
+            # PairtreeHashStash — the argument was accepted and silently ignored,
+            # and the caller got the wrong storage format with no error.
+            # filename is dropped so the new engine's own default applies
+            # (data.jsonl, not the parent's data.db).
+            kwargs.pop("filename", None)
+            new_instance = HashStash(**kwargs)
+        else:
+            new_instance = self.__class__(**kwargs)
         self.children.append(new_instance)
         return new_instance
 
