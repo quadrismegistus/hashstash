@@ -157,6 +157,70 @@ def test_fsspec_clear_still_clears_own_data(tmp_path):
     assert stash.get("a") is None
 
 
+def test_sub_dbname_colliding_with_storage_file_is_refused(tmp_path):
+    """A child nests under the parent's param folder, so dbname='data.db' puts
+    it inside the parent's own storage. The parent's walk then finds the child's
+    entries and silently merges the keyspaces: len() and keys() report both."""
+    parent = HashStash(engine="pairtree", root_dir=str(tmp_path), dbname="p")
+    parent["a"] = 1
+    parent["b"] = 2
+    with pytest.raises(ValueError, match="collides"):
+        parent.sub(dbname=parent.filename)
+    assert len(parent) == 2
+    assert sorted(map(str, parent.keys())) == ["a", "b"]
+
+
+def test_sub_dbname_collision_refused_on_nested_path(tmp_path):
+    parent = HashStash(engine="jsonl", root_dir=str(tmp_path), dbname="p")
+    with pytest.raises(ValueError, match="collides"):
+        parent.sub(dbname=f"{parent.filename}/deeper")
+
+
+def test_sub_dbname_collision_allowed_with_explicit_root_dir(tmp_path):
+    """With an explicit root_dir the child is not nested, so the name is fine."""
+    parent = HashStash(engine="pairtree", root_dir=str(tmp_path), dbname="p")
+    sub = parent.sub(root_dir=str(tmp_path / "elsewhere"), dbname=parent.filename)
+    sub["k"] = "v"
+    assert sub.get("k") == "v"
+    assert len(parent) == 0
+
+
+# --- file-style root_dir: clear() must actually clear -----------------------
+
+
+@pytest.mark.parametrize("engine", ["shelve", "sqlite", "pairtree"])
+def test_file_style_root_dir_clear_actually_clears(engine, tmp_path):
+    """With root_dir naming a file, clear() removed only the literal path. For
+    shelve that is a file dbm never creates, so clear() silently removed nothing
+    and reported success while a fresh handle still read every entry."""
+    target = str(tmp_path / "mydata.db")
+    stash = HashStash(engine=engine, root_dir=target)
+    stash["a"] = 1
+    stash["b"] = 2
+    assert stash._owns_dir is False
+    stash.clear()
+    fresh = HashStash(engine=engine, root_dir=target)
+    assert len(fresh) == 0
+    assert fresh.get("a") is None
+
+
+def test_file_style_root_dir_clear_spares_unrelated_files(tmp_path):
+    """The reason the sweep here is a closed suffix list and not a prefix glob:
+    path_dirname is the user's own directory, shared with unrelated files."""
+    target = str(tmp_path / "mydata.db")
+    keep = tmp_path / "mydata.db.backup"
+    keep.write_text("precious")
+    other = tmp_path / "notes.txt"
+    other.write_text("also precious")
+
+    stash = HashStash(engine="shelve", root_dir=target)
+    stash["a"] = 1
+    stash.clear()
+
+    assert keep.read_text() == "precious"
+    assert other.read_text() == "also precious"
+
+
 # --- 2. sub(engine=...) must actually switch engine -------------------------
 
 

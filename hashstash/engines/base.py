@@ -1283,8 +1283,27 @@ class BaseHashStash(MutableMapping):
         if getattr(self, "_owns_dir", True):
             self._remove_own_files()
         else:
-            self._remove_dir(self.path)
+            self._remove_own_path_and_sidecars()
         return self
+
+    # Sidecars engines write beside a file-style path: shelve's dbm suffixes,
+    # sqlite/duckdb write-ahead logs, our own lock file. Deliberately a CLOSED
+    # list rather than the prefix sweep used for a param folder we own — here
+    # path_dirname is the user's own directory, shared with unrelated files, and
+    # a prefix glob would eat `mydata.db.backup`.
+    SIDECAR_SUFFIXES = (".db", ".dat", ".dir", ".bak", ".wal", "-wal", "-shm", ".lock")
+
+    def _remove_own_path_and_sidecars(self):
+        """Remove this stash's storage when root_dir named a file directly.
+
+        This used to remove only self.path, which for shelve deleted nothing at
+        all: dbm appends its own suffix, so the literal `mydata.db` never exists
+        and clear() silently removed nothing while reporting success — a fresh
+        handle still read every entry. A destructive call that no-ops is worse
+        than one that over-reaches, because nothing tells you."""
+        self._remove_dir(self.path)
+        for suffix in self.SIDECAR_SUFFIXES:
+            self._remove_dir(self.path + suffix)
 
     def _owns_entry(self, entry, is_file):
         """True if a name in path_dirname is this stash's own storage rather
@@ -1693,6 +1712,19 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def sub(self, root_dir:str=None, dbname=DEFAULT_SUB_DBNAME, **kwargs):
+        if root_dir is None and str(dbname).split("/", 1)[0] == self.filename:
+            # A child nests under the parent's param folder, so this dbname would
+            # put it INSIDE the parent's own storage (<param>/data.db/...). The
+            # parent's directory walk then finds the child's entries and silently
+            # merges the two keyspaces — len() and keys() report both stashes'
+            # data — whether or not clear() is ever called. Refuse the name
+            # rather than remap it: remapping would relocate data invisibly.
+            raise ValueError(
+                f"sub(dbname={dbname!r}) collides with this stash's own storage "
+                f"file ({self.filename!r}), which would nest the child inside "
+                f"{self.path} and merge their keyspaces. Choose another dbname, "
+                f"or pass an explicit root_dir to place the child elsewhere."
+            )
         explicit = set(kwargs)  # what the CALLER passed, before inheritance
         kwargs = {
             **self.to_dict(),
