@@ -1268,15 +1268,91 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def clear(self) -> "BaseHashStash":
+        # Cascade to function-result stashes only. Those are this stash's OWN
+        # memoized data under a namespace it owns; a sub() a caller made is a
+        # separate store that merely lives nearby. Cascading to every child made
+        # clear() depend on WHICH HANDLE called it: the handle that created a
+        # sub-stash destroyed it, a fresh handle (a CLI run, another process —
+        # the normal way anyone clears a cache) spared it. Same folder, same
+        # call, opposite outcome.
         for sub in self.children:
-            sub.clear()
+            if getattr(sub, "is_function_stash", False):
+                sub.clear()
 
         self.close()
         if getattr(self, "_owns_dir", True):
-            self._remove_dir(self.path_dirname)
+            self._remove_own_files()
         else:
-            self._remove_dir(self.path)
+            self._remove_own_path_and_sidecars()
         return self
+
+    # Sidecars engines write beside a file-style path: shelve's dbm suffixes,
+    # sqlite/duckdb write-ahead logs, our own lock file. Deliberately a CLOSED
+    # list rather than the prefix sweep used for a param folder we own — here
+    # path_dirname is the user's own directory, shared with unrelated files, and
+    # a prefix glob would eat `mydata.db.backup`.
+    SIDECAR_SUFFIXES = (".db", ".dat", ".dir", ".bak", ".wal", "-wal", "-shm", ".lock")
+
+    def _remove_own_path_and_sidecars(self):
+        """Remove this stash's storage when root_dir named a file directly.
+
+        This used to remove only self.path, which for shelve deleted nothing at
+        all: dbm appends its own suffix, so the literal `mydata.db` never exists
+        and clear() silently removed nothing while reporting success — a fresh
+        handle still read every entry. A destructive call that no-ops is worse
+        than one that over-reaches, because nothing tells you."""
+        self._remove_dir(self.path)
+        for suffix in self.SIDECAR_SUFFIXES:
+            self._remove_dir(self.path + suffix)
+
+    def _owns_entry(self, entry, is_file):
+        """True if a name in path_dirname is this stash's own storage rather
+        than a sub-stash directory. Shared by the local sweep below and the
+        fsspec engine's, so the two cannot drift apart."""
+        return entry == self.filename or (entry.startswith(self.filename) and is_file)
+
+    def _remove_own_files(self):
+        """Delete this stash's own storage from its param folder, leaving any
+        sub-stash directories standing.
+
+        This used to remove path_dirname outright. But path_dirname is the param
+        folder ('pairtree.hashstash.lz4'), and sub() nests every child stash
+        inside it — so clearing a parent silently destroyed sub-stashes that had
+        nothing to do with the clear, including from a handle that never created
+        them and so never saw them in self.children. (The JSONL engine's own
+        clear() only ever removed its data file, so the two engines disagreed
+        about whether clear() was destructive to siblings.)
+
+        Everything an engine writes here is named for self.filename — data.db,
+        the data.db/ tree, data.db-wal, data.db.dat/.dir/.bak, data.db.lock,
+        data.jsonl.compact.1234 — so sweeping that prefix removes exactly this
+        stash's storage. A directory that merely *starts with* the same prefix
+        is a sub-stash root, not ours, and is left alone. (A sub-stash whose
+        dbname is EXACTLY the filename, `sub(dbname='data.db')`, collides with
+        our own storage on disk and does go; it is unreachable by accident.)
+
+        The stashed_result/ namespace goes too. Those are this stash's own
+        memoized function results, at a path derived from its identity, so
+        clearing the cache must clear them — and doing it on disk rather than
+        only through self.children is what makes clear() give the same result
+        from any handle, instead of depending on which one created them."""
+        try:
+            entries = os.listdir(self.path_dirname)
+        except OSError:
+            self._remove_dir(self.path)
+            return
+        for entry in entries:
+            entry_path = os.path.join(self.path_dirname, entry)
+            if self._owns_entry(entry, os.path.isfile(entry_path)):
+                self._remove_dir(entry_path)
+        self._remove_dir(os.path.join(self.path_dirname, FUNCTION_STASH_DBNAME))
+        try:
+            # nothing of ours left and no sub-stashes: drop the param folder too,
+            # so a plain stash still clears away completely as it always did
+            if not os.listdir(self.path_dirname):
+                os.rmdir(self.path_dirname)
+        except OSError:
+            pass
 
     @log.debug
     def __len__(self) -> int:
@@ -1636,6 +1712,20 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def sub(self, root_dir:str=None, dbname=DEFAULT_SUB_DBNAME, **kwargs):
+        if root_dir is None and str(dbname).split("/", 1)[0] == self.filename:
+            # A child nests under the parent's param folder, so this dbname would
+            # put it INSIDE the parent's own storage (<param>/data.db/...). The
+            # parent's directory walk then finds the child's entries and silently
+            # merges the two keyspaces — len() and keys() report both stashes'
+            # data — whether or not clear() is ever called. Refuse the name
+            # rather than remap it: remapping would relocate data invisibly.
+            raise ValueError(
+                f"sub(dbname={dbname!r}) collides with this stash's own storage "
+                f"file ({self.filename!r}), which would nest the child inside "
+                f"{self.path} and merge their keyspaces. Choose another dbname, "
+                f"or pass an explicit root_dir to place the child elsewhere."
+            )
+        explicit = set(kwargs)  # what the CALLER passed, before inheritance
         kwargs = {
             **self.to_dict(),
             **kwargs,
@@ -1647,7 +1737,27 @@ class BaseHashStash(MutableMapping):
             # our own path_dirname is definitionally a directory, even though its
             # dotted param-folder name would fail the is_dir extension heuristic
             kwargs['_root_is_dir'] = True
-        new_instance = self.__class__(**kwargs)
+        if kwargs.get("engine") and kwargs["engine"] != self.engine:
+            # Route through the factory so engine= actually selects a class.
+            # self.__class__(**kwargs) bypasses the engine registry entirely, so
+            # a pairtree parent's .sub(engine='jsonl') returned another
+            # PairtreeHashStash — the argument was accepted and silently ignored,
+            # and the caller got the wrong storage format with no error.
+            # (No need to drop the inherited filename: it is inert for a stash
+            # that owns its directory — the child takes its class default.)
+            if "safe" not in explicit:
+                # safe is engine-DERIVED, not user config: networked/shared
+                # engines default to safe=True because their writer may be
+                # untrusted (see __init__). to_dict() hands us the parent's
+                # already-materialized False, which would win over that default
+                # and silently give a child moved onto redis/mongo
+                # code-capable deserialization of other writers' payloads —
+                # precisely the threat the default exists for. Let the child's
+                # own engine decide unless the caller said otherwise.
+                kwargs.pop("safe", None)
+            new_instance = HashStash(**kwargs)
+        else:
+            new_instance = self.__class__(**kwargs)
         self.children.append(new_instance)
         return new_instance
 
@@ -1742,7 +1852,7 @@ class BaseHashStash(MutableMapping):
             # from one factory share an address): include source + closure values
             # in the namespace so different functions never share cached results
             func_name += "/" + encode_hash(self._function_identity_sig(func))[:10]
-        new_dbname = f'{"stashed_result" if not dbname else dbname}/{func_name}'
+        new_dbname = f'{FUNCTION_STASH_DBNAME if not dbname else dbname}/{func_name}'
         log.debug(f"Sub-function results stash: {new_dbname}")
         stash = self.sub(
             dbname=new_dbname,
@@ -2153,6 +2263,10 @@ def _warn_unknown_stash_kwargs(cls, kwargs):
     known |= {
         "root_dir", "engine", "dbname", "name", "compress", "b64", "serializer",
         "filename", "df_engine", "io_engine", "map_size", "max_map_size", "flat",
+        # redis/mongo carry these in to_dict_attrs, so sub()/migrate() inherit
+        # them onto a child of another engine and the caller — who typed no such
+        # argument — got a warning telling them to check for typos
+        "host", "port",
     }
     # underscore kwargs are internal (from_dict round-trips) — never flag them
     unknown = [k for k in kwargs if k not in known and not k.startswith("_")]

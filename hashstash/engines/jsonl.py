@@ -80,6 +80,23 @@ class JSONLHashStash(BaseHashStash):
         """Reconstruct a Python key from the __key__ row value."""
         return self.deserialize(json.dumps(row_key))
 
+    def _row_key(self, row):
+        """This row's key field, or None if it isn't a well-formed row.
+
+        A line can be valid JSON and still not be a row: a bare scalar (`123`,
+        `null`, `"abc"`), a list, or an object with no `__key__` (or, outside
+        flat mode, no `__value__`). Every consumer used to index `row[key_name]`
+        directly, so a single such line raised KeyError/TypeError out of get(),
+        len(), keys(), items(), values(), set() — AND out of compact(), the
+        documented repair path — leaving the stash unreadable, unwritable and
+        unrepairable. Tolerating a torn line is only worth anything if the
+        callers survive it too."""
+        if not isinstance(row, dict) or self.key_name not in row:
+            return None
+        if not self.flat and not row.get(self.delete_name) and self.value_name not in row:
+            return None
+        return row[self.key_name]
+
     def _flat_row_to_value(self, row):
         """Extract the value dict from a flat row; fall back to __value__ for non-flat rows."""
         if self.value_name in row:
@@ -142,7 +159,10 @@ class JSONLHashStash(BaseHashStash):
                 except Exception:
                     log.warning(f"skipping unparseable JSONL line in {self.path}")
                     continue
-                rk = row[self.key_name]
+                rk = self._row_key(row)
+                if rk is None:
+                    log.warning(f"skipping malformed JSONL row in {self.path}")
+                    continue
                 ks = self._flat_ks(rk) if self.flat else rk
                 if row.get(self.delete_name):
                     self._key_index.pop(ks, None)
@@ -237,8 +257,28 @@ class JSONLHashStash(BaseHashStash):
                     f"with flat=False."
                 ) from e
             raise
-        with open(self.path, "a", encoding="utf-8") as fh:
-            fh.write(line)
+        # Heal a torn tail before appending. A row is written by a single
+        # open/write/close, so a killed process can't tear one — but a power
+        # loss or a filesystem that reorders can leave the last line truncated
+        # with no newline. The next append then concatenated onto it, so ONE
+        # torn line silently cost TWO rows: its own, and the next one written.
+        # Terminating the stray line first confines the loss to the torn row.
+        # Callers hold the stash lock (set/_set/_del all wrap this in `with
+        # self:`), and O_APPEND puts the write at EOF regardless of the seek.
+        with open(self.path, "a+b") as fh:
+            try:
+                if fh.seek(0, os.SEEK_END) > 0:
+                    fh.seek(-1, os.SEEK_END)
+                    if fh.read(1) not in (b"\n", b""):
+                        log.warning(f"healing truncated final line in {self.path}")
+                        fh.write(b"\n")
+            except OSError:
+                # an external truncator (`> data.jsonl`, logrotate copytruncate)
+                # can empty the file between the size check and the seek, making
+                # seek(-1) invalid. The heal is best-effort; never fail the write
+                # it was meant to protect.
+                pass
+            fh.write(line.encode("utf-8"))
 
     def compact(self) -> "JSONLHashStash":
         """Rewrite the log keeping only live rows.
@@ -254,7 +294,9 @@ class JSONLHashStash(BaseHashStash):
                 return self
             live = {}  # ks -> list of rows (insertion order preserved)
             for row in iter_jsonl(self.path):
-                rk = row[self.key_name]
+                rk = self._row_key(row)
+                if rk is None:
+                    continue  # dropped by the rebuild, like an unparseable line
                 ks = self._flat_ks(rk) if self.flat else rk
                 if row.get(self.delete_name):
                     live.pop(ks, None)
@@ -264,7 +306,10 @@ class JSONLHashStash(BaseHashStash):
                     live[ks] = [row]  # overwrite: keep only the newest
 
             tmp_path = f"{self.path}.compact.{os.getpid()}"
-            with open(tmp_path, "w", encoding="utf-8") as fh:
+            # newline="\n": appends write LF in binary mode, so text mode's
+            # Windows LF->CRLF translation would have compact() rewrite the
+            # whole file in a different line ending than the appends that follow
+            with open(tmp_path, "w", encoding="utf-8", newline="\n") as fh:
                 for rows in live.values():
                     for row in rows:
                         fh.write(json.dumps(row) + "\n")
@@ -276,17 +321,13 @@ class JSONLHashStash(BaseHashStash):
         return self
 
     def clear(self) -> "JSONLHashStash":
-        for sub in self.children:
-            sub.clear()
-        self.close()
+        # Defer to the base sweep rather than removing only self.path: that left
+        # data.jsonl.lock and any orphaned data.jsonl.compact.<pid> from a
+        # crashed compact() behind forever, and skipped the stashed_result
+        # namespace the base engine clears.
         self._key_index = {}
         self._scanned_bytes = 0
-        if os.path.exists(self.path):
-            try:
-                os.remove(self.path)
-            except Exception as e:
-                log.warning(f"could not remove {self.path}: {e}")
-        return self
+        return super().clear()
 
     @log.debug
     def set(self, unencoded_key: Any, unencoded_value: Any, append=None) -> None:
@@ -365,6 +406,8 @@ class JSONLHashStash(BaseHashStash):
     @log.debug
     def _values(self):
         for row in iter_jsonl(self.path):
+            if self._row_key(row) is None:
+                continue
             if not row.get(self.delete_name):
                 # flat rows have no __value__ field: extract from the row itself
                 yield self._flat_row_to_value(row) if self.flat else row[self.value_name]
@@ -372,9 +415,12 @@ class JSONLHashStash(BaseHashStash):
     @log.debug
     def _items(self):
         for row in iter_jsonl(self.path):
+            rk = self._row_key(row)
+            if rk is None:
+                continue
             if not row.get(self.delete_name):
                 value = self._flat_row_to_value(row) if self.flat else row[self.value_name]
-                yield row[self.key_name], value
+                yield rk, value
 
     @log.debug
     def items(self, all_results=None, with_metadata=False, before=None, after=None, **kwargs):
@@ -386,7 +432,9 @@ class JSONLHashStash(BaseHashStash):
         after = self._ttl_after(after, kwargs)
         key2entries = defaultdict(list)
         for row in iter_jsonl(self.path):
-            rk = row[self.key_name]
+            rk = self._row_key(row)
+            if rk is None:
+                continue
             ks = self._flat_ks(rk) if self.flat else rk
             if row.get(self.delete_name):
                 key2entries[ks] = []

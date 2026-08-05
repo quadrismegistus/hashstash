@@ -37,6 +37,13 @@ class MemoryHashStash(BaseHashStash):
         yield cache[self.path]
 
     def clear(self):
+        # cascade to function-result stashes like every other engine: this
+        # override skipped children entirely, so memoized results survived their
+        # parent's clear() on memory alone. A caller's sub() is a separate store
+        # and is spared, matching the base engine.
+        for sub in self.children:
+            if getattr(sub, "is_function_stash", False):
+                sub.clear()
         cache = get_shared_memory_cache()
         cache[self.path] = {}
         return self

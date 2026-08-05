@@ -9,23 +9,56 @@ import shutil
 from . import *
 
 def iter_jsonl(path):
-    if os.path.exists(path):
-        try:
-            import orjsonl
-            yield from orjsonl.stream(path)
-        except ImportError:
-            with open(path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        yield json.loads(line)
-                    except Exception:
-                        # a torn/corrupt row loses that version: say so instead of
-                        # silently dropping it
-                        log.warning(f"skipping unparseable JSONL line in {path}")
-                        continue
+    """Yield each row of a JSONL file, skipping any row that won't parse.
+
+    Reads line-by-line rather than delegating to orjsonl.stream(), which this
+    used to do whenever orjsonl happened to be importable. That fast path raised
+    JSONDecodeError on the FIRST malformed row and took the whole read down with
+    it — so on a machine with orjsonl installed, one torn final line (a writer
+    killed mid-append, a power loss) broke items(), values(), and compact(), the
+    very call that repairs the file. Meanwhile the JSONL engine's own index scan
+    skipped bad rows, so the same file was half-readable and half-fatal
+    depending on which method you called and which packages were installed.
+    Parses with stdlib json, deliberately, even though orjson is ~3x faster.
+    Rows are written with json.dumps (see the JSONL engine's _append_line), and
+    json.loads is its exact inverse; orjson is a STRICTER parser than the
+    writer, and every gap between them is a row this library wrote and could no
+    longer read. It rejects the NaN/Infinity tokens json.dumps emits by default,
+    rejects lone surrogates and nesting past 1024 — and worst, because nothing
+    raises, it decodes an integer above 2**64-1 to a float, so 2**70 reads back
+    as 1.18e21. compact() rebuilds the file from this function, so a row it
+    cannot parse is not merely skipped on read: it is permanently deleted (or,
+    for the big int, permanently rewritten as a float) by the maintenance call.
+    A faster parser here is only safe if it is a proven inverse of the writer.
+
+    Reading in binary also means an undecodable byte fails one row instead of
+    the whole file: the old text-mode open decoded with the locale encoding and
+    raised UnicodeDecodeError outside the per-line try.
+
+    This keeps the entire engine on one parser. The key-offset index scan
+    (_ensure_keyset_loaded) and the seek-based row read (_read_row_at) both use
+    json.loads, so get()/len() and items()/values()/compact() can never
+    disagree about which rows exist."""
+    if not os.path.exists(path):
+        return
+    skipped = 0
+    with open(path, "rb") as f:  # json.loads accepts bytes
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except Exception:
+                # a torn/corrupt row loses that version: say so instead of
+                # silently dropping it. Only the first is logged per pass, with
+                # a total at the end: warning-per-line turned a badly corrupted
+                # file into ~19MB of identical log text and a 35x slowdown.
+                skipped += 1
+                if skipped == 1:
+                    log.warning(f"skipping unparseable JSONL line {lineno} in {path}")
+    if skipped > 1:
+        log.warning(f"skipped {skipped} unparseable JSONL lines total in {path}")
 
 def is_jsonable(obj):
     return isinstance(obj, (dict, list, str, int, float, bool, type(None)))

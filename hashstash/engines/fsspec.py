@@ -121,7 +121,23 @@ class FsspecHashStash(PairtreeHashStash):
             sub.clear()
         self.close()
         if getattr(self, "_owns_dir", True):
-            self._fs_rmtree(self.path_dirname)
+            # Same sweep as the base engine, through the fsspec primitives:
+            # removing path_dirname outright deleted every sub-stash nested in
+            # it, since sub() puts children inside the parent's param folder.
+            try:
+                entries = self._fs_listdir(self.path_dirname)
+            except (FileNotFoundError, OSError):
+                self._fs_rmtree(self.path)
+                return self
+            for entry in entries:
+                entry_path = self._fs_join(self.path_dirname, entry)
+                if self._owns_entry(entry, self._fs_isfile(entry_path)):
+                    self._fs_rmtree(entry_path)
+            try:
+                if not self._fs_listdir(self.path_dirname):
+                    self._fs_rmtree(self.path_dirname)
+            except (FileNotFoundError, OSError):
+                pass
         else:
             self._fs_rmtree(self.path)
         return self
