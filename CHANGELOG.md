@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 1.2.0 — 2026-08-05
+
+Minor rather than patch, on the same principle as 1.1.0: the version number is
+signalling a semantic change, not diff size. Every item below is a bug fix, but
+one of them changes observable behaviour — a sub-stash you created with `sub()`
+now **survives** `parent.clear()` called on the handle that created it, where it
+was previously destroyed. If you relied on a parent's `clear()` to cascade into
+sub-stashes, call `sub.clear()` yourself. Memoized `stashed_result` caches are
+unaffected: they still clear with their parent, and now do so from any handle
+rather than only the one that registered them.
+
+The theme is silent failure. Every bug here — data destroyed by a routine call,
+an argument accepted and ignored, a corrupt row taken as a whole-stash outage, a
+destructive call that did nothing — reported success while doing the wrong
+thing. Several were found while auditing hashstash as the store for a
+money-critical batch ledger; the rest by an adversarial review of that first
+round of fixes, which caught one regression the fixes themselves introduced.
+
 ### Fixed
 
 - **`clear()` no longer destroys sub-stashes.** `sub()` nests a child inside the parent's *param folder* (`<root>/<dbname>/pairtree.hashstash.lz4/<sub dbname>/...`), and `clear()` removed that whole folder — so clearing a cache silently deleted every sub-stash under it, including from a handle that never created them and so never had them in `self.children`. `clear()` now removes only this stash's own storage (everything named for `self.filename`: `data.db`, the `data.db/` tree, `data.db-wal`, `data.db.dat/.dir/.bak`, `data.db.lock`, `data.jsonl.compact.<pid>`) and drops the param folder only if nothing else is left in it. The JSONL engine already behaved this way — the two engines disagreed about whether `clear()` was destructive to siblings. The `fsspec` engine, which overrides `clear()`, had the identical bug and is fixed the same way; `memory`, whose override skipped the cascade entirely, now clears registered children like everything else.
