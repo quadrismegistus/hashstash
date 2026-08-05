@@ -1268,8 +1268,16 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def clear(self) -> "BaseHashStash":
+        # Cascade to function-result stashes only. Those are this stash's OWN
+        # memoized data under a namespace it owns; a sub() a caller made is a
+        # separate store that merely lives nearby. Cascading to every child made
+        # clear() depend on WHICH HANDLE called it: the handle that created a
+        # sub-stash destroyed it, a fresh handle (a CLI run, another process —
+        # the normal way anyone clears a cache) spared it. Same folder, same
+        # call, opposite outcome.
         for sub in self.children:
-            sub.clear()
+            if getattr(sub, "is_function_stash", False):
+                sub.clear()
 
         self.close()
         if getattr(self, "_owns_dir", True):
@@ -1277,6 +1285,12 @@ class BaseHashStash(MutableMapping):
         else:
             self._remove_dir(self.path)
         return self
+
+    def _owns_entry(self, entry, is_file):
+        """True if a name in path_dirname is this stash's own storage rather
+        than a sub-stash directory. Shared by the local sweep below and the
+        fsspec engine's, so the two cannot drift apart."""
+        return entry == self.filename or (entry.startswith(self.filename) and is_file)
 
     def _remove_own_files(self):
         """Delete this stash's own storage from its param folder, leaving any
@@ -1293,8 +1307,16 @@ class BaseHashStash(MutableMapping):
         Everything an engine writes here is named for self.filename — data.db,
         the data.db/ tree, data.db-wal, data.db.dat/.dir/.bak, data.db.lock,
         data.jsonl.compact.1234 — so sweeping that prefix removes exactly this
-        stash's storage. A directory that merely starts with the same prefix is
-        a sub-stash root, not ours, and is left alone."""
+        stash's storage. A directory that merely *starts with* the same prefix
+        is a sub-stash root, not ours, and is left alone. (A sub-stash whose
+        dbname is EXACTLY the filename, `sub(dbname='data.db')`, collides with
+        our own storage on disk and does go; it is unreachable by accident.)
+
+        The stashed_result/ namespace goes too. Those are this stash's own
+        memoized function results, at a path derived from its identity, so
+        clearing the cache must clear them — and doing it on disk rather than
+        only through self.children is what makes clear() give the same result
+        from any handle, instead of depending on which one created them."""
         try:
             entries = os.listdir(self.path_dirname)
         except OSError:
@@ -1302,10 +1324,9 @@ class BaseHashStash(MutableMapping):
             return
         for entry in entries:
             entry_path = os.path.join(self.path_dirname, entry)
-            if entry == self.filename or (
-                entry.startswith(self.filename) and os.path.isfile(entry_path)
-            ):
+            if self._owns_entry(entry, os.path.isfile(entry_path)):
                 self._remove_dir(entry_path)
+        self._remove_dir(os.path.join(self.path_dirname, FUNCTION_STASH_DBNAME))
         try:
             # nothing of ours left and no sub-stashes: drop the param folder too,
             # so a plain stash still clears away completely as it always did
@@ -1672,6 +1693,7 @@ class BaseHashStash(MutableMapping):
 
     @log.debug
     def sub(self, root_dir:str=None, dbname=DEFAULT_SUB_DBNAME, **kwargs):
+        explicit = set(kwargs)  # what the CALLER passed, before inheritance
         kwargs = {
             **self.to_dict(),
             **kwargs,
@@ -1689,9 +1711,18 @@ class BaseHashStash(MutableMapping):
             # a pairtree parent's .sub(engine='jsonl') returned another
             # PairtreeHashStash — the argument was accepted and silently ignored,
             # and the caller got the wrong storage format with no error.
-            # filename is dropped so the new engine's own default applies
-            # (data.jsonl, not the parent's data.db).
-            kwargs.pop("filename", None)
+            # (No need to drop the inherited filename: it is inert for a stash
+            # that owns its directory — the child takes its class default.)
+            if "safe" not in explicit:
+                # safe is engine-DERIVED, not user config: networked/shared
+                # engines default to safe=True because their writer may be
+                # untrusted (see __init__). to_dict() hands us the parent's
+                # already-materialized False, which would win over that default
+                # and silently give a child moved onto redis/mongo
+                # code-capable deserialization of other writers' payloads —
+                # precisely the threat the default exists for. Let the child's
+                # own engine decide unless the caller said otherwise.
+                kwargs.pop("safe", None)
             new_instance = HashStash(**kwargs)
         else:
             new_instance = self.__class__(**kwargs)
@@ -1789,7 +1820,7 @@ class BaseHashStash(MutableMapping):
             # from one factory share an address): include source + closure values
             # in the namespace so different functions never share cached results
             func_name += "/" + encode_hash(self._function_identity_sig(func))[:10]
-        new_dbname = f'{"stashed_result" if not dbname else dbname}/{func_name}'
+        new_dbname = f'{FUNCTION_STASH_DBNAME if not dbname else dbname}/{func_name}'
         log.debug(f"Sub-function results stash: {new_dbname}")
         stash = self.sub(
             dbname=new_dbname,
@@ -2200,6 +2231,10 @@ def _warn_unknown_stash_kwargs(cls, kwargs):
     known |= {
         "root_dir", "engine", "dbname", "name", "compress", "b64", "serializer",
         "filename", "df_engine", "io_engine", "map_size", "max_map_size", "flat",
+        # redis/mongo carry these in to_dict_attrs, so sub()/migrate() inherit
+        # them onto a child of another engine and the caller — who typed no such
+        # argument — got a warning telling them to check for typos
+        "host", "port",
     }
     # underscore kwargs are internal (from_dict round-trips) — never flag them
     unknown = [k for k in kwargs if k not in known and not k.startswith("_")]

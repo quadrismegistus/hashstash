@@ -31,6 +31,9 @@ RAW_NO_COMPRESS= 'raw'
 DEFAULT_DBNAME = None
 DEFAULT_FILENAME = "data.db"
 DEFAULT_SUB_DBNAME = 'sub_stash'
+# namespace folder holding a stash's own memoized function results; clear()
+# removes it on disk, so the two uses must not drift apart
+FUNCTION_STASH_DBNAME = 'stashed_result'
 
 DEFAULT_LOG_LEVEL = logging.WARNING  # quiet by default; HASHSTASH_LOG=INFO for verbose
 
