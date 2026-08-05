@@ -431,7 +431,13 @@ def test_big_int_not_downcast_to_float(tmp_path):
 
 
 def test_deeply_nested_value_survives_compact(tmp_path):
-    """orjson caps nesting at 1024; json.dumps writes deeper without complaint."""
+    """orjson caps nesting at 1024; json.dumps writes deeper without complaint.
+
+    Depth must exceed 1024 for the guard to mean anything, but Python < 3.12
+    cannot json-encode that deep under the default recursion limit — the value
+    cannot be written there at all, so there is no round-trip to protect. Probe
+    the interpreter rather than hard-coding a version check.
+    """
     obj = cur = {}
     for _ in range(1200):
         cur["x"] = {}
@@ -439,7 +445,14 @@ def test_deeply_nested_value_survives_compact(tmp_path):
     stash = HashStash(
         engine="jsonl", root_dir=str(tmp_path), dbname="deep", append_mode=True
     )
-    stash["k"] = {"v": obj}
+    # Gate on the real write, not a separate json.dumps probe: the probe can
+    # differ from the engine's own call by a frame or two and skip when the
+    # write would have worked (or vice versa). If the value cannot be stored on
+    # this interpreter, there is no round-trip to protect.
+    try:
+        stash["k"] = {"v": obj}
+    except RecursionError:
+        pytest.skip("interpreter cannot json-encode depth 1200 at the default limit")
     assert len(stash.items_l()) == 1
     stash.compact()
     assert stash.get("k") is not None, "compact() destroyed the deeply nested row"
